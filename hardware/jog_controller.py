@@ -19,6 +19,9 @@ DEFAULT_HOLD_JOIN_TIMEOUT = 3.0
 # Conveyor.move_step использует ту же фиксированную задержку.
 NUDGE_MOTION_START_DELAY = 0.4
 
+# Чанк доводится до конца, поэтому join ждёт дольше, чем мгновенный G1.
+NUDGE_HOLD_JOIN_TIMEOUT = 20.0
+
 MODE_JOG_HOLD = "jog"
 MODE_NUDGE_HOLD = "nudge"
 
@@ -58,6 +61,22 @@ class JogController:
             raise ValueError(
                 "pause_hold_speed должен быть 100..conveyor_speed"
             )
+        # Квант удержания. Отпускание кнопки применяется на границе чанка,
+        # поэтому он задаёт и точность остановки, и задержку реакции.
+        self.nudge_hold_chunk_steps = int(
+            calibration.get("nudge_hold_chunk_steps", 100)
+        )
+        if not 1 <= self.nudge_hold_chunk_steps <= self.nudge_limit_steps:
+            raise ValueError(
+                "nudge_hold_chunk_steps должен быть 1..nudge_limit_steps"
+            )
+        # Прошивка ждёт pause_between_movements между ходами; на время
+        # удержания пауза обнуляется и обязана восстановиться после.
+        self._pause_between_restore = int(
+            calibration.get("pause_between_movements", 2000)
+        )
+        if self._pause_between_restore < 0:
+            raise ValueError("pause_between_movements должен быть >= 0")
         if self.micro_steps > self.nudge_limit_steps:
             raise ValueError("micro_steps не может превышать nudge_limit_steps")
         cell_steps = self._normal_steps_restore * 2
@@ -99,6 +118,7 @@ class JogController:
                 "mode": self._mode,
                 "nudge_hold_busy": self._mode == MODE_NUDGE_HOLD and self._busy,
                 "pause_hold_speed": self.pause_hold_speed,
+                "nudge_hold_chunk_steps": self.nudge_hold_chunk_steps,
                 "direction": self._direction,
                 "heartbeat_timeout_ms": int(self.heartbeat_timeout * 1000),
                 "error": self._worker_error,
@@ -214,21 +234,6 @@ class JogController:
 
     # ── Удержание внутри паузы ──────────────────────────────────
 
-    def _read_position(self) -> int:
-        """Прочитать абсолютную координату ленты из I2.
-
-        Учёт удержания в паузе целиком опирается на POS: сегмент рвётся
-        командой G1 в произвольной точке, и другого способа узнать
-        фактически пройденное расстояние у системы нет.
-        """
-        reply = self.transport.query("I2", delay=0.05)
-        position = Conveyor._parse_status(reply).get("pos")
-        if position is None:
-            raise RuntimeError(
-                f"Контроллер не сообщил POS в ответе I2: {reply!r}"
-            )
-        return int(position)
-
     def start_nudge_hold(self, direction: str) -> bool:
         """Начать удержание в паузе в пределах остатка бюджета коррекции."""
         if direction not in ("+", "-"):
@@ -271,51 +276,76 @@ class JogController:
         return True
 
     def _nudge_hold_worker(self, signed_remaining: int):
+        """Удержание короткими завершёнными ходами внутри бюджета.
+
+        Прошивка convey15 обнуляет POS и в `G1` (`brake(); reset()`), и при
+        штатном завершении хода в `loop()`. Измерить пройденный путь после
+        остановки невозможно, поэтому засчитывается только полностью
+        завершённый чанк, длина которого известна заранее.
+        """
         error = None
         applied = 0
-        start_position = None
+        sign = 1 if signed_remaining > 0 else -1
+        budget = abs(signed_remaining)
+        geometry_dirty = False
         try:
-            # Точка отсчёта обязана быть снята до любого движения.
-            start_position = self._read_position()
             with self._command_lock:
-                # Пониженная скорость: иначе бюджет ±nudge_limit_steps
-                # выбирается быстрее, чем оператор успевает отпустить кнопку.
+                # Пониженная скорость: иначе бюджет выбирается быстрее, чем
+                # оператор успевает отпустить кнопку.
                 self.transport.send(f"G5 S{self.pause_hold_speed}")
+                # Между ходами прошивка выжидает pause_between_movements;
+                # без обнуления удержание рвалось бы на 2 секунды.
+                self.transport.send("G9 S0")
+                # autoPauseMode=1: после хода прошивка обязана ждать G3, а не
+                # повторять ход сама, пока руки оператора у ленты.
                 self.transport.send("G12 S1")
-                self.transport.send(f"G7 S{signed_remaining}")
                 self.transport.send("G6 S1")
+                geometry_dirty = True
+
+            while applied < budget:
                 if self._stop_event.is_set():
-                    raise RuntimeError("release before motion start")
-                self.transport.send("G3")
-            self._wait_hold_release_or_budget_end()
+                    break
+                with self._state_lock:
+                    last_heartbeat = self._last_heartbeat
+                    armed_at = self._armed_at
+                reference = last_heartbeat if last_heartbeat > 0 else armed_at
+                if time.monotonic() - reference > self.heartbeat_timeout:
+                    self.last_action = "STOP: heartbeat timeout"
+                    break
+
+                chunk = min(self.nudge_hold_chunk_steps, budget - applied)
+                with self._command_lock:
+                    if self._stop_event.is_set():
+                        break
+                    self.transport.send(f"G7 S{sign * chunk}")
+                    self.transport.send("G3")
+                # Чанк никогда не прерывается: только завершённый ход даёт
+                # точно известное смещение.
+                self._wait_chunk_done(chunk)
+                applied += chunk
+                with self._state_lock:
+                    self._nudge_offset += sign * chunk
         except Exception as exc:
             error = exc
-        finally:
-            # Лента обязана стоять до чтения конечной координаты.
             try:
                 with self._command_lock:
                     self.transport.send("G1")
                 self._confirm_stopped_after_g1()
             except Exception as stop_exc:
-                if error is None:
-                    error = stop_exc
-
-            if error is None and start_position is not None:
+                error = RuntimeError(
+                    f"{exc}; аварийная команда G1 не отправлена: {stop_exc}"
+                )
+        finally:
+            if geometry_dirty:
                 try:
-                    applied = self._measure_applied(
-                        start_position, signed_remaining,
-                    )
-                except Exception as measure_exc:
-                    error = measure_exc
-
-            try:
-                with self._command_lock:
-                    self.transport.send(f"G5 S{self._production_speed}")
-                    self.transport.send(f"G7 S{self._normal_steps_restore}")
-                    self.transport.send("G6 S2")
-            except Exception as restore_exc:
-                if error is None:
-                    error = restore_exc
+                    with self._command_lock:
+                        self.transport.send(f"G5 S{self._production_speed}")
+                        self.transport.send(f"G9 S{self._pause_between_restore}")
+                        self.transport.send(f"G7 S{self._normal_steps_restore}")
+                        self.transport.send("G6 S2")
+                except Exception as restore_exc:
+                    if error is None:
+                        error = restore_exc
 
             with self._state_lock:
                 self._busy = False
@@ -325,63 +355,48 @@ class JogController:
                 self._armed_at = 0.0
                 self._thread = None
                 if error is None:
-                    self._nudge_offset += applied
                     self.last_action = (
-                        f"КОРРЕКЦИЯ {applied:+d} "
+                        f"КОРРЕКЦИЯ {sign * applied:+d} "
                         f"(сумма {self._nudge_offset:+d})"
                     )
                 else:
-                    # Фактическая позиция ленты неизвестна: смещение не
-                    # засчитывается, линия обязана уйти в FAULT.
+                    # Прерванный чанк оставляет позицию неизвестной.
                     self._worker_error = str(error)
                     self.last_action = f"ERR: {error}"
 
-    def _measure_applied(self, start_position: int, signed_remaining: int) -> int:
-        """Фактическое смещение по POS с проверкой правдоподобности."""
-        delta = self._read_position() - start_position
-        if delta == 0:
-            return 0
-        # Движение против запрошенного направления означает, что POS
-        # контроллера не соответствует ходу: доверять учёту нельзя.
-        if (delta > 0) != (signed_remaining > 0):
-            raise RuntimeError(
-                f"POS изменился на {delta:+d} при запросе "
-                f"{signed_remaining:+d}: направление не совпадает"
-            )
-        if abs(delta) > abs(signed_remaining):
-            raise RuntimeError(
-                f"POS изменился на {delta:+d} при запросе "
-                f"{signed_remaining:+d}: превышен выданный бюджет"
-            )
-        return delta
+    def _wait_chunk_done(self, chunk_steps: int, timeout: float = 15.0):
+        """Дождаться подтверждённого конца чанка, не прерывая ход.
 
-    def _wait_hold_release_or_budget_end(self, timeout: float = 120.0):
-        """Ждать отпускания кнопки или самостоятельного конца сегмента."""
-        time.sleep(NUDGE_MOTION_START_DELAY)
-        deadline = time.monotonic() + timeout
+        Фиксированная задержка `NUDGE_MOTION_START_DELAY` здесь не годится:
+        при чанке в сотню шагов она заняла бы больше времени, чем сам ход,
+        и удержание стало бы рваным. Вместо неё остановка засчитывается
+        только после подтверждённого начала движения (`MOV=1`) либо после
+        времени, за которое чанк заведомо не мог не завершиться.
+        """
+        expected = chunk_steps / max(1.0, float(self.pause_hold_speed))
+        # Запас на разгон, торможение и задержку последовательного порта.
+        settle_after = expected * 3.0 + 0.25
+        started = time.monotonic()
+        deadline = started + timeout
+        motion_seen = False
         last_i1 = ""
         last_i2 = ""
         while time.monotonic() < deadline:
-            if self._stop_event.is_set():
-                return
-            with self._state_lock:
-                last_heartbeat = self._last_heartbeat
-                armed_at = self._armed_at
-            reference = last_heartbeat if last_heartbeat > 0 else armed_at
-            if time.monotonic() - reference > self.heartbeat_timeout:
-                self.last_action = "STOP: heartbeat timeout"
-                self._stop_event.set()
-                return
-            last_i1 = self.transport.query("I1", delay=0.05)
-            if Conveyor._parse_motion_reply(last_i1) is True:
-                last_i2 = self.transport.query("I2", delay=0.05)
-                if Conveyor._strict_stop_confirmed(last_i2):
-                    # Бюджет исчерпан: прошивка сама остановила ход.
-                    self._stop_event.set()
-                    return
-            self._stop_event.wait(0.02)
+            last_i1 = self.transport.query("I1", delay=0.02)
+            # _parse_motion_reply: True = остановлен, False = движется.
+            stopped = Conveyor._parse_motion_reply(last_i1)
+            if stopped is False:
+                motion_seen = True
+            elif stopped is True:
+                # «Остановлен» засчитывается только если движение уже было
+                # видно или прошло время, за которое чанк обязан завершиться.
+                if motion_seen or time.monotonic() - started >= settle_after:
+                    last_i2 = self.transport.query("I2", delay=0.02)
+                    if Conveyor._strict_stop_confirmed(last_i2):
+                        return
+            time.sleep(0.005)
         raise TimeoutError(
-            f"Удержание коррекции не завершилось за {timeout}s; "
+            f"Чанк коррекции не завершился за {timeout}s; "
             f"I1={last_i1!r}; I2={last_i2!r}"
         )
 
@@ -467,12 +482,23 @@ class JogController:
         return True
 
     def release_nudge_hold(self, reason: str = "button released") -> int:
-        """Остановить удержание в паузе и вернуть засчитанное смещение.
+        """Остановить удержание на границе чанка и вернуть смещение.
 
-        Учёт выполняется воркером после подтверждённой остановки, поэтому
-        метод возвращает управление только с уже известной позицией ленты.
+        `G1` здесь намеренно не отправляется: он оборвал бы текущий чанк на
+        середине, а прошивка обнуляет POS, и фактическая позиция стала бы
+        неизвестной. Вместо этого воркер доводит начатый чанк до конца и не
+        запускает следующий, поэтому смещение остаётся точным.
         """
-        self.release(reason)
+        self._stop_event.set()
+        with self._state_lock:
+            thread = self._thread
+            self.last_action = f"STOP: {reason}"
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(NUDGE_HOLD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                raise RuntimeError(
+                    "Коррекция не остановилась на границе чанка"
+                )
         with self._state_lock:
             error = self._worker_error
             offset = self._nudge_offset

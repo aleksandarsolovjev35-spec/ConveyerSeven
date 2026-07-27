@@ -368,230 +368,256 @@ class HardwareTests(unittest.TestCase):
     # ─── Удержание коррекции в паузе ─────────────────────────────
 
     @staticmethod
-    def _pause_hold_transport(steps_per_second=2000.0, pos_available=True):
-        class PauseHoldTransport:
-            """Лента, у которой POS растёт по времени, пока идёт сегмент."""
+    def _convey15_transport(pause_between=2000):
+        """Симулятор прошивки convey15 с её реальной семантикой POS.
 
+        Прошивка обнуляет позицию и в `G1` (`brake(); reset()`), и при
+        штатном завершении хода в `loop()`. Раньше фейк возвращал сквозной
+        POS, из-за чего учёт удержания выглядел рабочим, хотя на железе
+        всегда получал 0 и бюджет коррекции не расходовался вовсе.
+        """
+
+        class Convey15Transport:
             def __init__(self):
                 self.commands = []
-                self.lock = threading.Lock()
-                self.start_position = 5000
-                self.position = 5000
-                self.requested = 0
-                self.sign = 1
+                self.lock = threading.RLock()
+                self.pos = 0
+                self.steps_per_division = 19048
+                self.divisions = 2
+                self.speed = 20000.0
+                self.pause_between = pause_between
+                self.auto_pause = True
                 self.moving = False
-                self.motion_started_at = None
+                self.wait_active = False
+                self.wait_until = 0.0
+                self.target_steps = 0
+                self.start_pos = 0
+                self.travel_start = None
+                # Реальный путь ленты: тест сверяет с ним учёт системы.
+                self.true_travel = 0
+                self.g1_while_moving = 0
 
-            def _advance_locked(self):
-                if not self.moving or self.motion_started_at is None:
-                    return
-                elapsed = time.monotonic() - self.motion_started_at
-                travelled = min(
-                    abs(self.requested), int(elapsed * steps_per_second),
-                )
-                self.position = self.start_position + self.sign * travelled
-                if travelled >= abs(self.requested):
-                    self.moving = False
+            def _tick(self):
+                now = time.monotonic()
+                if self.moving:
+                    done = min(
+                        abs(self.target_steps),
+                        int((now - self.travel_start) * self.speed),
+                    )
+                    sign = 1 if self.target_steps >= 0 else -1
+                    self.pos = self.start_pos + sign * done
+                    if done >= abs(self.target_steps):
+                        self.true_travel += self.target_steps
+                        self.moving = False
+                        self.pos = 0            # loop(): stepper.reset()
+                        self.wait_active = True
+                        self.wait_until = now + self.pause_between / 1000.0
+                if self.wait_active and now >= self.wait_until:
+                    self.wait_active = False
 
             def send(self, command):
                 with self.lock:
                     self.commands.append(command)
+                    self._tick()
                     if command.startswith("G7 S"):
-                        value = int(command[4:])
-                        self.sign = 1 if value >= 0 else -1
-                        self.requested = value
+                        self.steps_per_division = int(command[4:])
+                    elif command.startswith("G6 S"):
+                        self.divisions = int(command[4:])
+                    elif command.startswith("G5 S"):
+                        self.speed = float(command[4:])
+                    elif command.startswith("G9 S"):
+                        self.pause_between = int(command[4:])
+                    elif command.startswith("G12 S"):
+                        self.auto_pause = bool(int(command[5:]))
                     elif command == "G3":
-                        self.start_position = self.position
-                        self.motion_started_at = time.monotonic()
+                        self.wait_active = False
+                        self.target_steps = (
+                            self.steps_per_division * self.divisions
+                        )
+                        self.start_pos = self.pos
+                        self.travel_start = time.monotonic()
                         self.moving = True
                     elif command == "G1":
-                        self._advance_locked()
+                        if self.moving:
+                            self.g1_while_moving += 1
+                            self.true_travel += self.pos - self.start_pos
                         self.moving = False
+                        self.wait_active = False
+                        self.pos = 0            # case 1: reset()
 
             def query(self, command, delay=0.15):
                 with self.lock:
                     self.commands.append(command)
-                    self._advance_locked()
+                    self._tick()
                     if command == "I1":
                         return "1" if self.moving else "0"
                     if command == "I2":
-                        base = (
-                            "MOV=1 WAIT=0 lastErr=0" if self.moving
-                            else "MOV=0 WAIT=0 lastErr=0"
+                        return (
+                            f"MOV={1 if self.moving else 0} "
+                            f"WAIT={1 if self.wait_active else 0} "
+                            f"POS={self.pos} TGT={self.target_steps} "
+                            "lastErr=0"
                         )
-                        if pos_available:
-                            return f"{base} POS={self.position}"
-                        return base
                     return ""
 
-        return PauseHoldTransport()
+        return Convey15Transport()
 
-    def test_pause_hold_moves_belt_until_release_and_counts_actual_pos(self):
-        transport = self._pause_hold_transport()
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.5)
+    HOLD_CALIB = {
+        "micro_steps": 500,
+        "nudge_limit_steps": 2000,
+        "jog_hold_steps": 1_000_000,
+        "normal_steps": 19048,
+        "conveyor_speed": 20000,
+        "pause_hold_speed": 2000,
+        "nudge_hold_chunk_steps": 100,
+        "pause_between_movements": 2000,
+    }
 
-        start_position = transport.position
-        self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 1.5
-        while "G3" not in transport.commands and time.monotonic() < deadline:
+    def _hold_for(self, jog, direction, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            jog.heartbeat(direction, mode="nudge")
             time.sleep(0.01)
-        self.assertIn("G3", transport.commands)
-        # Оператор реально держит кнопку какое-то время.
-        hold_deadline = time.monotonic() + 0.25
-        while time.monotonic() < hold_deadline:
-            jog.heartbeat("+", mode="nudge")
-            time.sleep(0.02)
 
-        offset = jog.release_nudge_hold("test pointerup")
-        self.assertFalse(jog.busy)
-        # Смещение обязано совпасть с фактически пройденным POS.
-        self.assertEqual(offset, transport.position - start_position)
-        self.assertEqual(jog.nudge_offset, offset)
-        self.assertGreater(offset, 0)
-        self.assertLessEqual(offset, self.NUDGE_CALIB["nudge_limit_steps"])
-
-    def test_pause_hold_requests_only_remaining_budget(self):
-        transport = self._pause_hold_transport()
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.5)
-        limit = self.NUDGE_CALIB["nudge_limit_steps"]
+    def test_pause_hold_accounting_matches_real_belt_travel(self):
+        # Ключевая проверка: учтённое смещение обязано совпасть с реальным
+        # путём ленты в симуляторе прошивки, а не с желаемым числом.
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 1.5
-        while "G3" not in transport.commands and time.monotonic() < deadline:
-            time.sleep(0.01)
-        # Прошивке выдаётся ровно остаток бюджета: перелёт невозможен даже
-        # если release задержится или UI пропадёт.
-        self.assertIn(f"G7 S{limit}", transport.commands)
-        first = jog.release_nudge_hold("first release")
+        self._hold_for(jog, "+", 0.3)
+        offset = jog.release_nudge_hold("pointerup")
+
+        self.assertGreater(offset, 0, "Удержание обязано двигать ленту")
+        self.assertEqual(offset, transport.true_travel)
+        self.assertEqual(jog.nudge_offset, transport.true_travel)
+
+    def test_pause_hold_never_exceeds_budget_even_if_held_forever(self):
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=2.0)
+        limit = self.HOLD_CALIB["nudge_limit_steps"]
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 1.5
-        while transport.commands.count("G3") < 2 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        self.assertIn(f"G7 S{limit - first}", transport.commands)
-        jog.release_nudge_hold("second release")
-        self.assertLessEqual(jog.nudge_offset, limit)
-
-    def test_pause_hold_stops_itself_when_budget_is_exhausted(self):
-        # Оператор держит кнопку дольше бюджета: лента обязана встать сама.
-        transport = self._pause_hold_transport(steps_per_second=1_000_000.0)
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=2.0)
-        limit = self.NUDGE_CALIB["nudge_limit_steps"]
-
-        self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 6.0
         while jog.busy and time.monotonic() < deadline:
             jog.heartbeat("+", mode="nudge")
-            time.sleep(0.02)
-        self.assertFalse(jog.busy, "Сегмент обязан закончиться на лимите")
+            time.sleep(0.01)
+
+        self.assertFalse(jog.busy, "Лента обязана встать на границе бюджета")
         self.assertEqual(jog.nudge_offset, limit)
-        # Кнопка всё ещё удерживается, но повторный старт запрещён.
-        self.assertFalse(jog.start_nudge_hold("+"))
-
-    def test_pause_hold_blocks_direction_at_limit_but_allows_reverse(self):
-        transport = self._pause_hold_transport(steps_per_second=1_000_000.0)
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=2.0)
-
-        self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 3.0
-        while jog.busy and time.monotonic() < deadline:
-            jog.heartbeat("+", mode="nudge")
-            time.sleep(0.02)
-        self.assertEqual(jog.nudge_offset, self.NUDGE_CALIB["nudge_limit_steps"])
+        self.assertEqual(transport.true_travel, limit)
+        # Бюджет исчерпан: та же сторона запрещена, обратная доступна.
         self.assertFalse(jog.start_nudge_hold("+"))
         self.assertTrue(jog.start_nudge_hold("-"))
         jog.release_nudge_hold("cleanup")
 
-    def test_pause_hold_uses_reduced_speed_and_restores_production_speed(self):
-        transport = self._pause_hold_transport()
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.5)
+    def test_pause_hold_accumulates_across_presses_within_budget(self):
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
+        limit = self.HOLD_CALIB["nudge_limit_steps"]
+
+        for _ in range(6):
+            if not jog.start_nudge_hold("+"):
+                break
+            self._hold_for(jog, "+", 0.25)
+            jog.release_nudge_hold("pointerup")
+
+        self.assertEqual(jog.nudge_offset, transport.true_travel)
+        self.assertLessEqual(jog.nudge_offset, limit)
+        self.assertEqual(jog.nudge_offset, limit)
+
+    def test_pause_hold_release_finishes_chunk_without_g1(self):
+        # G1 оборвал бы чанк и обнулил POS: позиция стала бы неизвестной.
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 1.5
-        while "G3" not in transport.commands and time.monotonic() < deadline:
-            time.sleep(0.01)
+        self._hold_for(jog, "+", 0.2)
+        offset = jog.release_nudge_hold("pointerup")
+
+        self.assertEqual(transport.g1_while_moving, 0)
+        self.assertNotIn("G1", transport.commands)
+        # Смещение кратно чанку: оборванных ходов не было.
+        self.assertEqual(offset % self.HOLD_CALIB["nudge_hold_chunk_steps"], 0)
+        self.assertEqual(offset, transport.true_travel)
+
+    def test_pause_hold_restores_speed_pause_and_geometry(self):
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
+
+        self.assertTrue(jog.start_nudge_hold("+"))
+        self._hold_for(jog, "+", 0.15)
+        jog.release_nudge_hold("pointerup")
+
         self.assertIn("G5 S2000", transport.commands)
-        self.assertLess(
-            transport.commands.index("G5 S2000"),
-            transport.commands.index("G3"),
-            "Скорость обязана снижаться до начала хода",
-        )
-        jog.release_nudge_hold("test pointerup")
-        # Производственные скорость и геометрия обязаны вернуться.
+        # Пауза между ходами обнуляется, иначе чанки рвались бы на 2 секунды.
+        self.assertIn("G9 S0", transport.commands)
+        self.assertIn("G12 S1", transport.commands)
         self.assertEqual(
-            transport.commands[-3:], ["G5 S20000", "G7 S19048", "G6 S2"],
+            transport.commands[-4:],
+            ["G5 S20000", "G9 S2000", "G7 S19048", "G6 S2"],
         )
 
     def test_pause_hold_stops_on_heartbeat_timeout(self):
-        transport = self._pause_hold_transport()
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.2)
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=0.2)
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 3.0
+        jog.heartbeat("+", mode="nudge")
+        deadline = time.monotonic() + 4.0
         while jog.busy and time.monotonic() < deadline:
             time.sleep(0.02)
+
         self.assertFalse(jog.busy, "Пропажа heartbeat обязана остановить ленту")
-        self.assertIn("G1", transport.commands)
+        self.assertEqual(jog.nudge_offset, transport.true_travel)
         self.assertEqual(
-            transport.commands[-3:], ["G5 S20000", "G7 S19048", "G6 S2"],
+            transport.commands[-4:],
+            ["G5 S20000", "G9 S2000", "G7 S19048", "G6 S2"],
         )
 
-    def test_pause_hold_fails_closed_when_controller_hides_pos(self):
-        # Без POS фактическое смещение неизвестно: засчитывать его нельзя.
-        transport = self._pause_hold_transport(pos_available=False)
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.5)
-
-        self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        with self.assertRaises(RuntimeError):
-            jog.release_nudge_hold("test pointerup")
-        self.assertEqual(jog.nudge_offset, 0)
-        self.assertIsNotNone(jog.status["error"])
-
-    def test_pause_hold_rejects_pos_moving_against_requested_direction(self):
-        transport = self._pause_hold_transport()
-        transport.send = (lambda original: original)(transport.send)
-
-        class ReversedTransport:
-            def __init__(self, inner):
-                self.inner = inner
-                self.commands = inner.commands
+    def test_pause_hold_fails_closed_when_chunk_never_completes(self):
+        class StuckTransport:
+            def __init__(self):
+                self.commands = []
 
             def send(self, command):
-                if command.startswith("G7 S"):
-                    # Контроллер поехал в обратную сторону от запроса.
-                    command = f"G7 S{-int(command[4:])}"
-                self.inner.send(command)
+                self.commands.append(command)
 
             def query(self, command, delay=0.15):
-                return self.inner.query(command, delay)
+                self.commands.append(command)
+                # Лента «висит» в движении: чанк не завершается никогда.
+                return "1" if command == "I1" else "MOV=1 WAIT=0 lastErr=0"
 
-        jog = JogController(
-            ReversedTransport(transport), self.NUDGE_CALIB, heartbeat_timeout=0.5,
+        transport = StuckTransport()
+        calib = dict(self.HOLD_CALIB)
+        jog = JogController(transport, calib, heartbeat_timeout=2.0)
+        jog._wait_chunk_done = (
+            lambda chunk, timeout=0.3: JogController._wait_chunk_done(
+                jog, chunk, timeout,
+            )
         )
+
         self.assertTrue(jog.start_nudge_hold("+"))
-        self.assertTrue(jog.heartbeat("+", mode="nudge"))
-        deadline = time.monotonic() + 1.5
-        while "G3" not in transport.commands and time.monotonic() < deadline:
-            time.sleep(0.01)
-        hold_deadline = time.monotonic() + 0.25
-        while time.monotonic() < hold_deadline:
+        # Даём воркеру начать чанк и упереться в таймаут.
+        deadline = time.monotonic() + 5.0
+        while jog.busy and time.monotonic() < deadline:
             jog.heartbeat("+", mode="nudge")
             time.sleep(0.02)
+        self.assertFalse(jog.busy, "Зависший чанк обязан завершиться ошибкой")
+
         with self.assertRaises(RuntimeError):
-            jog.release_nudge_hold("test pointerup")
+            jog.release_nudge_hold("pointerup")
+        # Смещение не засчитано: позиция ленты неизвестна.
         self.assertEqual(jog.nudge_offset, 0)
+        self.assertIsNotNone(jog.status["error"])
+        # Прерванный ход обязан сопровождаться аварийным G1.
+        self.assertIn("G1", transport.commands)
+
 
     def test_pause_hold_and_jog_hold_never_run_together(self):
-        transport = self._pause_hold_transport()
-        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.5)
+        transport = self._convey15_transport()
+        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=0.5)
 
         self.assertTrue(jog.start_nudge_hold("+"))
         self.assertTrue(jog.heartbeat("+", mode="nudge"))
@@ -602,7 +628,7 @@ class HardwareTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 jog.nudge("+")
         finally:
-            jog.release("cleanup")
+            jog.release_nudge_hold("cleanup")
 
     def test_jog_controller_rejects_nudge_limit_reaching_neighbour_cell(self):
         # ±limit обязан быть строго внутри одной ячейки.

@@ -79,6 +79,17 @@ def main() -> int:
         calibration["pause_hold_speed"] < calibration["conveyor_speed"],
         "Удержание коррекции должно идти медленнее производственного хода",
     )
+    chunk_seconds = (
+        calibration["nudge_hold_chunk_steps"] / calibration["pause_hold_speed"]
+    )
+    print(
+        f"nudge_hold_chunk={calibration['nudge_hold_chunk_steps']} "
+        f"(чанк за {chunk_seconds:.3f}s; отпускание применяется на его границе)"
+    )
+    require(
+        chunk_seconds <= 0.2,
+        "Чанк коррекции должен проходиться быстрее 0.2s",
+    )
     require(
         hold_seconds >= 0.2,
         "Бюджет коррекции должен выбираться не быстрее 0.2s: иначе "

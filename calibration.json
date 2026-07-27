@@ -2,6 +2,7 @@
   "micro_steps": 500,
   "nudge_limit_steps": 2000,
   "pause_hold_speed": 2000,
+  "nudge_hold_chunk_steps": 100,
   "jog_hold_steps": 1000000,
   "normal_steps": 19048,
   "conveyor_speed": 20000,
