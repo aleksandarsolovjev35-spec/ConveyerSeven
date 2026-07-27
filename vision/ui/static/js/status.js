@@ -3,6 +3,64 @@
 
 // ─── Status update ───────────────────────────────────────────
 
+const LINE_PROCESS_INTERVALS = [
+    {key: 'move',     symbol: '›', title: 'Перемещение'},
+    {key: 'capture',  symbol: '◉', title: 'Съёмка камер'},
+    {key: 'analysis', symbol: '◇', title: 'Анализ детали'},
+    {key: 'route',    symbol: '↳', title: 'Маршрут / сортировка'},
+    {key: 'adjust',   symbol: '✦', title: 'Ручная коррекция'},
+];
+
+function lineProcessKey(phase) {
+    const value = String(phase || '').toUpperCase();
+    if (!value) return null;
+    if (value.includes('PAUSE_NUDGE') || value.includes('JOG')) return 'adjust';
+    if (value.includes('ROUTE') || value.includes('DROP')) return 'route';
+    if (value.includes('CAMERA') || value.includes('CAPTURE')) return 'capture';
+    if (value.includes('ANALYSIS')
+        || value.includes('SPIDER_CHECK')
+        || value.includes('MODEL')) return 'analysis';
+    if (value.includes('CONVEYOR')) return 'move';
+    return null;
+}
+
+function lineProcessTitle(key) {
+    const item = LINE_PROCESS_INTERVALS.find(interval => interval.key === key);
+    return item ? item.title : null;
+}
+
+function conveyorMotionState(cells, process = {}) {
+    const phase = String(process.phase || '').toUpperCase();
+    if (!phase.includes('CONVEYOR')) {
+        return {active: false, offsetPx: 0, progress: 0};
+    }
+
+    const conveyor = process.conveyor || {};
+    const rawTarget = Number(
+        conveyor.tgt ?? conveyor.target ?? conveyor.target_steps ?? 0,
+    );
+    const rawPosition = Number(
+        conveyor.pos ?? conveyor.position ?? conveyor.current ?? 0,
+    );
+    if (!Number.isFinite(rawTarget) || Math.abs(rawTarget) < 1) {
+        return {active: false, offsetPx: 0, progress: 0};
+    }
+
+    const progress = Math.max(
+        0,
+        Math.min(1, Math.abs(rawPosition) / Math.abs(rawTarget)),
+    );
+    const cellStepPx = cells.length > 1
+        ? Math.abs(cells[1].offsetLeft - cells[0].offsetLeft)
+        : 0;
+    const direction = rawTarget < 0 ? -1 : 1;
+    return {
+        active: phase.includes('CONVEYOR_MOVING') || progress > 0,
+        offsetPx: direction * cellStepPx * progress,
+        progress,
+    };
+}
+
 function updateOperationalAccordions(lineState) {
     const fullyStopped = lineState === 'IDLE' || lineState === 'STOPPED';
 
@@ -219,27 +277,69 @@ function updateLineStatus(ls) {
 
 function updateLineCells(lineParts, process = {}) {
     const cells = els.lineCells.children;
+    const activePositions = Array.isArray(process.positions)
+        ? process.positions
+        : [];
+    const activeProcessKey = lineProcessKey(process.phase);
+    const activeProcessTitle = lineProcessTitle(activeProcessKey);
+    const conveyorMotion = conveyorMotionState(cells, process);
 
     for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
         const part = lineParts.find(p => p.position === i);
+        const processActiveHere = activePositions.includes(i);
 
         cell.className = 'line-cell';
-        cell.textContent = part ? `№${part.id}` : '';
+        cell.style.transform = '';
+        cell.replaceChildren();
 
-        const activePositions = Array.isArray(process.positions)
-            ? process.positions
-            : [];
-        if (activePositions.includes(i)) {
+        const main = document.createElement('div');
+        main.className = 'line-cell-main';
+        main.style.transform = '';
+        if (part) {
+            const partLabel = document.createElement('span');
+            partLabel.className = 'line-cell-part';
+            partLabel.textContent = `№${part.id}`;
+            main.appendChild(partLabel);
+        } else {
+            cell.classList.add('empty-slot');
+            const emptyLabel = document.createElement('span');
+            emptyLabel.className = 'line-cell-empty';
+            emptyLabel.textContent = '○';
+            emptyLabel.setAttribute('aria-label', 'Пустая ячейка');
+            main.appendChild(emptyLabel);
+        }
+        cell.appendChild(main);
+
+        const intervals = document.createElement('div');
+        intervals.className = 'line-process-intervals';
+        for (const interval of LINE_PROCESS_INTERVALS) {
+            const marker = document.createElement('span');
+            marker.className = `line-process-interval process-${interval.key}`;
+            marker.dataset.symbol = interval.symbol;
+            marker.title = interval.title;
+            marker.setAttribute('aria-label', interval.title);
+            if (processActiveHere && interval.key === activeProcessKey) {
+                marker.classList.add('is-active');
+                cell.classList.add(`process-step-${interval.key}`);
+            }
+            intervals.appendChild(marker);
+        }
+        cell.appendChild(intervals);
+
+        if (processActiveHere) {
             cell.classList.add('process-active');
-            if ((process.phase || '').includes('CAMERA')
-                || (process.phase || '').includes('ANALYSIS')) {
+            if (activeProcessKey === 'capture' || activeProcessKey === 'analysis') {
                 cell.classList.add('process-camera');
             }
-            if ((process.phase || '').includes('ROUTE')
-                || (process.phase || '').includes('DROP')) {
+            if (activeProcessKey === 'route') {
                 cell.classList.add('process-route');
             }
+        }
+
+        if (conveyorMotion.active) {
+            cell.classList.add('belt-moving');
+            main.style.transform = `translateX(${conveyorMotion.offsetPx}px)`;
         }
 
         if (part) {
@@ -253,10 +353,21 @@ function updateLineCells(lineParts, process = {}) {
             } else if (cat === 'GOOD') {
                 cell.classList.add('cell-good');
             }
-
-            cell.title = `Деталь №${part.id} · ${categoryLabel(part.category)}`;
-        } else {
-            cell.title = '';
         }
+
+        const titleParts = [`Позиция ${i + 1}`];
+        if (part) {
+            titleParts.push(`Деталь №${part.id}`);
+            titleParts.push(categoryLabel(part.category));
+        } else {
+            titleParts.push('Пустая ячейка');
+        }
+        if (processActiveHere && activeProcessTitle) {
+            titleParts.push(`${activeProcessTitle}: ${process.label || process.phase}`);
+        }
+        if (conveyorMotion.active) {
+            titleParts.push(`Ход ленты ${Math.round(conveyorMotion.progress * 100)}%`);
+        }
+        cell.title = titleParts.join(' · ');
     }
 }
