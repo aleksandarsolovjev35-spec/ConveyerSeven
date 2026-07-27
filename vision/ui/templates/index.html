@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
     <link rel="stylesheet" href="/static/css/process.css?v=25">
     <link rel="stylesheet" href="/static/css/motion.css?v=25">
+    <link rel="stylesheet" href="/static/css/belt.css?v=25">
 </head>
 <body>
 
@@ -26,8 +27,12 @@
             <div class="splash-status">
                 <span id="splash-message">Инициализация</span><span class="dots"></span>
             </div>
-            <div class="splash-progress-bar">
+            <div class="splash-progress-bar belt-lane" data-belt-lane="boot">
                 <div id="splash-progress-fill" class="splash-progress-fill"></div>
+            </div>
+            <div class="splash-drive" aria-hidden="true">
+                <span class="drive-wheel"></span>
+                <span class="drive-wheel drive-wheel-fast"></span>
             </div>
             <div id="splash-error" class="splash-error is-hidden">
                 <div class="splash-error-title">ОШИБКА</div>
@@ -71,8 +76,14 @@
                 <section class="process-line-panel">
                     <div class="process-line-head">
                         <span class="process-line-title">ПУТЬ ДЕТАЛЕЙ</span>
+                        <span class="belt-drive" aria-hidden="true">
+                            <span class="drive-wheel"></span>
+                            <span id="belt-readout" class="belt-readout">ПРИВОД · СТОП</span>
+                            <span class="drive-wheel drive-wheel-fast"></span>
+                        </span>
                     </div>
                     <div class="line-cells-wrapper production-line-wrapper">
+                        <div class="belt-lane" data-belt-lane="line" aria-hidden="true"></div>
                         <div id="line-cells" class="line-cells production-line-cells">
                             <div class="line-cell" data-pos="0"></div>
                             <div class="line-cell" data-pos="1"></div>
@@ -142,7 +153,7 @@
                     <div class="distributor-title">РАСПРЕДЕЛИТЕЛЬ</div>
                     <div id="dist1-card" class="blade-card">
                         <div class="axis-row">
-                            <span class="axis-name">DIST1 · ЗАСЛОНКА СБРОСА</span>
+                            <span class="axis-name">DIST1 · ЗАСЛОНКА СБРОСА<span class="blade-cam" aria-hidden="true"></span></span>
                             <span id="dist1-state" class="axis-state">В ПОЗИЦИИ</span>
                             <span><b id="dist1-pos">0</b> / <b id="dist1-max">340</b></span>
                         </div>
@@ -157,7 +168,7 @@
                     </div>
                     <div id="dist2-card" class="blade-card">
                         <div class="axis-row">
-                            <span class="axis-name">DIST2 · ВЫБОР КАНАЛА</span>
+                            <span class="axis-name">DIST2 · ВЫБОР КАНАЛА<span class="blade-cam" aria-hidden="true"></span></span>
                             <span id="dist2-state" class="axis-state">В ПОЗИЦИИ</span>
                             <span><b id="dist2-pos">0</b> / <b id="dist2-max">340</b></span>
                         </div>
@@ -184,6 +195,7 @@
                             <svg class="nudge-arrow" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M15 5 L8 12 L15 19"></path>
                             </svg>
+                            <span class="belt-lane" data-belt-lane="nudge-backward" aria-hidden="true"></span>
                         </button>
                         <div class="nudge-readout">
                             <span id="nudge-offset" class="nudge-offset">0</span>
@@ -194,6 +206,7 @@
                             <svg class="nudge-arrow" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M9 5 L16 12 L9 19"></path>
                             </svg>
+                            <span class="belt-lane" data-belt-lane="nudge-forward" aria-hidden="true"></span>
                         </button>
                     </div>
                     <div class="nudge-bar"><div id="nudge-bar-fill" class="nudge-bar-fill"></div></div>
@@ -210,12 +223,14 @@
                             <svg class="jog-hold-arrow" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M15 5 L8 12 L15 19"></path>
                             </svg>
+                            <span class="belt-lane" data-belt-lane="jog-backward" aria-hidden="true"></span>
                         </button>
                         <button class="jog-dpad-btn jog-hold-btn" data-direction="+" disabled
                                 aria-label="Двигать ленту вперёд" title="Удерживайте для движения вперёд">
                             <svg class="jog-hold-arrow" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M9 5 L16 12 L9 19"></path>
                             </svg>
+                            <span class="belt-lane" data-belt-lane="jog-forward" aria-hidden="true"></span>
                         </button>
                     </div>
                     <div class="jog-action">СОСТОЯНИЕ: <span id="jog-last-action">—</span></div>
@@ -282,6 +297,7 @@
     </div>
 
     <script src="/static/js/core.js?v=25"></script>
+    <script src="/static/js/motion.js?v=25"></script>
     <script src="/static/js/boot.js?v=25"></script>
     <script src="/static/js/diagnostics.js?v=25"></script>
     <script src="/static/js/status.js?v=25"></script>

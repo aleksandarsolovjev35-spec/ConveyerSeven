@@ -30,8 +30,10 @@ function updateRecentParts(parts) {
         if (cat === 'bad')     symbol = 'БРАК';
         if (cat === 'cleanup') symbol = 'ОЧИСТКА';
 
+        // Карточка «въезжает» только у детали, которую лента реально
+        // только что довезла до сортировки.
         return `
-            <div class="history-card cat-${cat}"
+            <div class="history-card cat-${cat}${beltFreshPartClass(p.id)}"
                  onclick="window._openPartGallery(${p.id})"
                  style="cursor:pointer">
                 <div class="history-card-id">#${p.id}</div>

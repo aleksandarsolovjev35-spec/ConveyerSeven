@@ -172,9 +172,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertEqual(
             [path.name for path in js],
             [
-                "core.js", "boot.js", "diagnostics.js", "status.js",
-                "controls.js", "cameras.js", "jog.js", "pause.js",
-                "history.js", "bootstrap.js",
+                "core.js", "motion.js", "boot.js", "diagnostics.js",
+                "status.js", "controls.js", "cameras.js", "jog.js",
+                "pause.js", "history.js", "bootstrap.js",
             ],
         )
         self.assertGreaterEqual(len(css), 8)
@@ -306,6 +306,81 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn('prefers-reduced-motion', self.css)
         self.assertIn("releaseJogHold('window blur')", self.js)
         self.assertIn("/api/jog/hold/release", self.js)
+
+    def test_every_animation_is_driven_by_real_conveyor_telemetry(self):
+        # Движение в интерфейсе допускается только как отображение работы
+        # конвейера. Источник любой анимации — переменные привода, которые
+        # motion.js считает из координат контроллера, а не таймеры «для вида».
+        self.assertIn("belt.css", self.html)
+        self.assertIn("motion.js", self.html)
+
+        root = Path(__file__).resolve().parents[1]
+        motion_js = (
+            root / "vision/ui/static/js/motion.js"
+        ).read_text(encoding="utf-8")
+        belt_css = (
+            root / "vision/ui/static/css/belt.css"
+        ).read_text(encoding="utf-8")
+
+        # Привод читает только фактическую телеметрию линии.
+        for token in (
+            "conveyor.tgt ?? conveyor.target",
+            "conveyor.pos ?? conveyor.position",
+            "phaseName.includes('CONVEYOR')",
+            "jog.busy && jog.direction",
+            "pause.hold_busy && pause.hold_direction",
+            "BELT_NUDGE_STEPS_PER_CELL",
+            "updateDistributorMotion",
+            "updateWorkPhaseClasses",
+        ):
+            self.assertIn(token, motion_js)
+
+        # Остановка линии обязана останавливать интерфейс.
+        self.assertIn("freezeBeltMotion", motion_js)
+        self.assertIn("freezeBeltMotion();", self.js)
+        self.assertIn("belt.running = Math.abs(belt.velocity) > BELT_STOP_EPS", motion_js)
+        self.assertIn("belt-running", belt_css)
+
+        # Один кадровый цикл вместо независимых таймеров анимации.
+        self.assertIn("requestAnimationFrame(beltFrame)", motion_js)
+        self.assertIn("updateBeltTelemetry(ls)", self.js)
+
+        # Геометрия движения приходит из переменных привода.
+        for variable in (
+            "--belt-phase",
+            "--belt-intra",
+            "--belt-speed",
+            "--belt-teeth",
+            "--drive-turn",
+            "--dist1-turn",
+            "--dist2-turn",
+            "--boot-progress",
+        ):
+            self.assertIn(variable, motion_js, variable)
+            self.assertIn(variable, belt_css, variable)
+
+        # Путь деталей и ленты под кнопками двигаются через CSS-переменные,
+        # а не через inline-стили, посчитанные в обработчике статуса.
+        self.assertNotIn("main.style.transform", self.js)
+        self.assertIn("var(--belt-cell-px) * var(--belt-intra)", belt_css)
+        self.assertEqual(self.html.count('data-belt-lane='), 6)
+        self.assertEqual(self.html.count('<span class="drive-wheel"'), 2)
+        self.assertEqual(
+            self.html.count('<span class="drive-wheel drive-wheel-fast"'), 2
+        )
+        self.assertIn('id="belt-readout"', self.html)
+        self.assertIn("fx.className = 'line-cell-fx'", self.js)
+        self.assertIn(".line-cell-fx", belt_css)
+
+        # Бесконечные анимации разрешены только на время реальной работы
+        # механизма и синхронизированы с измеренным темпом шага.
+        self.assertIn("calc(var(--belt-cadence) * 1s)", belt_css)
+        for marker in ("is-capturing", "is-analyzing", "is-routing"):
+            self.assertIn(f".camera-container.{marker}::after", belt_css)
+
+        # Доступность: при запрете анимаций интерфейс остаётся статичным.
+        self.assertIn("prefers-reduced-motion", belt_css)
+        self.assertIn("beltReducedMotion", motion_js)
 
     def test_jog_buttons_are_equal_and_distributor_marker_is_smooth(self):
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", self.css)

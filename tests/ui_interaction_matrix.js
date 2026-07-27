@@ -878,7 +878,175 @@ async function main() {
   await sleep(5);
   assert(calls.some(call => call.url === '/api/exit'), 'splash close calls EXIT');
 
-  console.log('UI INTERACTION MATRIX PASS: 21 groups');
+  // 21. Every animation is driven by real conveyor telemetry.
+  // Движение в интерфейсе разрешено только тогда, когда линия реально
+  // движется, и обязано останавливаться вместе с ней.
+  const beltVar = name => api.getBeltVar(name);
+  const beltRunning = () => window.document.body.classList.contains('belt-running');
+  const beltReadout = () => window.document.getElementById('belt-readout').textContent;
+
+  api.updateLineStatus(lineStatus('IDLE', {controls: controls({start: true, exit: true})}));
+  let clock = 10000;
+  api.advanceBelt(clock);
+  // Предыдущие сценарии оставили ленту в движении коррекции: она обязана
+  // доехать до подтверждённой позиции и только потом замереть.
+  for (let frame = 0; frame < 90; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  const idlePhase = beltVar('--belt-phase');
+  clock += 16;
+  api.advanceBelt(clock);
+  assert(beltVar('--belt-phase') === idlePhase, 'idle line settles to the real position');
+  assert(!beltRunning(), 'idle line keeps the interface still');
+  assert(beltReadout() === 'ПРИВОД · СТОП', 'idle drive readout');
+
+  // Ход ленты в цикле: каждый кадр между опросами двигается.
+  api.updateLineStatus(lineStatus('RUNNING', {
+    step: 3,
+    controls: controls({stop: true, exit: true}),
+    process: {
+      phase: 'CONVEYOR_MOVING', label: 'belt moves', positions: [0],
+      conveyor: {pos: 0, tgt: 100, mov: 1, wait: 0},
+    },
+  }));
+  clock += 16;
+  api.advanceBelt(clock);
+  let movingFrames = 0;
+  let totalFrames = 0;
+  for (let poll = 1; poll <= 8; poll++) {
+    api.updateLineStatus(lineStatus('RUNNING', {
+      step: 3,
+      controls: controls({stop: true, exit: true}),
+      process: {
+        phase: 'CONVEYOR_MOVING', label: 'belt moves', positions: [0],
+        conveyor: {pos: poll * 12, tgt: 100, mov: 1, wait: 0},
+      },
+    }));
+    for (let frame = 0; frame < 6; frame++) {
+      clock += 16;
+      if (api.advanceBelt(clock)) movingFrames++;
+      totalFrames++;
+    }
+  }
+  assert(movingFrames === totalFrames, 'belt travel animates on every frame between polls');
+  assert(beltRunning(), 'moving belt marks the interface as running');
+  assert(Number(beltVar('--belt-speed')) > 0, 'belt speed variable follows the controller');
+  assert(Number(beltVar('--belt-intra')) > 0, 'part path offset follows the step progress');
+  assert(beltReadout().startsWith('ПРИВОД · ХОД'), 'cycle travel readout shows real progress');
+
+  // Остановка ленты обязана останавливать интерфейс.
+  api.updateLineStatus(lineStatus('RUNNING', {
+    step: 4,
+    controls: controls({stop: true, exit: true}),
+    process: {phase: 'STEP_COMPLETE', label: 'step done', positions: [], conveyor: {}},
+  }));
+  for (let frame = 0; frame < 60; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  const restingPhase = beltVar('--belt-phase');
+  clock += 16;
+  api.advanceBelt(clock);
+  assert(beltVar('--belt-phase') === restingPhase, 'stopped belt freezes the interface');
+  assert(!beltRunning(), 'stopped belt clears the running marker');
+
+  // Ручное удержание двигает ленту, отпускание — останавливает.
+  api.updateLineStatus(lineStatus('IDLE', {
+    controls: controls({start: true, exit: true, jog_hold: true}),
+    jog: {...currentStatus.jog, active: true, busy: true, direction: '+'},
+  }));
+  // Первый кадр подхватывает новый счётчик шага, а не рисует ход ленты.
+  clock += 16;
+  api.advanceBelt(clock);
+  const jogPhaseBefore = Number(beltVar('--belt-phase'));
+  for (let frame = 0; frame < 30; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  assert(Number(beltVar('--belt-phase')) > jogPhaseBefore, 'JOG hold drives the belt forward');
+  assert(beltReadout() === 'ПРИВОД · РУЧНОЙ ХОД', 'manual travel readout');
+
+  api.updateLineStatus(lineStatus('IDLE', {
+    controls: controls({start: true, exit: true, jog_hold: true}),
+    jog: {...currentStatus.jog, active: true, busy: false, direction: null},
+  }));
+  for (let frame = 0; frame < 60; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  const jogRest = beltVar('--belt-phase');
+  clock += 16;
+  api.advanceBelt(clock);
+  assert(beltVar('--belt-phase') === jogRest, 'released JOG stops the interface too');
+
+  // Коррекция в паузе двигает ленту ровно на подтверждённые микрошаги.
+  api.updateLineStatus(pauseStatus({pause: {hold_busy: true, hold_direction: '+'}}));
+  const nudgePhase = Number(beltVar('--belt-phase'));
+  api.updateLineStatus(pauseStatus({
+    pause: {hold_busy: true, hold_direction: '+', nudge_offset: 2000},
+  }));
+  for (let frame = 0; frame < 40; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  assert(Number(beltVar('--belt-phase')) > nudgePhase, 'belt correction moves the interface');
+  assert(beltReadout() === 'ПРИВОД · КОРРЕКЦИЯ', 'correction travel readout');
+
+  // Оси распределителя вращают кулачок ровно по своим координатам.
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    dist1_position: 170, dist1_max: 340, dist1_state: 'MOVING',
+    dist2_position: 340, dist2_max: 340, dist2_state: 'IDLE',
+  }));
+  assert(Number(beltVar('--dist1-turn')) === 37, 'DIST1 cam angle follows the axis coordinate');
+  assert(Number(beltVar('--dist2-turn')) === 74, 'DIST2 cam angle follows the axis coordinate');
+  assert(window.document.getElementById('dist1-card').classList.contains('is-moving'), 'moving blade is marked');
+  assert(!window.document.getElementById('dist2-card').classList.contains('is-moving'), 'resting blade is still');
+
+  // Съёмка, анализ и сортировка отражают текущую фазу шага.
+  const cameraContainer = window.document.querySelector('.camera-container');
+  const phaseCases = [
+    ['CAMERA_CAPTURE', 'is-capturing'],
+    ['SPIDER_ANALYSIS', 'is-analyzing'],
+    ['ROUTE_DROP', 'is-routing'],
+  ];
+  for (const [phase, marker] of phaseCases) {
+    api.updateLineStatus(lineStatus('RUNNING', {
+      controls: controls({stop: true, exit: true}),
+      process: {phase, label: phase, positions: [0], conveyor: {}},
+    }));
+    assert(cameraContainer.classList.contains(marker), `${phase} drives ${marker}`);
+  }
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    process: {phase: 'STEP_COMPLETE', label: 'idle', positions: [], conveyor: {}},
+  }));
+  assert(
+    phaseCases.every(([, marker]) => !cameraContainer.classList.contains(marker)),
+    'finished step stops the frame animations',
+  );
+
+  // Ленты и слои эффектов существуют и не рисуются inline-стилями.
+  assert(window.document.querySelectorAll('.belt-lane-strip').length >= 6, 'belt lanes are built');
+  assert(window.document.querySelectorAll('#line-cells .line-cell-fx').length === 8, 'every cell has an event layer');
+  assert(
+    [...window.document.querySelectorAll('.line-cell-main')].every(el => !el.style.transform),
+    'part path movement comes from belt variables, not inline styles',
+  );
+
+  // Потеря связи замораживает интерфейс: движения без телеметрии нет.
+  api.markUiOffline();
+  for (let frame = 0; frame < 30; frame++) {
+    clock += 16;
+    api.advanceBelt(clock);
+  }
+  assert(!beltRunning(), 'offline backend freezes every animation');
+  assert(beltReadout() === 'ПРИВОД · СТОП', 'offline drive readout');
+  api.state.offline = false;
+  window.document.getElementById('main').classList.remove('ui-offline');
+
+  console.log('UI INTERACTION MATRIX PASS: 22 groups');
   dom.window.close();
 }
 
