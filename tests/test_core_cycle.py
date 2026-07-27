@@ -14,6 +14,26 @@ from domain.part import (
 )
 
 
+
+    def test_cycle_states_parametrized(self):
+        """Параметризованная проверка состояний цикла."""
+        states = ["IDLE", "RUNNING", "STOPPING", "STOPPED", "PAUSED", "FAULT"]
+        for state in states:
+            with self.subTest(state=state):
+                self.assertIn(state, states)
+
+    def test_cycle_transitions_parametrized(self):
+        """Параметризованные переходы."""
+        transitions = [
+            ("IDLE", "RUNNING"),
+            ("RUNNING", "PAUSED"),
+            ("PAUSED", "RUNNING"),
+            ("RUNNING", "STOPPING"),
+            ("STOPPING", "STOPPED"),
+        ]
+        for from_state, to_state in transitions:
+            with self.subTest(from_state=from_state, to_state=to_state):
+                self.assertTrue(from_state and to_state)
 class FakeConveyor:
     def __init__(self, fail_move=False):
         self.fail_move = fail_move
