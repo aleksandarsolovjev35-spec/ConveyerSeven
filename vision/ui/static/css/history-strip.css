@@ -1,0 +1,87 @@
+/* history-strip.css — Line Monitor UI module */
+
+/* ─── History ─────────────────────────────────────────────────────── */
+
+.history {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    flex-grow: 0;
+    overflow: visible;
+}
+
+.history-title {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    flex: 0 0 112px;
+}
+
+.history-cards {
+    flex: 1;
+    display: flex;
+    gap: 5px;
+    overflow: hidden;
+    padding: 2px;
+}
+
+.history-card {
+    flex: 1;
+    border: 1px solid;
+    border-radius: var(--radius-sm);
+    padding: 3px 7px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-width: 72px;
+    background: rgba(0, 0, 0, 0.3);
+    transition:
+        background-color var(--t-normal) var(--ease),
+        border-color var(--t-normal) var(--ease);
+    cursor: pointer;
+}
+
+.history-card:hover {
+    border-color: var(--text-dim);
+}
+
+.history-card.cat-good    { border-color: var(--ok); background: var(--ok-bg); }
+.history-card.cat-bad     { border-color: var(--bad); background: var(--bad-bg); }
+.history-card.cat-cleanup { border-color: var(--warn); background: var(--warn-bg); }
+
+.history-card.cat-good:hover { border-color: var(--ok); }
+.history-card.cat-bad:hover { border-color: var(--bad); }
+.history-card.cat-cleanup:hover { border-color: var(--warn); }
+
+.history-card-id {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 500;
+}
+
+.history-card-symbol {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.history-card.cat-good .history-card-symbol    { color: var(--ok); }
+.history-card.cat-bad .history-card-symbol     { color: var(--bad); }
+.history-card.cat-cleanup .history-card-symbol { color: var(--warn); }
+
+.history-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 12px;
+    font-family: var(--font-mono);
+}
+

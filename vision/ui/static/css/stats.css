@@ -1,0 +1,379 @@
+/* stats.css — Line Monitor UI module */
+
+/* ─── Stats panel ─────────────────────────────────────────────────── */
+
+.stats-panel {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 10px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-height: 0;
+}
+
+.stats-panel::-webkit-scrollbar { width: 6px; }
+.stats-panel::-webkit-scrollbar-track { background: transparent; }
+.stats-panel::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+.stats-summary {
+    display: block;
+    flex: 0 0 auto;
+}
+
+.accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 28px;
+    padding: 5px 7px;
+    color: var(--text-dim);
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+}
+
+.accordion-chevron {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: var(--text-dim);
+    stroke-width: 1.8;
+    transition: transform 180ms var(--ease);
+}
+
+.stats-summary.is-open .accordion-chevron {
+    transform: rotate(180deg);
+}
+
+.stats-body {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 5px;
+    margin-top: 5px;
+}
+
+.frame-analysis-panel {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+    padding: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--panel-raised);
+}
+
+.frame-analysis-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--border);
+}
+
+.frame-analysis-header h2 {
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+}
+
+.frame-analysis-header span {
+    color: var(--accent);
+    font: 700 8px var(--font-mono);
+    text-align: right;
+}
+
+.frame-analysis-message {
+    padding: 7px 0;
+    color: var(--text-dim);
+    font-size: 9px;
+    line-height: 1.35;
+}
+
+.frame-analysis-group + .frame-analysis-group { margin-top: 8px; }
+.frame-analysis-group h3 {
+    margin-bottom: 4px;
+    color: var(--text-muted);
+    font-size: 8px;
+    letter-spacing: 1px;
+}
+
+.frame-analysis-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.frame-analysis-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+    align-items: center;
+    min-height: 23px;
+    padding: 3px 5px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-1);
+    font: 8px var(--font-mono);
+}
+
+.frame-analysis-item span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-dim);
+}
+
+.frame-analysis-item.has-detail { align-items: start; }
+.frame-analysis-reason {
+    grid-column: 1 / -1;
+    display: block;
+    padding-top: 3px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font: 8px/1.4 var(--font-mono);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.frame-analysis-item.triggered .frame-analysis-reason { color: var(--bad); }
+.frame-analysis-item.skipped .frame-analysis-reason { color: var(--warn); }
+
+.frame-analysis-item b { color: var(--text); white-space: nowrap; }
+.frame-analysis-item.ok { border-left: 2px solid var(--ok); }
+.frame-analysis-item.triggered,
+.frame-analysis-item.error { border-left: 2px solid var(--bad); }
+.frame-analysis-item.skipped { border-left: 2px solid var(--warn); }
+.frame-analysis-item.triggered b,
+.frame-analysis-item.error b { color: var(--bad); }
+.frame-analysis-item.skipped b { color: var(--warn); }
+.frame-analysis-item.ok b { color: var(--ok); }
+
+.frame-analysis-empty {
+    padding: 5px;
+    color: var(--text-muted);
+    font-size: 9px;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+}
+
+.stats-title {
+    grid-column: 1 / -1;
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    padding: 0 0 5px;
+    border-bottom: 1px solid var(--border);
+    margin: 0 0 1px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.stats-title::before {
+    content: '';
+    width: 2px;
+    height: 11px;
+    background: var(--accent);
+    border-radius: 1px;
+}
+
+.stats-row {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    min-height: 42px;
+    padding: 5px 7px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-1);
+}
+
+.stats-row.stats-half { grid-column: span 3; }
+.stats-row.stats-third { grid-column: span 2; }
+
+.stats-label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 8px;
+    line-height: 1.2;
+    text-transform: uppercase;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 0.35px;
+    font-weight: 650;
+}
+
+.stats-value {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 16px;
+    line-height: 1.25;
+    font-weight: 700;
+    transition: color var(--t-normal);
+}
+
+.stats-value.good { color: var(--ok); }
+.stats-value.bad  { color: var(--bad); }
+.stats-value.warn { color: var(--warn); }
+
+/* ─── Line cells ──────────────────────────────────────────────────── */
+
+.line-cells-section {
+    margin-top: 16px;
+}
+
+.line-cells-section > .stats-label {
+    margin-bottom: 8px;
+    display: block;
+}
+
+.line-cells-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.line-cells {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+}
+
+.line-cell {
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-1);
+    transition:
+        background-color var(--t-fast) var(--ease),
+        border-color var(--t-fast) var(--ease),
+        color var(--t-fast) var(--ease);
+    position: relative;
+    overflow: hidden;
+}
+
+.line-cell.occupied {
+    background: var(--accent-glow);
+    border-color: var(--accent);
+    color: var(--text);
+}
+
+.line-cell.occupied::after {
+    content: none;
+}
+
+.line-cell.occupied.cell-good {
+    background: var(--ok-bg);
+    border-color: var(--ok);
+    color: var(--ok);
+}
+
+.line-cell.occupied.cell-bad {
+    background: var(--bad-bg);
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
+.line-cell.occupied.cell-cleanup {
+    background: var(--warn-bg);
+    border-color: var(--warn);
+    color: var(--warn);
+}
+
+/* ─── Defects ─────────────────────────────────────────────────────── */
+
+.defects-section { margin-top: 16px; }
+.defects-section .stats-label { margin-bottom: 8px; display: block; }
+
+.defects-list { list-style: none; }
+
+.defects-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    background: var(--bad-bg);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--bad);
+    font-family: var(--font-mono);
+    transition: transform var(--t-fast);
+}
+
+.defects-list li:hover { border-color: var(--bad); }
+
+.defects-list li span {
+    min-width: 0;
+    color: inherit;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.defects-list li b {
+    flex: 0 0 auto;
+    color: var(--text);
+    font-weight: 700;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 1px 8px;
+    border-radius: 999px;
+    text-align: right;
+}
+
+.defects-list li.diagnostic-error {
+    color: var(--bad);
+    border-color: var(--bad);
+}
+
+.defects-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 12px;
+    text-align: center;
+    padding: 12px;
+}
+
+/* ─── Stats service (Empty trays и т.п.) ──────────────────────────── */
+
+.stats-service {
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+}
+
+.stats-service-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 4px 0;
+}
+
+.stats-service-label {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: var(--font-mono);
+}
+
+.stats-service-value {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+}
+

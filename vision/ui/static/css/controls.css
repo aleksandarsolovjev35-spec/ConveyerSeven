@@ -1,0 +1,96 @@
+/* controls.css — Line Monitor UI module */
+
+/* ─── Footer ──────────────────────────────────────────────────────── */
+
+.footer {
+    background: var(--bg-1);
+    border-top: 1px solid var(--border-strong);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--margin);
+}
+
+.buttons {
+    display: flex;
+    gap: 8px;
+}
+
+/* ─── Buttons ─────────────────────────────────────────────────────── */
+
+.btn {
+    --btn-color:      var(--text);
+    --btn-fill:       var(--panel-hover);
+    --btn-fill-glow:  transparent;
+
+    padding: 8px 20px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--btn-color);
+    cursor: pointer;
+    min-width: 112px;
+    height: 40px;
+    background: var(--bg-2);
+    transition:
+        color var(--t-normal) var(--ease),
+        border-color var(--t-normal) var(--ease),
+        background-color var(--t-normal) var(--ease),
+        transform var(--t-fast) var(--ease);
+    position: relative;
+    overflow: hidden;
+    z-index: 0;
+    isolation: isolate;
+}
+
+.btn::before {
+    content: none;
+}
+
+.btn > * { position: relative; z-index: 1; }
+.btn:hover:not(:disabled) { background: var(--btn-fill); }
+.btn:active:not(:disabled) { transform: scale(0.99); transition-duration: 60ms; }
+.btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.btn-flash { animation: btnFlash 0.18s var(--ease); }
+
+@keyframes btnFlash {
+    0%, 100% { outline: 0 solid transparent; }
+    50% { outline: 1px solid currentColor; outline-offset: 2px; }
+}
+
+.btn-start {
+    --btn-color:     var(--ok);
+    --btn-fill:      var(--ok-bg);
+    border-color: var(--ok);
+}
+
+.btn-start:hover:not(:disabled) { color: var(--ok); border-color: var(--ok); }
+
+.btn-stop {
+    --btn-color:     var(--bad);
+    --btn-fill:      var(--bad-bg);
+    border-color: var(--bad);
+}
+
+.btn-stop:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+
+.btn-exit {
+    --btn-color:     var(--bad);
+    --btn-fill:      var(--bad-bg);
+    border-color: var(--bad);
+}
+
+.btn-exit:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+
+.hotkeys {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.25px;
+}
+
