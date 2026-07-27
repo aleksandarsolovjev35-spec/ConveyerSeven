@@ -257,8 +257,9 @@ def main():
 
             # ── Cameras ──────────────────────────────────────────
             monitor.boot_step_start(
-                "cameras", "Открытие камер",
+                "cameras", "Параллельное открытие и проверка 7 камер",
             )
+            cameras_started = time.monotonic()
             try:
                 cameras = CameraManager()
             except Exception as e:
@@ -274,7 +275,10 @@ def main():
                 return
             monitor.boot_step_done(
                 "cameras",
-                f"Открыто камер: {len(cameras.cameras)}",
+                (
+                    f"Открыто камер: {len(cameras.cameras)} за "
+                    f"{time.monotonic() - cameras_started:.2f} с"
+                ),
             )
             _ensure_initialization_active()
 
