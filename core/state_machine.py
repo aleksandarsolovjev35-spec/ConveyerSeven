@@ -79,7 +79,7 @@ class StateMachine:
         callback_args = None
         with self._lock:
             self._exit_requested = True
-            if self._state == State.RUNNING:
+            if self._state in (State.RUNNING, State.PAUSED):
                 key = (self._state, "STOP")
                 new_state = _TRANSITIONS.get(key)
                 if new_state is not None:
