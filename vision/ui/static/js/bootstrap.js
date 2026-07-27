@@ -76,6 +76,30 @@ function setupHotkeys() {
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return;
         }
 
+        // В паузе те же стрелки удерживают ограниченную коррекцию ленты.
+        // Без этой ветки они провалились бы в переключение камер, и одна
+        // и та же клавиша делала бы в JOG и в паузе разные вещи.
+        if (state.pauseActive) {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault();
+                if (!e.repeat && !state.nudgeHoldDirection) {
+                    const direction = e.key === 'ArrowLeft' ? '-' : '+';
+                    const button = els.nudgePanel && els.nudgePanel.querySelector(
+                        `.nudge-btn[data-direction="${
+                            direction === '-' ? 'backward' : 'forward'
+                        }"]`
+                    );
+                    // Кнопка, заблокированная исчерпанным бюджетом или
+                    // встречным движением, не должна обходиться клавишей.
+                    if (button && !button.disabled) {
+                        beginNudgeHold(direction, button);
+                    }
+                }
+                return;
+            }
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return;
+        }
+
         if (e.key === 'Tab') {
             e.preventDefault();
             if (viewModeAllowed()) toggleMode();
@@ -102,12 +126,16 @@ function setupHotkeys() {
 }
 
 window.addEventListener('keyup', e => {
-    if (
-        state.jogHoldDirection
-        && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
-    ) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (state.jogHoldDirection) {
         e.preventDefault();
         releaseJogHold(`key released: ${e.key}`);
+    }
+    // Отпускание клавиши обязано останавливать ленту и в паузе: иначе
+    // удержание продолжилось бы до heartbeat timeout.
+    if (state.nudgeHoldDirection) {
+        e.preventDefault();
+        releaseNudgeHold(`key released: ${e.key}`);
     }
 });
 
@@ -182,6 +210,9 @@ if (window.__TRANSPORTER_UI_TEST__ === true) {
         beginJogHold,
         releaseJogHold,
         clearJogHoldLocalState,
+        beginNudgeHold,
+        releaseNudgeHold,
+        clearNudgeHoldLocalState,
         fetchStatus,
         fetchCameras,
         selectCamera,

@@ -6,6 +6,7 @@ import traceback
 from collections import deque
 
 from core.state_machine import StateMachine, State
+from hardware.jog_controller import MODE_NUDGE_HOLD
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
@@ -221,12 +222,25 @@ class ProductionCycle:
 
     def request_stop(self):
         # STOP из паузы должен снять паузу, иначе дренаж линии не начнётся.
+        self._abort_nudge_hold("stop requested")
         self._pause_requested.clear()
         return self.sm.request_stop()
 
     def request_exit(self):
+        self._abort_nudge_hold("exit requested")
         self._pause_requested.clear()
         return self.sm.request_exit()
+
+    def _abort_nudge_hold(self, reason: str):
+        """Лента не должна продолжать ход коррекции после STOP или EXIT."""
+        if self.jog is None:
+            return
+        if not self.jog.status.get("nudge_hold_busy"):
+            return
+        try:
+            self.jog.release_nudge_hold(reason)
+        except Exception as exc:
+            print(f"[PAUSE] аварийная остановка коррекции: {exc}")
 
     # ─── Пауза внутри производственного цикла ────────────────────
 
@@ -252,6 +266,10 @@ class ProductionCycle:
             if self.state != "PAUSED" or self.exit_requested:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
+                return False
+            # Возобновление во время движущейся ленты рассинхронизировало бы
+            # производственную геометрию с ещё не учтённой коррекцией.
+            if self.jog is not None and self.jog.busy:
                 return False
             offset = self.jog.nudge_offset if self.jog is not None else 0
             self._pause_requested.clear()
@@ -320,6 +338,86 @@ class ProductionCycle:
             return True
         finally:
             self._operation_lock.release()
+
+    # ─── Удержание коррекции в паузе ─────────────────────────────
+
+    def _nudge_hold_allowed(self) -> bool:
+        return not (
+            self.jog is None
+            or self.state not in self.NUDGE_ALLOWED_STATES
+            or self.exit_requested
+            or self._selected_analysis_active
+            or self.jog_active
+            or self.jog.status.get("error")
+            or self._jog_frame_error
+            or self._cancel_motion.is_set()
+        )
+
+    def nudge_hold_start(self, direction: str) -> bool:
+        """Начать удержание ленты в паузе в пределах остатка бюджета."""
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            if not self._nudge_hold_allowed():
+                return False
+            try:
+                accepted = self.jog.start_nudge_hold(direction)
+            except ValueError:
+                return False
+            except Exception as exc:
+                self._handle_fault(f"Ошибка коррекции ленты: {exc}")
+                return False
+            if not accepted:
+                self._refresh_monitor()
+                return False
+            label = (
+                "Коррекция ленты вправо"
+                if direction == "+"
+                else "Коррекция ленты влево"
+            )
+            self._set_process(
+                "PAUSE_NUDGE_HOLD",
+                label,
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+            return True
+        finally:
+            self._operation_lock.release()
+
+    def nudge_hold_heartbeat(self, direction: str) -> bool:
+        if self.jog is None or self.state not in self.NUDGE_ALLOWED_STATES:
+            return False
+        return self.jog.heartbeat(direction, mode=MODE_NUDGE_HOLD)
+
+    def nudge_hold_release(self, reason: str = "button released") -> bool:
+        """Остановить удержание и зафиксировать фактическое смещение."""
+        # Запоздалый release из UI не должен трогать ленту вне паузы.
+        if self.jog is None or self.state not in self.NUDGE_ALLOWED_STATES:
+            return False
+        try:
+            offset = self.jog.release_nudge_hold(reason)
+        except Exception as exc:
+            self._handle_fault(f"Ошибка коррекции ленты: {exc}")
+            return False
+        status = self.jog.status
+        if status.get("nudge_remaining_forward", 1) <= 0 or status.get(
+            "nudge_remaining_backward", 1
+        ) <= 0:
+            self._set_process(
+                "PAUSE_NUDGE_LIMIT",
+                (
+                    "Достигнут предел коррекции "
+                    f"±{status.get('nudge_limit_steps', 0)} микрошагов"
+                ),
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+        else:
+            self._set_process(
+                "PAUSE_NUDGE",
+                f"Коррекция остановлена; сумма {offset:+d} микрошагов",
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+        return True
 
     def distributor_diagnostic(self, command: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -2313,6 +2411,7 @@ class ProductionCycle:
             "stop": (
                 state_name in ("RUNNING", "PAUSED")
                 and not operation_busy
+                and not jog_busy
             ),
             "pause": (
                 state_name == "RUNNING"
@@ -2323,6 +2422,7 @@ class ProductionCycle:
             "resume": (
                 state_name == "PAUSED"
                 and not operation_busy
+                and not jog_busy
                 and not jog_error
                 and not sm_snap["exit_requested"]
             ),
@@ -2333,6 +2433,17 @@ class ProductionCycle:
                 and not jog_busy
                 and not jog_error
                 and not sm_snap["exit_requested"]
+            ),
+            "nudge_hold": (
+                state_name in self.NUDGE_ALLOWED_STATES
+                and self.jog is not None
+                and not jog_error
+                and not self._selected_analysis_active
+                and not sm_snap["exit_requested"]
+                and (
+                    not operation_busy
+                    or bool(jog_snapshot.get("nudge_hold_busy"))
+                )
             ),
             "exit": (
                 not self._shutdown
@@ -2387,6 +2498,13 @@ class ProductionCycle:
                 "remaining_backward": jog_snapshot.get(
                     "nudge_remaining_backward", 0,
                 ),
+                "hold_busy": bool(jog_snapshot.get("nudge_hold_busy")),
+                "hold_direction": (
+                    jog_snapshot.get("direction")
+                    if jog_snapshot.get("nudge_hold_busy")
+                    else None
+                ),
+                "hold_speed": jog_snapshot.get("pause_hold_speed", 0),
             },
             "diagnostic_allowed": diagnostic_allowed,
             "diagnostic_busy": operation_busy,

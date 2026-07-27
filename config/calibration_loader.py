@@ -12,7 +12,9 @@ DEFAULTS = {
     "axis_speed":             300,
     "axis_accel":             100,
     "micro_steps":            500,
-    "nudge_limit_steps":      1000,
+    "nudge_limit_steps":      2000,
+    "pause_hold_speed":       2000,
+    "nudge_hold_chunk_steps": 100,
     "jog_hold_steps":         1_000_000,
     "normal_steps":           19048,
 }
@@ -46,6 +48,8 @@ def _validate(data: dict) -> dict:
         "axis_accel",
         "micro_steps",
         "nudge_limit_steps",
+        "pause_hold_speed",
+        "nudge_hold_chunk_steps",
         "jog_hold_steps",
         "normal_steps",
     )
@@ -55,6 +59,26 @@ def _validate(data: dict) -> dict:
         raise ValueError("micro_steps должен быть в диапазоне 1..5000")
     if not 1 <= data["nudge_limit_steps"] <= 5000:
         raise ValueError("nudge_limit_steps должен быть в диапазоне 1..5000")
+    # Удержание в паузе идёт на пониженной скорости: на производственных
+    # 20000 шаг/с весь бюджет коррекции выбирается за сотые доли секунды и
+    # кнопку невозможно отпустить вовремя.
+    if not 100 <= data["pause_hold_speed"] <= data["conveyor_speed"]:
+        raise ValueError(
+            "pause_hold_speed должен быть в диапазоне 100..conveyor_speed"
+        )
+    # Отпускание кнопки применяется на границе чанка: слишком крупный чанк
+    # означал бы, что лента едет заметно дольше, чем держали кнопку.
+    if not 1 <= data["nudge_hold_chunk_steps"] <= data["nudge_limit_steps"]:
+        raise ValueError(
+            "nudge_hold_chunk_steps должен быть в диапазоне "
+            "1..nudge_limit_steps"
+        )
+    chunk_seconds = data["nudge_hold_chunk_steps"] / data["pause_hold_speed"]
+    if chunk_seconds > 0.2:
+        raise ValueError(
+            "Чанк коррекции должен проходиться быстрее 0.2s, иначе лента "
+            "заметно едет после отпускания кнопки"
+        )
     if data["micro_steps"] > data["nudge_limit_steps"]:
         raise ValueError(
             "micro_steps не может превышать nudge_limit_steps: "
