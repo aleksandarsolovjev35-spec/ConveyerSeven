@@ -1,0 +1,9 @@
+{
+    "INPUT_LEFT": 0,
+    "INPUT_RIGHT": 3,
+    "SPIDER_LEFT": 1,
+    "SPIDER_RIGHT": 4,
+    "SPIDER_IN": 5,
+    "SPIDER_OUT": 6,
+    "TOP": 2
+}

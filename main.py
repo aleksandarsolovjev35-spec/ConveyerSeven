@@ -1,0 +1,676 @@
+# main.py
+
+import os
+import signal
+import threading
+import time
+
+import webview
+
+from config import load_calibration
+
+from hardware.serial_transport import SerialTransport
+from hardware.port_discovery   import find_controller
+from hardware.axis             import Axis
+from hardware.conveyor         import Conveyor
+from hardware.distributor      import Distributor
+from hardware.jog_controller   import JogController
+
+from vision.camera_manager             import CameraManager
+from vision.camera_calibration_console import launch_camera_calibrator
+from vision.vision_cluster             import VisionCluster
+from vision.ui                         import LiveMonitor
+
+from domain.threshold_loader  import ThresholdLoader
+from core.decision_engine     import DecisionEngine
+from core.production_cycle    import ProductionCycle
+
+from inspection.debug_recorder import DebugRecorder
+from inspection.inspector      import Inspector
+from inspection.part_archive   import PartArchive
+
+
+CYCLE_JOIN_TIMEOUT   = 15.0
+INIT_JOIN_TIMEOUT    = 60.0
+GRACEFUL_EXIT_TIMEOUT = 135.0
+COMPRESS_TIMEOUT     = 60.0
+ERROR_CLOSE_DELAY    = 5.0
+
+
+def main():
+
+    if not os.path.exists("camera_mapping.json"):
+        if not launch_camera_calibrator("camera_mapping.json"):
+            print(
+                "[STARTUP] camera_mapping.json не создан; "
+                "основное приложение не запускается"
+            )
+            return
+
+    monitor = LiveMonitor(
+        start_callback=None,
+        stop_callback=None,
+        exit_callback=None,
+        fullscreen=True,
+    )
+
+    monitor.server.start_server(
+        host=monitor.host,
+        port=monitor.port,
+    )
+
+    cameras      = None
+    transport    = None
+    cycle        = None
+    cycle_thread = None
+    init_thread  = None
+    archive      = None
+    shutdown_requested = threading.Event()
+
+    exit_press_count = 0
+    exit_lock = threading.Lock()
+
+    # ─── Exit logic ──────────────────────────────────────────────
+
+    def handle_exit_request():
+        nonlocal exit_press_count
+        shutdown_requested.set()
+        if cycle is None and transport is not None:
+            try:
+                transport.send("G1")
+                transport.send("G25")
+            except Exception as exc:
+                print(f"[EXIT] Startup stop failed: {exc}")
+
+        with exit_lock:
+            exit_press_count += 1
+            count = exit_press_count
+
+        force = count > 1 or bool(cycle and cycle.state == "FAULT")
+        if force:
+            print("[EXIT] Force exit")
+            if cycle:
+                cycle.request_force_exit()
+        else:
+            print("[EXIT] Штатная остановка → завершение деталей на линии")
+            if cycle:
+                cycle.request_exit()
+
+        _schedule_close(force=force)
+
+    def _schedule_close(force: bool = False):
+        def _wait_and_close():
+            started = time.monotonic()
+            if cycle_thread and cycle_thread.is_alive():
+                timeout = (
+                    CYCLE_JOIN_TIMEOUT if force else GRACEFUL_EXIT_TIMEOUT
+                )
+                cycle_thread.join(timeout=timeout)
+                waited = time.monotonic() - started
+                print(f"[EXIT] Ожидание цикла: {waited:.2f} с")
+                if cycle_thread.is_alive() and not force:
+                    print(
+                        "[EXIT] Линия ещё выполняет штатную остановку; окно остаётся открытым. "
+                        "Нажмите ВЫХОД второй раз для принудительного завершения."
+                    )
+                    return
+            monitor.close_window()
+
+        threading.Thread(
+            target=_wait_and_close, daemon=True,
+        ).start()
+
+    def _delayed_shutdown(delay: float = ERROR_CLOSE_DELAY):
+        """Оставить startup-ошибку на splash до решения оператора."""
+        del delay
+        print("[INIT] Startup failed; waiting for operator to close the UI")
+
+    # EXIT должен работать даже при ошибке до создания ProductionCycle.
+    monitor.exit_callback = handle_exit_request
+
+    def _ensure_initialization_active():
+        if shutdown_requested.is_set():
+            raise RuntimeError("initialization cancelled by operator")
+
+    # ─── System init ─────────────────────────────────────────────
+
+    def initialize_system():
+        nonlocal cameras, transport, cycle, cycle_thread, archive
+
+        try:
+            _ensure_initialization_active()
+            calib = load_calibration()
+            _ensure_initialization_active()
+
+            # ── Serial (автопоиск) ───────────────────────────────
+            monitor.boot_step_start(
+                "serial", "Поиск контроллера",
+            )
+            serial_baud = int(os.environ.get(
+                "SERIAL_BAUD", "115200",
+            ))
+            preferred_port = os.environ.get("SERIAL_PORT")
+
+            try:
+                found_port, port_message = find_controller(
+                    baudrate=serial_baud,
+                    preferred_port=preferred_port,
+                )
+
+                if found_port is None:
+                    monitor.boot_step_error(
+                        "serial", port_message,
+                    )
+                    _delayed_shutdown()
+                    return
+
+                transport = SerialTransport(
+                    port=found_port, baudrate=serial_baud,
+                )
+                # Start from a stopped controller before any configuration.
+                transport.send("G1")
+                transport.send("G25")
+            except Exception as e:
+                monitor.boot_step_error(
+                    "serial",
+                    f"Ошибка последовательного порта: {e}",
+                )
+                _delayed_shutdown()
+                return
+
+            monitor.boot_step_done(
+                "serial",
+                f"Контроллер: {found_port} @ {serial_baud}",
+            )
+            _ensure_initialization_active()
+
+            # ── Hardware ─────────────────────────────────────────
+            monitor.boot_step_start(
+                "hardware", "Инициализация оборудования",
+            )
+            try:
+                conveyor = Conveyor(
+                    transport,
+                    speed=calib["conveyor_speed"],
+                    accel=calib["conveyor_accel"],
+                    steps_per_division=calib["normal_steps"],
+                    divisions_per_movement=2,
+                )
+                dist1_axis = Axis(
+                    transport,
+                    axis_id=0,
+                    minimum=0,
+                    maximum=calib["dist1_open_position"],
+                    speed=calib["axis_speed"],
+                    accel=calib["axis_accel"],
+                )
+                dist2_axis = Axis(
+                    transport,
+                    axis_id=1,
+                    minimum=0,
+                    maximum=max(
+                        calib["dist2_bad_position"],
+                        calib["dist2_cleanup_position"],
+                    ),
+                    speed=calib["axis_speed"],
+                    accel=calib["axis_accel"],
+                )
+                distributor = Distributor(
+                    dist1_axis=dist1_axis,
+                    dist2_axis=dist2_axis,
+                    dist1_open_position=calib[
+                        "dist1_open_position"
+                    ],
+                    dist2_bad_position=calib[
+                        "dist2_bad_position"
+                    ],
+                    dist2_cleanup_position=calib[
+                        "dist2_cleanup_position"
+                    ],
+                    drop_time=calib["drop_time"],
+                )
+                if (
+                    distributor.dist1_open_position != calib["dist1_open_position"]
+                    or distributor.dist2_bad_position != calib["dist2_bad_position"]
+                    or distributor.dist2_cleanup_position
+                    != calib["dist2_cleanup_position"]
+                ):
+                    raise RuntimeError(
+                        "Distributor endpoints do not match calibration.json"
+                    )
+                distributor.cancel_check = shutdown_requested.is_set
+                jog = JogController(
+                    transport=transport,
+                    calibration=calib,
+                )
+            except Exception as e:
+                monitor.boot_step_error(
+                    "hardware",
+                    f"Ошибка оборудования: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done(
+                "hardware", "Лента и две оси инициализированы",
+            )
+            _ensure_initialization_active()
+
+            # ── Cameras ──────────────────────────────────────────
+            monitor.boot_step_start(
+                "cameras", "Открытие камер",
+            )
+            try:
+                cameras = CameraManager()
+            except Exception as e:
+                print(
+                    f"[CAMERA] Ошибка инициализации: "
+                    f"{type(e).__name__}: {e}"
+                )
+                monitor.boot_step_error(
+                    "cameras",
+                    f"Ошибка камеры: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done(
+                "cameras",
+                f"Открыто камер: {len(cameras.cameras)}",
+            )
+            _ensure_initialization_active()
+
+            # ── Models load ──────────────────────────────────────
+            monitor.boot_step_start(
+                "models_load", "Загрузка моделей",
+            )
+            try:
+                vision = VisionCluster(device="cpu")
+            except Exception as e:
+                monitor.boot_step_error(
+                    "models_load",
+                    f"Ошибка загрузки моделей: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done(
+                "models_load",
+                f"Загружено моделей: {len(vision.models)}",
+            )
+            _ensure_initialization_active()
+
+            # ── Models warmup ────────────────────────────────────
+            monitor.boot_step_start(
+                "models_warm", "Прогрев моделей",
+            )
+            try:
+                vision.warmup()
+            except Exception as e:
+                monitor.boot_step_error(
+                    "models_warm",
+                    f"Ошибка прогрева моделей: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done(
+                "models_warm", "Прогрев завершён",
+            )
+            _ensure_initialization_active()
+
+            # ── Inspection pipeline ──────────────────────────────
+            monitor.boot_step_start(
+                "inspection", "Настройка системы контроля",
+            )
+            try:
+                thresholds = ThresholdLoader().get_all()
+                decision   = DecisionEngine(thresholds=thresholds)
+                recorder = DebugRecorder(
+                    folder="debug_frames",
+                    enabled=False,
+                    save_interval=1,
+                )
+                inspector = Inspector(
+                    vision=vision,
+                    decision=decision,
+                    recorder=recorder,
+                )
+                archive = PartArchive(
+                    root_folder="archive", enabled=True,
+                )
+                monitor.server.archive = archive
+            except Exception as e:
+                monitor.boot_step_error(
+                    "inspection",
+                    f"Ошибка настройки контроля: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done(
+                "inspection",
+                f"Настроено правил: {len(decision.rules)}",
+            )
+            _ensure_initialization_active()
+
+            # ── Production cycle ─────────────────────────────────
+            monitor.boot_step_start(
+                "cycle", "Создание производственного цикла",
+            )
+            try:
+                _ensure_initialization_active()
+                print("[HARDWARE] Homing distributor axes...")
+                distributor.initialize()
+                _ensure_initialization_active()
+                cycle = ProductionCycle(
+                    conveyor=conveyor,
+                    cameras=cameras,
+                    inspector=inspector,
+                    distributor=distributor,
+                    monitor=monitor,
+                    archive=archive,
+                    jog=jog,
+                )
+                monitor.start_callback = cycle.request_start
+                monitor.stop_callback  = cycle.request_stop
+                monitor.exit_callback  = handle_exit_request
+                monitor.distributor_diagnostic_callback = (
+                    cycle.distributor_diagnostic
+                )
+                monitor.camera_diagnostic_callback = (
+                    cycle.diagnostic_check_cameras
+                )
+                monitor.vision_rule_diagnostic_callback = (
+                    cycle.diagnostic_check_vision_rules
+                )
+                monitor.selected_model_analysis_callback = (
+                    cycle.diagnostic_analyze_selected_camera
+                )
+                monitor.selected_model_release_callback = (
+                    cycle.diagnostic_release_selected_camera
+                )
+
+                monitor.jog_enter_callback = cycle.enter_jog
+                monitor.jog_exit_callback = cycle.exit_jog
+                monitor.jog_hold_start_callback = cycle.jog_hold_start
+                monitor.jog_hold_heartbeat_callback = cycle.jog_hold_heartbeat
+                monitor.jog_hold_release_callback = cycle.jog_hold_release
+            except Exception as e:
+                monitor.boot_step_error(
+                    "cycle",
+                    f"Ошибка создания цикла: {e}",
+                )
+                _delayed_shutdown()
+                return
+            monitor.boot_step_done("cycle")
+            _ensure_initialization_active()
+
+            # ── Preview ──────────────────────────────────────────
+            monitor.boot_step_start(
+                "preview", "Получение начальных кадров",
+            )
+            try:
+                preview_frames = cameras.capture_all()
+                monitor.update(
+                    frames=preview_frames,
+                    vision_results={},
+                    rule_results=[],
+                    line_status=_make_idle_status(distributor),
+                    recent_parts=[],
+                )
+                monitor.boot_step_done(
+                    "preview", "Начальные кадры получены",
+                )
+            except Exception as e:
+                monitor.boot_step_error(
+                    "preview", f"Ошибка получения начальных кадров: {e}",
+                )
+                _delayed_shutdown()
+                return
+
+            _ensure_initialization_active()
+
+            # ── Start cycle thread ───────────────────────────────
+            monitor.boot_step_start(
+                "ready", "Запуск системы",
+            )
+            cycle_thread = threading.Thread(
+                target=cycle.start, daemon=True,
+            )
+            cycle_thread.start()
+            _ensure_initialization_active()
+            monitor.boot_step_done(
+                "ready", "Система готова к работе",
+            )
+
+            time.sleep(0.6)
+            monitor.boot_complete()
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            current = monitor.server.boot_current or "init"
+            monitor.boot_step_error(current, str(e))
+            _delayed_shutdown()
+
+    init_thread = threading.Thread(
+        target=initialize_system, daemon=True,
+    )
+    init_thread.start()
+
+    # ─── Signal handler ──────────────────────────────────────────
+
+    def signal_handler(sig, frame):
+        print("\n[SIGINT] Ctrl+C → запрос выхода")
+        handle_exit_request()
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # ─── Console info ────────────────────────────────────────────
+
+    print("=" * 60)
+    print("Система запускается.")
+    print("  F5 ПУСК | F6 СТОП | TAB вид")
+    print("  ESC ВЫХОД (1× штатная остановка, 2× принудительный выход)")
+    print("=" * 60)
+
+    # ─── Main: webview blocks here ───────────────────────────────
+
+    try:
+        window = webview.create_window(
+            title=monitor.window_name,
+            url=f"http://{monitor.host}:{monitor.port}/",
+            fullscreen=monitor.fullscreen,
+            background_color="#0b0f13",
+        )
+        monitor._webview_window = window
+        webview.start()
+
+        print("[UI] Окно закрыто, завершение...")
+
+        if cycle and not cycle.force_exit_requested:
+            cycle.request_force_exit()
+
+        if cycle_thread and cycle_thread.is_alive():
+            cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
+            if cycle_thread.is_alive():
+                print(
+                    "[WARN] cycle thread не завершился за "
+                    f"{CYCLE_JOIN_TIMEOUT}с"
+                )
+
+    finally:
+        shutdown_started = time.monotonic()
+        print("[SHUTDOWN] Завершение...")
+        shutdown_requested.set()
+        if cycle is None and transport is not None:
+            try:
+                transport.send("G1")
+                transport.send("G25")
+            except Exception as exc:
+                print(f"[SHUTDOWN] Startup stop failed: {exc}")
+        if init_thread and init_thread.is_alive():
+            init_thread.join(timeout=INIT_JOIN_TIMEOUT)
+            if init_thread.is_alive():
+                print(
+                    "[SHUTDOWN] Initialization thread did not stop in "
+                    f"{INIT_JOIN_TIMEOUT}s"
+                )
+
+        if cycle and not cycle.force_exit_requested:
+            cycle.request_force_exit()
+        if cycle_thread and cycle_thread.is_alive():
+            cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
+
+        phase_started = time.monotonic()
+        try:
+            monitor.stop_server()
+        except Exception as exc:
+            print(f"[SHUTDOWN] UI server stop failed: {exc}")
+        print(
+            f"[SHUTDOWN] Остановка UI-сервера: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        if cycle_thread and cycle_thread.is_alive():
+            print("[SHUTDOWN] Cycle still active; archive compression skipped")
+        else:
+            _shutdown_compress(archive)
+        print(
+            f"[SHUTDOWN] Архив: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        try:
+            if cameras:
+                cameras.release()
+        except Exception as exc:
+            print(f"[SHUTDOWN] Camera release failed: {exc}")
+        print(
+            f"[SHUTDOWN] Освобождение камер: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        try:
+            if transport:
+                transport.close()
+        except Exception as exc:
+            print(f"[SHUTDOWN] Serial close failed: {exc}")
+        print(
+            f"[SHUTDOWN] Закрытие COM: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        print(
+            f"[SHUTDOWN] Готово за "
+            f"{time.monotonic() - shutdown_started:.2f} с."
+        )
+
+
+# ─── Helpers ─────────────────────────────────────────────────────
+
+def _shutdown_compress(archive):
+    if not archive or not archive.enabled:
+        return
+
+    t = threading.Thread(
+        target=_safe_compress, args=(archive,), daemon=True,
+    )
+    t.start()
+    t.join(timeout=COMPRESS_TIMEOUT)
+    if t.is_alive():
+        print(
+            "[SHUTDOWN] Сжатие архива не завершилось за "
+            f"{COMPRESS_TIMEOUT}с, пропускаем"
+        )
+
+
+def _safe_compress(archive):
+    try:
+        print("[SHUTDOWN] Сжатие архива...")
+        archive.compress(delete_original=True)
+    except Exception as e:
+        print(f"[SHUTDOWN] Ошибка сжатия архива: {e}")
+
+
+def _make_idle_status(distributor) -> dict:
+    return {
+        "state":          "IDLE",
+        "exit_requested": False,
+        "fault_reason":   None,
+        "step":           0,
+        "in_line":        0,
+        "line_parts":     [],
+        "total":          0,
+        "good":           0,
+        "rejected":       0,
+        "cleanup":        0,
+        "empty":          0,
+        "dist1_position": 0,
+        "dist1_max":      distributor.dist1_open_position,
+        "dist1_state":    "IDLE",
+        "dist2_position": 0,
+        "dist2_max":      distributor.dist2_cleanup_position,
+        "dist2_state":    "IDLE",
+        "dist2_target":   "BAD",
+        "last_distributor_action": "-",
+        "axis_position":     0,
+        "axis_max":          distributor.dist1_open_position,
+        "distributor_state": "IDLE",
+        "process": {
+            "phase": "IDLE",
+            "label": "Система готова к пуску",
+            "step": 0,
+            "part_id": None,
+            "positions": [],
+            "conveyor": {},
+            "revision": 0,
+            "updated_at": time.time(),
+        },
+        "diagnostic_allowed": False,
+        "diagnostic_busy": False,
+        "controls": {
+            "start": False,
+            "stop": False,
+            "exit": True,
+            "jog_hold": False,
+            "selected_model_analysis": False,
+            "selected_model_release": False,
+            "distributor_diagnostic": False,
+            "camera_diagnostic": False,
+            "vision_rule_diagnostic": False,
+        },
+        "selected_analysis": {
+            "active": False,
+            "role": None,
+        },
+        "frame_analysis": {
+            "available": False,
+            "kind": None,
+            "active": False,
+            "models": [],
+            "rules": [],
+        },
+        "diagnostics": {
+            "status": "NOT_RUN",
+            "kind": None,
+            "message": "Проверки ещё не запускались",
+            "cameras": [],
+            "models": [],
+            "rules": [],
+            "updated_at": None,
+        },
+        "jog": {
+            "active":      False,
+            "can_enter":   False,
+            "hold_steps":  0,
+            "last_action": "-",
+            "busy":        False,
+            "direction":   None,
+            "error":       None,
+            "live_fps":    0.0,
+        },
+    }
+
+
+if __name__ == "__main__":
+    main()
