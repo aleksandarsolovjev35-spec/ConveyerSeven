@@ -16,7 +16,7 @@ def __getattr__(name):
         from vision.camera_manager import CameraManager
         return CameraManager
     if name in {"calibrate_cameras", "launch_camera_calibrator"}:
-        from tools.camera_calibration_console import (
+        from vision.camera_calibration_console import (
             calibrate_cameras,
             launch_camera_calibrator,
         )
