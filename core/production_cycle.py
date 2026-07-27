@@ -6,6 +6,7 @@ import traceback
 from collections import deque
 
 from core.state_machine import StateMachine, State
+from core.cycle import PauseLogic, JogMode, InspectionStage, MonitorBuilders
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
