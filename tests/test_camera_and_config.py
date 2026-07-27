@@ -542,23 +542,23 @@ class CameraAndConfigTests(unittest.TestCase):
 
             path = self.write_json(temp, "calibration.json", dict(DEFAULTS))
             loaded = load_calibration(path)
-            self.assertEqual(loaded["nudge_limit_steps"], 2000)
+            self.assertEqual(loaded["nudge_limit_steps"], 5000)
             self.assertLess(
                 loaded["nudge_limit_steps"] * 2,
                 loaded["normal_steps"] * 2,
             )
 
-    def test_calibration_requires_reduced_pause_hold_speed(self):
+    def test_calibration_keeps_legacy_pause_hold_speed_validated(self):
         from config.calibration_loader import DEFAULTS
 
         with tempfile.TemporaryDirectory() as temp:
             data = dict(DEFAULTS)
             self.assertLess(
                 data["pause_hold_speed"], data["conveyor_speed"],
-                "Удержание в паузе обязано идти медленнее производственного хода",
+                "legacy pause_hold_speed remains lower than conveyor_speed",
             )
-            # На производственной скорости весь бюджет коррекции
-            # выбирается быстрее, чем оператор отпускает кнопку.
+            # Поле осталось в схеме для обратной совместимости и всё ещё
+            # валидируется, хотя операторский hold в паузе идёт как JOG.
             data["pause_hold_speed"] = data["conveyor_speed"] + 1
             path = self.write_json(temp, "calibration.json", data)
             with self.assertRaisesRegex(ValueError, "pause_hold_speed"):

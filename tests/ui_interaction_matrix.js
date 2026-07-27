@@ -425,7 +425,19 @@ async function main() {
   const cells = [...window.document.querySelectorAll('#line-cells .line-cell')];
   assert(cells[0].textContent === '№1', 'INPUT part ID rendered');
   assert(cells[4].textContent === '№2' && cells[4].classList.contains('process-camera'), 'SPIDER part highlighted');
+  assert(cells[4].querySelector('.line-process-interval.process-analysis.is-active'), 'SPIDER analysis interval highlighted');
   assert(cells[7].textContent === '№3' && cells[7].classList.contains('cell-cleanup'), 'ROUTE cleanup rendered');
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    line_parts: [{id: 2, position: 4, category: 'BAD'}],
+    process: {
+      phase: 'CONVEYOR_MOVING', label: 'belt moves', positions: [0,1,2,3,4,5,6,7],
+      conveyor: {pos: 50, tgt: 100, mov: 1, wait: 0},
+    },
+  }));
+  assert(window.document.querySelector('#line-cells .line-cell.occupied.belt-moving'), 'occupied part animates with conveyor movement');
+  assert(window.document.querySelector('#line-cells .line-cell.empty-slot.belt-moving'), 'empty slots show conveyor movement too');
+  api.updateLineStatus(line);
   api.updateRecentParts([{id: 2, category: 'BAD', decision: 'contacts'}]);
   assert(window.document.getElementById('defects-title').textContent === 'ОСНОВНЫЕ ДЕФЕКТЫ', 'top defects shown while running');
   assert(!window.document.getElementById('defects-section').classList.contains('is-hidden'), 'working defects section visible');
@@ -732,13 +744,13 @@ async function main() {
       requested: false,
       active: true,
       nudge_offset: 0,
-      nudge_limit_steps: 2000,
+      nudge_limit_steps: 5000,
       micro_steps: 500,
-      remaining_forward: 2000,
-      remaining_backward: 2000,
+      remaining_forward: 5000,
+      remaining_backward: 5000,
       hold_busy: false,
       hold_direction: null,
-      hold_speed: 2000,
+      hold_speed: 20000,
       ...(overrides.pause || {}),
     },
   });
@@ -798,14 +810,14 @@ async function main() {
   api.clearNudgeHoldLocalState();
   api.updateLineStatus(pauseStatus({
     pause: {
-      nudge_offset: 2000,
+      nudge_offset: 5000,
       remaining_forward: 0,
-      remaining_backward: 4000,
+      remaining_backward: 10000,
     },
   }));
   assert(nudgeForward.disabled, 'correction limit disables further forward moves');
   assert(!nudgeBackward.disabled, 'correction limit still allows returning back');
-  assert(window.document.getElementById('nudge-offset').textContent === '+2000', 'accumulated correction is shown');
+  assert(window.document.getElementById('nudge-offset').textContent === '+5000', 'accumulated correction is shown');
 
   // Leaving the pause must abort any local hold state.
   api.updateLineStatus(lineStatus('RUNNING', {
@@ -831,7 +843,7 @@ async function main() {
   // A direction with an exhausted budget must not be reachable by keyboard.
   api.clearNudgeHoldLocalState();
   api.updateLineStatus(pauseStatus({
-    pause: {nudge_offset: 2000, remaining_forward: 0, remaining_backward: 4000},
+    pause: {nudge_offset: 5000, remaining_forward: 0, remaining_backward: 10000},
   }));
   calls.length = 0;
   window.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));

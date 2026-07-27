@@ -12,7 +12,7 @@ DEFAULTS = {
     "axis_speed":             300,
     "axis_accel":             100,
     "micro_steps":            500,
-    "nudge_limit_steps":      2000,
+    "nudge_limit_steps":      5000,
     "pause_hold_speed":       2000,
     "nudge_hold_chunk_steps": 100,
     "jog_hold_steps":         1_000_000,
@@ -59,15 +59,15 @@ def _validate(data: dict) -> dict:
         raise ValueError("micro_steps должен быть в диапазоне 1..5000")
     if not 1 <= data["nudge_limit_steps"] <= 5000:
         raise ValueError("nudge_limit_steps должен быть в диапазоне 1..5000")
-    # Удержание в паузе идёт на пониженной скорости: на производственных
-    # 20000 шаг/с весь бюджет коррекции выбирается за сотые доли секунды и
-    # кнопку невозможно отпустить вовремя.
+    # Пауза использует тот же JOG-профиль, что ручное управление до пуска
+    # и после полной остановки; поле оставлено в схеме для совместимости
+    # старых calibration.json и диагностического UI.
     if not 100 <= data["pause_hold_speed"] <= data["conveyor_speed"]:
         raise ValueError(
             "pause_hold_speed должен быть в диапазоне 100..conveyor_speed"
         )
-    # Отпускание кнопки применяется на границе чанка: слишком крупный чанк
-    # означал бы, что лента едет заметно дольше, чем держали кнопку.
+    # Чанковый режим больше не используется операторским UI, но поле
+    # сохраняется в схеме, чтобы существующие calibration.json не ломались.
     if not 1 <= data["nudge_hold_chunk_steps"] <= data["nudge_limit_steps"]:
         raise ValueError(
             "nudge_hold_chunk_steps должен быть в диапазоне "
@@ -76,8 +76,8 @@ def _validate(data: dict) -> dict:
     chunk_seconds = data["nudge_hold_chunk_steps"] / data["pause_hold_speed"]
     if chunk_seconds > 0.2:
         raise ValueError(
-            "Чанк коррекции должен проходиться быстрее 0.2s, иначе лента "
-            "заметно едет после отпускания кнопки"
+            "Legacy nudge_hold_chunk_steps должен соответствовать "
+            "pause_hold_speed быстрее 0.2s"
         )
     if data["micro_steps"] > data["nudge_limit_steps"]:
         raise ValueError(

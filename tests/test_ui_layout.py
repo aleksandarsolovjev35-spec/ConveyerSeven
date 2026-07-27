@@ -41,6 +41,13 @@ class UiLayoutTests(unittest.TestCase):
         self.assertEqual(self.html.count('id="dist1-blade"'), 1)
         self.assertEqual(self.html.count('id="dist2-blade"'), 1)
 
+    def test_startup_text_stays_on_one_line(self):
+        self.assertIn(".splash-status", self.css)
+        self.assertIn(".splash-error-message", self.css)
+        self.assertIn("white-space: nowrap", self.css)
+        self.assertIn("text-overflow: ellipsis", self.css)
+        self.assertNotIn("word-break: break-word", self.css)
+
     def test_startup_error_remains_visible_and_can_be_closed(self):
         self.assertIn('id="splash-exit"', self.html)
         self.assertIn("els.splashExit.addEventListener", self.js)
@@ -387,6 +394,16 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("8 · СОРТИРОВКА", self.html)
         self.assertEqual(self.html.count('class="line-cell" data-pos='), 8)
         self.assertIn("process.positions", self.js)
+        self.assertIn("LINE_PROCESS_INTERVALS", self.js)
+        self.assertIn("line-process-intervals", self.js)
+        self.assertIn("marker.dataset.symbol", self.js)
+        self.assertIn("conveyorMotionState", self.js)
+        self.assertIn("empty-slot", self.js)
+        self.assertIn("line-cell-empty", self.css)
+        self.assertIn("belt-moving", self.css)
+        self.assertIn("process-analysis.is-active", self.css)
+        self.assertIn("grid-template-columns: repeat(5", self.css)
+        self.assertIn("processCameraFlash", self.css)
         self.assertIn("setBladeMarkerPosition(els.dist1Blade", self.js)
         self.assertIn("setBladeMarkerPosition(els.dist2Blade", self.js)
         self.assertIn(
