@@ -75,6 +75,29 @@ class BlockingAfterWarmupCapture(FakeCapture):
         return super().read()
 
 
+class CoordinatedStartupCapture(FakeCapture):
+    def __init__(self, frame, barrier):
+        super().__init__(frame)
+        self.barrier = barrier
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        if self.reads == 1:
+            self.barrier.wait(timeout=1.0)
+        return super().read()
+
+
+class SlowStartupCapture(FakeCapture):
+    def __init__(self, frame, delay):
+        super().__init__(frame)
+        self.delay = float(delay)
+
+    def read(self):
+        time.sleep(self.delay)
+        return super().read()
+
+
 class CameraAndConfigTests(unittest.TestCase):
     def mapping(self):
         return {role: index for index, role in enumerate(sorted(REQUIRED_ROLES))}
@@ -360,6 +383,59 @@ class CameraAndConfigTests(unittest.TestCase):
                 )
             finally:
                 manager.release()
+
+    def test_all_seven_cameras_open_and_preflight_concurrently(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            first_read_barrier = threading.Barrier(len(REQUIRED_ROLES))
+            captures = []
+
+            def factory(camera_id):
+                capture = CoordinatedStartupCapture(
+                    bright,
+                    first_read_barrier,
+                )
+                captures.append(capture)
+                return capture
+
+            started = time.monotonic()
+            manager = CameraManager(mapping_path, capture_factory=factory)
+            elapsed = time.monotonic() - started
+            try:
+                self.assertEqual(len(captures), len(REQUIRED_ROLES))
+                self.assertFalse(first_read_barrier.broken)
+                self.assertLess(elapsed, 1.0)
+            finally:
+                manager.release()
+
+    def test_camera_startup_has_one_bounded_timeout_for_the_full_set(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            captures = []
+
+            def factory(camera_id):
+                capture = SlowStartupCapture(bright, delay=0.25)
+                captures.append(capture)
+                return capture
+
+            started = time.monotonic()
+            with (
+                patch("vision.camera_manager._CAMERA_STARTUP_TIMEOUT", 0.05),
+                patch("vision.camera_manager._CAMERA_STARTUP_CANCEL_GRACE", 0.01),
+                self.assertRaisesRegex(RuntimeError, "общий timeout"),
+            ):
+                CameraManager(mapping_path, capture_factory=factory)
+            self.assertLess(time.monotonic() - started, 0.2)
+
+            # Заблокированный backend нельзя принудительно убить из Python,
+            # но worker обязан освободить handle сразу после возврата read().
+            time.sleep(0.3)
+            self.assertTrue(captures)
+            self.assertTrue(all(capture.released for capture in captures))
 
     def test_selected_camera_read_is_not_blocked_by_other_camera_roles(self):
         with tempfile.TemporaryDirectory() as temp:
