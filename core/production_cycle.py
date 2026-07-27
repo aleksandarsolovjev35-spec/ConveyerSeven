@@ -39,6 +39,8 @@ class ProductionCycle:
     OFFSET_REJECT = 7
 
     JOG_ALLOWED_STATES = ("IDLE", "STOPPED")
+    # Ограниченная коррекция ленты доступна только в паузе внутри цикла.
+    NUDGE_ALLOWED_STATES = ("PAUSED",)
 
     def __init__(
         self,
@@ -121,6 +123,12 @@ class ProductionCycle:
         self._selected_analysis_active = False
         self._selected_analysis_role = None
         self._shutdown = False
+
+        # ── Пауза внутри цикла ─────────────────────────────────
+        # Запрос ставится в любой момент, но применяется только на границе
+        # шага: физический шаг никогда не прерывается на середине.
+        self._pause_requested = threading.Event()
+        self._pause_frame_active = False
 
     # ─── Process telemetry ───────────────────────────────────────
 
@@ -212,10 +220,106 @@ class ProductionCycle:
             self._operation_lock.release()
 
     def request_stop(self):
+        # STOP из паузы должен снять паузу, иначе дренаж линии не начнётся.
+        self._pause_requested.clear()
         return self.sm.request_stop()
 
     def request_exit(self):
+        self._pause_requested.clear()
         return self.sm.request_exit()
+
+    # ─── Пауза внутри производственного цикла ────────────────────
+
+    def request_pause(self) -> bool:
+        """Запросить остановку на ближайшей границе шага."""
+        if self.state != "RUNNING" or self.exit_requested:
+            return False
+        if self._pause_requested.is_set():
+            return True
+        self._pause_requested.set()
+        self._set_process(
+            "PAUSE_REQUESTED",
+            "Пауза будет применена после завершения текущего шага",
+            positions=range(self.OFFSET_REJECT + 1),
+        )
+        return True
+
+    def request_resume(self) -> bool:
+        """Вернуть линию в работу после паузы и коррекции."""
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            if self.state != "PAUSED" or self.exit_requested:
+                return False
+            if self.jog is not None and self.jog.status.get("error"):
+                return False
+            offset = self.jog.nudge_offset if self.jog is not None else 0
+            self._pause_requested.clear()
+            accepted = self.sm.request_resume()
+            if not accepted:
+                return False
+            self._stop_pause_frame_loop()
+            print(f"[PAUSE] resume; накопленная коррекция {offset:+d} микрошагов")
+            self._set_process(
+                "RESUMED",
+                (
+                    "Работа возобновлена; коррекция "
+                    f"{offset:+d} микрошагов внутри ячейки"
+                ),
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+            return True
+        finally:
+            self._operation_lock.release()
+
+    def nudge_belt(self, direction: str, steps: int = None) -> bool:
+        """Ограниченная ручная коррекция ленты в паузе."""
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            if (
+                self.jog is None
+                or self.state not in self.NUDGE_ALLOWED_STATES
+                or self.exit_requested
+                or self._selected_analysis_active
+                or self.jog_active
+            ):
+                return False
+            if self.jog.status.get("error") or self._jog_frame_error:
+                return False
+            if self._cancel_motion.is_set():
+                return False
+            try:
+                applied = self.jog.nudge(direction, steps)
+            except ValueError:
+                # Некорректный запрос оператора не является отказом железа.
+                return False
+            except Exception as exc:
+                self._handle_fault(f"Ошибка коррекции ленты: {exc}")
+                return False
+
+            status = self.jog.status
+            if applied == 0:
+                self._set_process(
+                    "PAUSE_NUDGE_LIMIT",
+                    (
+                        "Достигнут предел коррекции "
+                        f"±{status['nudge_limit_steps']} микрошагов"
+                    ),
+                    positions=range(self.OFFSET_REJECT + 1),
+                )
+            else:
+                self._set_process(
+                    "PAUSE_NUDGE",
+                    (
+                        f"Коррекция ленты {applied:+d}; "
+                        f"сумма {status['nudge_offset']:+d} микрошагов"
+                    ),
+                    positions=range(self.OFFSET_REJECT + 1),
+                )
+            return True
+        finally:
+            self._operation_lock.release()
 
     def distributor_diagnostic(self, command: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -1274,6 +1378,43 @@ class ProductionCycle:
                     print("[EXIT] Force exit.")
                     break
 
+                # Пауза применяется строго между шагами: _run_once никогда
+                # не прерывается, поэтому детали остаются в своих ячейках.
+                if (
+                    self.sm.state == State.RUNNING
+                    and self._pause_requested.is_set()
+                    and not self.sm.exit_requested
+                ):
+                    if self.sm.request_pause():
+                        self._enter_pause_frame()
+                    else:
+                        self._pause_requested.clear()
+                    continue
+
+                if self.sm.state == State.PAUSED:
+                    if self.sm.exit_requested or self.sm.force_exit:
+                        # Выход из паузы не должен оставлять линию в PAUSED.
+                        self._pause_requested.clear()
+                        self._stop_pause_frame_loop()
+                        self.sm.request_stop()
+                        continue
+                    if self._jog_frame_error:
+                        self._handle_fault(
+                            "Ошибка камеры во время паузы: "
+                            f"{self._jog_frame_error}"
+                        )
+                        continue
+                    jog_error = (
+                        self.jog.status.get("error")
+                        if self.jog is not None else None
+                    )
+                    if jog_error:
+                        self._handle_fault(f"Ошибка коррекции ленты: {jog_error}")
+                        continue
+                    self._refresh_monitor()
+                    time.sleep(0.1)
+                    continue
+
                 if self.sm.is_active:
                     # STOP on an already empty line must not advance Conveyor.
                     if self.sm.state == State.STOPPING and not self.parts:
@@ -1332,6 +1473,11 @@ class ProductionCycle:
             self._shutdown = True
             self._cancel_motion.set()
             self._live_capture_pause.clear()
+            self._pause_requested.clear()
+            try:
+                self._stop_pause_frame_loop()
+            except Exception as e:
+                print(f"[SHUTDOWN] stop pause frame loop failed: {e}")
             try:
                 self.exit_jog()
             except Exception as e:
@@ -1347,6 +1493,8 @@ class ProductionCycle:
         self._selected_analysis_active = False
         self._selected_analysis_role = None
         self._live_capture_pause.clear()
+        self._pause_requested.clear()
+        self._stop_pause_frame_loop()
         self._fault_reason = reason
         print(f"[FAULT] {reason}")
         print(
@@ -1896,6 +2044,36 @@ class ProductionCycle:
             self._refresh_monitor()
         return accepted
 
+    # ─── Пауза: живой кадр для наведения ленты ───────────────────
+
+    def _enter_pause_frame(self):
+        """Включить LIVE-поток, чтобы оператор видел лентy во время правки."""
+        if self.jog is not None:
+            # Каждая пауза начинается с чистого накопителя коррекции.
+            self.jog.reset_nudge_offset()
+        offset_limit = (
+            self.jog.status.get("nudge_limit_steps") if self.jog is not None else 0
+        )
+        if not self._pause_frame_active:
+            self._jog_frame_times.clear()
+            self._start_jog_frame_loop()
+            self._pause_frame_active = True
+        print("[PAUSE] линия остановлена на границе шага")
+        self._set_process(
+            "PAUSED",
+            (
+                "Пауза: доступна коррекция ленты "
+                f"±{offset_limit} микрошагов"
+            ),
+            positions=range(self.OFFSET_REJECT + 1),
+        )
+
+    def _stop_pause_frame_loop(self):
+        if not self._pause_frame_active:
+            return
+        self._pause_frame_active = False
+        self._stop_jog_frame_loop()
+
     # ─── JOG live frame loop ─────────────────────────────────────
 
     def _start_jog_frame_loop(self):
@@ -2132,7 +2310,30 @@ class ProductionCycle:
                 and not self._selected_analysis_active
                 and not sm_snap["exit_requested"]
             ),
-            "stop": state_name == "RUNNING" and not operation_busy,
+            "stop": (
+                state_name in ("RUNNING", "PAUSED")
+                and not operation_busy
+            ),
+            "pause": (
+                state_name == "RUNNING"
+                and not self._pause_requested.is_set()
+                and not operation_busy
+                and not sm_snap["exit_requested"]
+            ),
+            "resume": (
+                state_name == "PAUSED"
+                and not operation_busy
+                and not jog_error
+                and not sm_snap["exit_requested"]
+            ),
+            "nudge": (
+                state_name in self.NUDGE_ALLOWED_STATES
+                and self.jog is not None
+                and not operation_busy
+                and not jog_busy
+                and not jog_error
+                and not sm_snap["exit_requested"]
+            ),
             "exit": (
                 not self._shutdown
                 and not operation_busy
@@ -2174,6 +2375,19 @@ class ProductionCycle:
             "axis_max": dist["dist1_max"],
             "distributor_state": dist["dist1_state"],
             "process": dict(self._process),
+            "pause": {
+                "requested": self._pause_requested.is_set(),
+                "active": state_name == "PAUSED",
+                "nudge_offset": jog_snapshot.get("nudge_offset", 0),
+                "nudge_limit_steps": jog_snapshot.get("nudge_limit_steps", 0),
+                "micro_steps": jog_snapshot.get("micro_steps", 0),
+                "remaining_forward": jog_snapshot.get(
+                    "nudge_remaining_forward", 0,
+                ),
+                "remaining_backward": jog_snapshot.get(
+                    "nudge_remaining_backward", 0,
+                ),
+            },
             "diagnostic_allowed": diagnostic_allowed,
             "diagnostic_busy": operation_busy,
             "controls": controls,

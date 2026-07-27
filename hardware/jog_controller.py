@@ -32,6 +32,24 @@ class JogController:
         self._normal_steps_restore = int(calibration["normal_steps"])
         if self._normal_steps_restore <= 0:
             raise ValueError("normal_steps должен быть > 0")
+
+        # ── Ограниченная коррекция ленты внутри паузы ───────────
+        self.micro_steps = int(calibration.get("micro_steps", 500))
+        if not 1 <= self.micro_steps <= 5000:
+            raise ValueError("micro_steps должен быть 1..5000")
+        self.nudge_limit_steps = int(calibration.get("nudge_limit_steps", 1000))
+        if not 1 <= self.nudge_limit_steps <= 5000:
+            raise ValueError("nudge_limit_steps должен быть 1..5000")
+        if self.micro_steps > self.nudge_limit_steps:
+            raise ValueError("micro_steps не может превышать nudge_limit_steps")
+        cell_steps = self._normal_steps_restore * 2
+        if self.nudge_limit_steps * 2 >= cell_steps:
+            raise ValueError(
+                "±nudge_limit_steps должен быть строго меньше шага ячейки "
+                f"{cell_steps}"
+            )
+        # Знаковая сумма всех применённых коррекций текущей паузы.
+        self._nudge_offset = 0
         if not 0.15 <= float(heartbeat_timeout) <= 2.0:
             raise ValueError("heartbeat_timeout должен быть 0.15..2.0s")
         self.heartbeat_timeout = float(heartbeat_timeout)
@@ -62,7 +80,124 @@ class JogController:
                 "direction": self._direction,
                 "heartbeat_timeout_ms": int(self.heartbeat_timeout * 1000),
                 "error": self._worker_error,
+                "micro_steps": self.micro_steps,
+                "nudge_limit_steps": self.nudge_limit_steps,
+                "nudge_offset": self._nudge_offset,
+                "nudge_remaining_forward": (
+                    self.nudge_limit_steps - self._nudge_offset
+                ),
+                "nudge_remaining_backward": (
+                    self.nudge_limit_steps + self._nudge_offset
+                ),
             }
+
+    @property
+    def nudge_offset(self) -> int:
+        """Знаковое накопленное смещение ленты за текущую паузу."""
+        with self._state_lock:
+            return self._nudge_offset
+
+    def reset_nudge_offset(self):
+        """Сбросить накопитель коррекции при входе в новую паузу."""
+        with self._state_lock:
+            self._nudge_offset = 0
+
+    def nudge(self, direction: str, steps: int = None) -> int:
+        """Сдвинуть ленту на ограниченное число микрошагов.
+
+        Возвращает фактически применённое знаковое смещение. Движение
+        синхронное: метод возвращает управление только после подтверждённой
+        остановки ленты, поэтому вызывающий код всегда знает точную позицию.
+        """
+        if direction not in ("+", "-"):
+            raise ValueError("direction должен быть '+' или '-'")
+
+        requested = self.micro_steps if steps is None else int(steps)
+        if requested <= 0:
+            raise ValueError("steps должен быть > 0")
+        # Одно нажатие никогда не превышает разовый предел.
+        if requested > self.nudge_limit_steps:
+            raise ValueError(
+                f"Запрошено {requested} микрошагов при пределе "
+                f"{self.nudge_limit_steps}"
+            )
+
+        with self._state_lock:
+            if self._busy or (self._thread is not None and self._thread.is_alive()):
+                raise RuntimeError("Коррекция запрещена во время удержания JOG")
+            signed_request = requested if direction == "+" else -requested
+            target = self._nudge_offset + signed_request
+            # Клампинг по накопленной сумме, а не только по одному нажатию:
+            # иначе N нажатий увели бы ленту в соседнюю ячейку.
+            clamped = max(
+                -self.nudge_limit_steps,
+                min(self.nudge_limit_steps, target),
+            )
+            applied = clamped - self._nudge_offset
+            if applied == 0:
+                self.last_action = (
+                    f"ЛИМИТ КОРРЕКЦИИ ±{self.nudge_limit_steps}"
+                )
+                return 0
+            self._busy = True
+
+        error = None
+        try:
+            with self._command_lock:
+                self.transport.send(f"G7 S{applied}")
+                self.transport.send("G6 S1")
+                self.transport.send("G3")
+            self._wait_nudge_stop()
+        except Exception as exc:
+            error = exc
+            try:
+                self.transport.send("G1")
+            except Exception as stop_exc:
+                error = RuntimeError(
+                    f"{exc}; аварийная команда G1 не отправлена: {stop_exc}"
+                )
+        finally:
+            # Геометрия обязана восстановиться даже после ошибки: следующий
+            # производственный шаг использует normal_steps и G6 S2.
+            try:
+                self.transport.send(f"G7 S{self._normal_steps_restore}")
+                self.transport.send("G6 S2")
+            except Exception as restore_exc:
+                if error is None:
+                    error = restore_exc
+            with self._state_lock:
+                self._busy = False
+                if error is None:
+                    self._nudge_offset += applied
+                    self.last_action = (
+                        f"КОРРЕКЦИЯ {applied:+d} "
+                        f"(сумма {self._nudge_offset:+d})"
+                    )
+                else:
+                    # Позиция после сбоя неизвестна: не засчитываем смещение
+                    # и выставляем ошибку, чтобы цикл ушёл в FAULT.
+                    self._worker_error = str(error)
+                    self.last_action = f"ERR: {error}"
+
+        if error is not None:
+            raise RuntimeError(f"Коррекция ленты не выполнена: {error}") from error
+        return applied
+
+    def _wait_nudge_stop(self, timeout: float = 15.0):
+        deadline = time.monotonic() + timeout
+        last_i1 = ""
+        last_i2 = ""
+        while time.monotonic() < deadline:
+            last_i1 = self.transport.query("I1", delay=0.05)
+            if Conveyor._parse_motion_reply(last_i1) is True:
+                last_i2 = self.transport.query("I2", delay=0.05)
+                if Conveyor._strict_stop_confirmed(last_i2):
+                    return
+            time.sleep(0.03)
+        raise TimeoutError(
+            f"Коррекция не завершилась за {timeout}s; "
+            f"I1={last_i1!r}; I2={last_i2!r}"
+        )
 
     def start_hold(self, direction: str) -> bool:
         if direction not in ("+", "-"):

@@ -436,6 +436,42 @@ class CameraAndConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "уникальными"):
                 load_camera_mapping(path)
 
+    def test_calibration_rejects_nudge_limit_reaching_neighbour_cell(self):
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            data = dict(DEFAULTS)
+            # ±limit обязан оставаться строго внутри одной ячейки, иначе
+            # накопленная коррекция сдвинет деталь в соседнюю позицию.
+            data["normal_steps"] = 500
+            data["nudge_limit_steps"] = 1000
+            path = self.write_json(temp, "calibration.json", data)
+            with self.assertRaisesRegex(ValueError, "шага ячейки"):
+                load_calibration(path)
+
+    def test_calibration_rejects_press_larger_than_total_budget(self):
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            data = dict(DEFAULTS)
+            data["micro_steps"] = 2000
+            data["nudge_limit_steps"] = 1000
+            path = self.write_json(temp, "calibration.json", data)
+            with self.assertRaisesRegex(ValueError, "nudge_limit_steps"):
+                load_calibration(path)
+
+    def test_calibration_accepts_production_nudge_budget(self):
+        with tempfile.TemporaryDirectory() as temp:
+            from config.calibration_loader import DEFAULTS
+
+            path = self.write_json(temp, "calibration.json", dict(DEFAULTS))
+            loaded = load_calibration(path)
+            self.assertEqual(loaded["nudge_limit_steps"], 1000)
+            self.assertLess(
+                loaded["nudge_limit_steps"] * 2,
+                loaded["normal_steps"] * 2,
+            )
+
     def test_calibration_never_falls_back_after_corruption(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "calibration.json"

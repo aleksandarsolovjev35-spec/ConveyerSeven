@@ -192,6 +192,141 @@ class HardwareTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             JogController(HoldTransport(), {"jog_hold_steps": 1_000_000})
 
+    # ─── Ограниченная коррекция ленты ────────────────────────────
+
+    NUDGE_CALIB = {
+        "micro_steps": 500,
+        "nudge_limit_steps": 1000,
+        "jog_hold_steps": 1_000_000,
+        "normal_steps": 19048,
+    }
+
+    @staticmethod
+    def _nudge_transport():
+        class NudgeTransport(HoldTransport):
+            def query(self, command, delay=0.15):
+                with self.lock:
+                    self.commands.append(command)
+                    if command == "I1":
+                        # Одна итерация движения, затем подтверждённый стоп.
+                        if self.moving:
+                            self.moving = False
+                            return "1"
+                        return "0"
+                    if command == "I2":
+                        return "MOV=0 WAIT=0 lastErr=0"
+                    return ""
+
+        return NudgeTransport()
+
+    def test_nudge_accumulates_and_clamps_at_limit_in_both_directions(self):
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+
+        self.assertEqual(jog.nudge("+"), 500)
+        self.assertEqual(jog.nudge("+"), 500)
+        self.assertEqual(jog.nudge_offset, 1000)
+        # Накопленный лимит достигнут: дальнейшие нажатия не двигают ленту.
+        self.assertEqual(jog.nudge("+"), 0)
+        self.assertEqual(jog.nudge("+"), 0)
+        self.assertEqual(jog.nudge_offset, 1000)
+
+        for _ in range(4):
+            jog.nudge("-")
+        self.assertEqual(jog.nudge_offset, -1000)
+        self.assertEqual(jog.nudge("-"), 0)
+        self.assertEqual(jog.nudge_offset, -1000)
+
+    def test_nudge_never_leaves_one_cell_even_after_many_presses(self):
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        cell_steps = self.NUDGE_CALIB["normal_steps"] * 2
+        for _ in range(200):
+            jog.nudge("+")
+        self.assertEqual(jog.nudge_offset, 1000)
+        self.assertLess(abs(jog.nudge_offset), cell_steps)
+
+    def test_nudge_partial_move_is_clipped_to_remaining_budget(self):
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        jog.nudge("+", steps=800)
+        # Остаток бюджета 200: запрос 500 обязан примениться частично.
+        self.assertEqual(jog.nudge("+", steps=500), 200)
+        self.assertEqual(jog.nudge_offset, 1000)
+        self.assertIn("G7 S200", transport.commands)
+
+    def test_nudge_restores_production_geometry_after_each_move(self):
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        jog.nudge("+")
+        self.assertIn("G7 S500", transport.commands)
+        self.assertIn("G6 S1", transport.commands)
+        self.assertIn("G3", transport.commands)
+        # Производственная геометрия обязана вернуться немедленно.
+        self.assertEqual(transport.commands[-2:], ["G7 S19048", "G6 S2"])
+
+    def test_nudge_rejects_request_above_single_press_limit(self):
+        jog = JogController(self._nudge_transport(), self.NUDGE_CALIB)
+        with self.assertRaises(ValueError):
+            jog.nudge("+", steps=5000)
+        with self.assertRaises(ValueError):
+            jog.nudge("*")
+        self.assertEqual(jog.nudge_offset, 0)
+
+    def test_nudge_offset_resets_between_pauses(self):
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        jog.nudge("+")
+        self.assertEqual(jog.nudge_offset, 500)
+        jog.reset_nudge_offset()
+        self.assertEqual(jog.nudge_offset, 0)
+
+    def test_nudge_is_rejected_while_hold_jog_is_running(self):
+        transport = HoldTransport()
+        jog = JogController(transport, self.NUDGE_CALIB, heartbeat_timeout=0.4)
+        self.assertTrue(jog.start_hold("+"))
+        self.assertTrue(jog.heartbeat("+"))
+        try:
+            with self.assertRaises(RuntimeError):
+                jog.nudge("+")
+        finally:
+            jog.release("test cleanup")
+
+    def test_nudge_failure_does_not_count_offset_and_raises(self):
+        class FailingNudgeTransport:
+            def __init__(self):
+                self.commands = []
+
+            def send(self, command):
+                self.commands.append(command)
+                if command == "G3":
+                    raise RuntimeError("motion rejected")
+
+            def query(self, command, delay=0.15):
+                return "0" if command == "I1" else "MOV=0 WAIT=0 lastErr=0"
+
+        transport = FailingNudgeTransport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        with self.assertRaises(RuntimeError):
+            jog.nudge("+")
+        # Позиция после сбоя неизвестна: смещение не засчитано, ошибка видна.
+        self.assertEqual(jog.nudge_offset, 0)
+        self.assertIsNotNone(jog.status["error"])
+        self.assertEqual(transport.commands[-2:], ["G7 S19048", "G6 S2"])
+
+    def test_jog_controller_rejects_nudge_limit_reaching_neighbour_cell(self):
+        # ±limit обязан быть строго внутри одной ячейки.
+        with self.assertRaises(ValueError):
+            JogController(
+                HoldTransport(),
+                {
+                    "micro_steps": 500,
+                    "nudge_limit_steps": 1000,
+                    "jog_hold_steps": 1_000_000,
+                    "normal_steps": 500,
+                },
+            )
+
     def test_jog_hold_starts_on_press_and_g1_stops_on_release(self):
         transport = HoldTransport()
         jog = JogController(

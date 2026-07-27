@@ -8,20 +8,27 @@ from typing import Optional, Callable
 class State(str, Enum):
     IDLE     = "IDLE"
     RUNNING  = "RUNNING"
+    PAUSED   = "PAUSED"
     STOPPING = "STOPPING"
     STOPPED  = "STOPPED"
     FAULT    = "FAULT"
 
 
 _TRANSITIONS = {
-    (State.IDLE,     "START"): State.RUNNING,
-    (State.STOPPED,  "START"): State.RUNNING,
-    (State.RUNNING,  "STOP"):  State.STOPPING,
-    (State.STOPPING, "EMPTY"): State.STOPPED,
-    (State.IDLE,     "FAULT"): State.FAULT,
-    (State.RUNNING,  "FAULT"): State.FAULT,
-    (State.STOPPING, "FAULT"): State.FAULT,
-    (State.STOPPED,  "FAULT"): State.FAULT,
+    (State.IDLE,     "START"):  State.RUNNING,
+    (State.STOPPED,  "START"):  State.RUNNING,
+    (State.RUNNING,  "STOP"):   State.STOPPING,
+    (State.STOPPING, "EMPTY"):  State.STOPPED,
+    # Пауза разрешена только из RUNNING и применяется на границе шага.
+    (State.RUNNING,  "PAUSE"):  State.PAUSED,
+    (State.PAUSED,   "RESUME"): State.RUNNING,
+    # Из паузы линия обязана уметь штатно останавливаться с дренажом.
+    (State.PAUSED,   "STOP"):   State.STOPPING,
+    (State.IDLE,     "FAULT"):  State.FAULT,
+    (State.RUNNING,  "FAULT"):  State.FAULT,
+    (State.PAUSED,   "FAULT"):  State.FAULT,
+    (State.STOPPING, "FAULT"):  State.FAULT,
+    (State.STOPPED,  "FAULT"):  State.FAULT,
 }
 
 
@@ -94,6 +101,12 @@ class StateMachine:
             self._force_exit = True
         print("[STATE] FORCE EXIT requested")
         return True
+
+    def request_pause(self) -> bool:
+        return self._apply("PAUSE")
+
+    def request_resume(self) -> bool:
+        return self._apply("RESUME")
 
     def notify_line_empty(self) -> bool:
         return self._apply("EMPTY")

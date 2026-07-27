@@ -370,6 +370,9 @@ def main():
                 monitor.start_callback = cycle.request_start
                 monitor.stop_callback  = cycle.request_stop
                 monitor.exit_callback  = handle_exit_request
+                monitor.pause_callback  = cycle.request_pause
+                monitor.resume_callback = cycle.request_resume
+                monitor.nudge_callback  = cycle.nudge_belt
                 monitor.distributor_diagnostic_callback = (
                     cycle.distributor_diagnostic
                 )

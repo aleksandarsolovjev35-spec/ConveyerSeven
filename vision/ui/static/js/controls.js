@@ -10,7 +10,9 @@ function applyButtonsForState(lineState, exitRequested, controls = {}) {
         (lineState === 'IDLE' || lineState === 'STOPPED')
         && !exitRequested
     );
-    const stopVisible = lineState === 'RUNNING';
+    const stopVisible = lineState === 'RUNNING' || lineState === 'PAUSED';
+    const pauseVisible = lineState === 'RUNNING' && !exitRequested;
+    const resumeVisible = lineState === 'PAUSED' && !exitRequested;
     const exitText = (
         lineState === 'FAULT'
         || (exitRequested && lineState === 'STOPPING')
@@ -23,6 +25,26 @@ function applyButtonsForState(lineState, exitRequested, controls = {}) {
         || pending
         || offline
     );
+
+    if (els.btnPause) {
+        els.btnPause.classList.toggle('is-hidden', !pauseVisible);
+        els.btnPause.disabled = (
+            !pauseVisible
+            || controls.pause !== true
+            || pending
+            || offline
+        );
+    }
+
+    if (els.btnResume) {
+        els.btnResume.classList.toggle('is-hidden', !resumeVisible);
+        els.btnResume.disabled = (
+            !resumeVisible
+            || controls.resume !== true
+            || pending
+            || offline
+        );
+    }
 
     els.btnStop.classList.toggle('is-hidden', !stopVisible);
     els.btnStop.disabled = (
@@ -174,6 +196,9 @@ function updateStateOverlay(ls) {
             subText  = 'Нажмите ПУСК для продолжения';
             peekable = false;
         }
+    } else if (lineState === 'PAUSED') {
+        // Кадр не перекрываем: оператор наводит ленту поживому изображению.
+        mainText = '';
     } else if (lineState === 'STOPPING') {
         mainCode = 'STOPPING';
         mainText = 'ОСТАНОВКА ЛИНИИ';
