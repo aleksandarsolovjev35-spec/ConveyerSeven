@@ -15,6 +15,10 @@ from hardware.conveyor import Conveyor
 DEFAULT_HOLD_HEARTBEAT_TIMEOUT = 0.40
 DEFAULT_HOLD_JOIN_TIMEOUT = 3.0
 
+# Firmware отмечает начало хода только на следующем проходе loop() после G3.
+# Conveyor.move_step использует ту же фиксированную задержку.
+NUDGE_MOTION_START_DELAY = 0.4
+
 
 class JogController:
 
@@ -144,6 +148,13 @@ class JogController:
         error = None
         try:
             with self._command_lock:
+                # Firmware после каждого хода ждёт pause_between_movements и,
+                # если autoPauseMode выключен, САМА запускает следующий ход с
+                # текущими G7/G6. Во время коррекции это дало бы повторный
+                # сдвиг ±steps каждые pause_between_movements миллисекунд,
+                # пока оператор держит руки на ленте. Подтверждаем G12 S1
+                # явно: дефолт прошивки нигде больше не проверяется.
+                self.transport.send("G12 S1")
                 self.transport.send(f"G7 S{applied}")
                 self.transport.send("G6 S1")
                 self.transport.send("G3")
@@ -184,6 +195,11 @@ class JogController:
         return applied
 
     def _wait_nudge_stop(self, timeout: float = 15.0):
+        # Прошивка выставляет MOV=1 только на следующем проходе loop() после
+        # G3. Немедленный опрос вернул бы MOV=0/WAIT=0 от ещё не начатого
+        # хода и был бы принят за подтверждённую остановку. Conveyor.move_step
+        # решает это тем же способом — фиксированной задержкой после G3.
+        time.sleep(NUDGE_MOTION_START_DELAY)
         deadline = time.monotonic() + timeout
         last_i1 = ""
         last_i2 = ""

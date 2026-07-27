@@ -255,6 +255,57 @@ class HardwareTests(unittest.TestCase):
         self.assertEqual(jog.nudge_offset, 1000)
         self.assertIn("G7 S200", transport.commands)
 
+    def test_nudge_confirms_autopause_before_moving_the_belt(self):
+        # Firmware при autoPauseMode=0 сама повторяет ход с текущими G7/G6
+        # через pause_between_movements. Во время коррекции это двигало бы
+        # ленту под руками оператора, поэтому режим подтверждается явно.
+        transport = self._nudge_transport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        jog.nudge("+")
+        self.assertIn("G12 S1", transport.commands)
+        self.assertLess(
+            transport.commands.index("G12 S1"),
+            transport.commands.index("G3"),
+            "G12 S1 обязан быть отправлен до запуска хода",
+        )
+
+    def test_nudge_does_not_trust_status_polled_before_motion_starts(self):
+        # MOV=1 появляется только на следующем проходе loop() после G3.
+        # Немедленный опрос вернул бы «остановлен» от ещё не начатого хода.
+        class LateStartTransport(HoldTransport):
+            def __init__(self):
+                super().__init__()
+                self.polls_before_motion = 0
+                self.g3_at = None
+
+            def query(self, command, delay=0.15):
+                with self.lock:
+                    self.commands.append(command)
+                    if command == "I1":
+                        if self.moving:
+                            self.moving = False
+                            return "1"
+                        if self.g3_at is not None:
+                            self.polls_before_motion += 1
+                        return "0"
+                    if command == "I2":
+                        return "MOV=0 WAIT=0 lastErr=0"
+                    return ""
+
+            def send(self, command):
+                super().send(command)
+                if command == "G3":
+                    with self.lock:
+                        self.g3_at = time.monotonic()
+
+        transport = LateStartTransport()
+        jog = JogController(transport, self.NUDGE_CALIB)
+        started = time.monotonic()
+        jog.nudge("+")
+        elapsed = time.monotonic() - started
+        # Между G3 и первым опросом обязана быть выдержка, как в move_step.
+        self.assertGreaterEqual(elapsed, 0.3)
+
     def test_nudge_restores_production_geometry_after_each_move(self):
         transport = self._nudge_transport()
         jog = JogController(transport, self.NUDGE_CALIB)
