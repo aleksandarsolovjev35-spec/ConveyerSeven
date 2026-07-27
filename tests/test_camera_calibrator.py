@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from config.camera_mapping import load_camera_mapping
-from tools.camera_calibration_console import (
+from vision.camera_calibration_console import (
     ROLE_ORDER,
     CameraCalibrationApi,
     atomic_write_mapping,
@@ -219,7 +219,7 @@ class CameraCalibratorTests(unittest.TestCase):
             ))
             self.assertEqual(len(calls), 1)
             command, _cwd, check = calls[0]
-            self.assertIn("tools.camera_calibration_console", command)
+            self.assertIn("vision.camera_calibration_console", command)
             self.assertIn("--scan-limit", command)
             self.assertFalse(check)
 
@@ -235,7 +235,7 @@ class CameraCalibratorTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         main_source = (root / "main.py").read_text(encoding="utf-8")
         calibrator_source = (
-            root / "tools.camera_calibration_console.py"
+            root / "vision/camera_calibration_console.py"
         ).read_text(encoding="utf-8")
         html = (
             root / "vision/ui/calibration/index.html"

@@ -559,7 +559,7 @@
       "sha256": "ddd39471b116b57b7b95c8c4fe54ff39d5e01701b897050b2d1d8effbaefd4b9"
     },
     {
-      "path": "tools/camera_calibration_console.py",
+      "path": "vision/camera_calibration_console.py",
       "size": 21118,
       "sha256": "ff57402d0299944108aa7b3626dfc1034fc040e81e24b2b57a15d730acfe377c"
     },

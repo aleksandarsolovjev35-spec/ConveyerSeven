@@ -7,5 +7,5 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 
-".venv\Scripts\python.exe" -m tools.camera_calibration_console --config camera_mapping.json
+".venv\Scripts\python.exe" -m vision.camera_calibration_console --config camera_mapping.json
 exit /b %ERRORLEVEL%
