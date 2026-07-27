@@ -133,6 +133,33 @@ def setup_api_routes(app, server):
         sign = "+" if direction == "forward" else "-"
         return await invoke("КОРРЕКЦИЯ", server.on_nudge, sign)
 
+    @app.post("/api/nudge/hold/start")
+    async def post_nudge_hold_start(payload: dict):
+        direction = payload.get("direction")
+        if direction not in ("+", "-"):
+            raise HTTPException(400, "Недопустимое направление")
+        return await invoke(
+            "НАЧАЛО КОРРЕКЦИИ", server.on_nudge_hold_start, direction,
+        )
+
+    @app.post("/api/nudge/hold/heartbeat")
+    async def post_nudge_hold_heartbeat(payload: dict):
+        direction = payload.get("direction")
+        if direction not in ("+", "-"):
+            raise HTTPException(400, "Недопустимое направление")
+        return await invoke(
+            "СИГНАЛ КОРРЕКЦИИ", server.on_nudge_hold_heartbeat, direction,
+        )
+
+    @app.post("/api/nudge/hold/release")
+    async def post_nudge_hold_release(payload: dict = None):
+        reason = "button released"
+        if isinstance(payload, dict) and payload.get("reason"):
+            reason = str(payload["reason"])[:100]
+        return await invoke(
+            "ОСТАНОВКА КОРРЕКЦИИ", server.on_nudge_hold_release, reason,
+        )
+
     @app.post("/api/exit")
     async def api_exit():
         print("[API] /api/exit called")

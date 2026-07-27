@@ -29,6 +29,7 @@ function controls(overrides = {}) {
     pause: false,
     resume: false,
     nudge: false,
+    nudge_hold: false,
     jog_hold: false,
     selected_model_analysis: false,
     selected_model_release: false,
@@ -722,18 +723,27 @@ async function main() {
   assert(hidden(btnResume), 'RUNNING hides RESUME');
   assert(nudgePanel.classList.contains('is-collapsed'), 'RUNNING hides belt correction');
 
-  currentStatus = lineStatus('PAUSED', {
-    controls: controls({stop: true, exit: true, resume: true, nudge: true}),
+  const pauseStatus = (overrides = {}) => lineStatus('PAUSED', {
+    controls: controls({
+      stop: true, exit: true, resume: true, nudge: true, nudge_hold: true,
+      ...(overrides.controls || {}),
+    }),
     pause: {
       requested: false,
       active: true,
       nudge_offset: 0,
-      nudge_limit_steps: 1000,
+      nudge_limit_steps: 2000,
       micro_steps: 500,
-      remaining_forward: 1000,
-      remaining_backward: 1000,
+      remaining_forward: 2000,
+      remaining_backward: 2000,
+      hold_busy: false,
+      hold_direction: null,
+      hold_speed: 2000,
+      ...(overrides.pause || {}),
     },
   });
+
+  currentStatus = pauseStatus();
   api.updateLineStatus(currentStatus);
   assert(window.document.getElementById('state-label').textContent === 'ПАУЗА · КОРРЕКЦИЯ ЛЕНТЫ', 'PAUSED label is explicit');
   assert(hidden(btnPause) && !hidden(btnResume) && !btnResume.disabled, 'PAUSED swaps PAUSE for RESUME');
@@ -742,27 +752,67 @@ async function main() {
   assert(!nudgeForward.disabled && !nudgeBackward.disabled, 'PAUSED enables both correction directions');
   assert(jogButtons.every(button => button.disabled), 'PAUSED keeps continuous JOG locked');
 
-  calls.length = 0;
-  nudgeForward.click();
-  await sleep(5);
-  assert(calls.some(call => call.url === '/api/nudge/forward'), 'correction posts bounded nudge');
+  // Held correction must behave like JOG: start, heartbeat and release.
+  async function nudgeHoldScenario(releaseEvent) {
+    api.clearNudgeHoldLocalState();
+    currentStatus = pauseStatus();
+    api.updateLineStatus(currentStatus);
+    calls.length = 0;
+    nudgeForward.dispatchEvent(new window.Event('pointerdown', {bubbles: true}));
+    await sleep(10);
+    if (releaseEvent === 'blur') {
+      window.dispatchEvent(new window.Event('blur'));
+    } else if (releaseEvent === 'pagehide' || releaseEvent === 'beforeunload') {
+      window.dispatchEvent(new window.Event(releaseEvent));
+    } else if (releaseEvent === 'visibilitychange') {
+      Object.defineProperty(window.document, 'hidden', {value: true, configurable: true});
+      window.document.dispatchEvent(new window.Event('visibilitychange'));
+      Object.defineProperty(window.document, 'hidden', {value: false, configurable: true});
+    } else {
+      const event = new window.Event(releaseEvent, {bubbles: true});
+      if (releaseEvent === 'pointerleave') Object.defineProperty(event, 'buttons', {value: 0});
+      nudgeForward.dispatchEvent(event);
+    }
+    await sleep(10);
+    assert(calls.some(call => call.url === '/api/nudge/hold/start'), `correction hold start for ${releaseEvent}`);
+    assert(calls.some(call => call.url === '/api/nudge/hold/heartbeat'), `correction heartbeat for ${releaseEvent}`);
+    assert(calls.some(call => call.url === '/api/nudge/hold/release'), `correction release for ${releaseEvent}`);
+    api.clearNudgeHoldLocalState();
+  }
+  for (const event of [
+    'pointerup', 'pointercancel', 'lostpointercapture', 'pointerleave',
+    'blur', 'visibilitychange', 'pagehide', 'beforeunload',
+  ]) {
+    await nudgeHoldScenario(event);
+  }
+
+  // While the belt moves, the opposite direction must not be pressable.
+  api.clearNudgeHoldLocalState();
+  api.updateLineStatus(pauseStatus({
+    pause: {hold_busy: true, hold_direction: '+'},
+  }));
+  assert(nudgeBackward.disabled, 'moving belt locks the opposite correction button');
+  assert(nudgeForward.classList.contains('nudge-active'), 'active correction direction is highlighted');
 
   // Reaching the accumulated limit must disable that direction only.
-  api.updateLineStatus(lineStatus('PAUSED', {
-    controls: controls({stop: true, exit: true, resume: true, nudge: true}),
+  api.clearNudgeHoldLocalState();
+  api.updateLineStatus(pauseStatus({
     pause: {
-      requested: false,
-      active: true,
-      nudge_offset: 1000,
-      nudge_limit_steps: 1000,
-      micro_steps: 500,
+      nudge_offset: 2000,
       remaining_forward: 0,
-      remaining_backward: 2000,
+      remaining_backward: 4000,
     },
   }));
   assert(nudgeForward.disabled, 'correction limit disables further forward moves');
   assert(!nudgeBackward.disabled, 'correction limit still allows returning back');
-  assert(window.document.getElementById('nudge-offset').textContent === '+1000', 'accumulated correction is shown');
+  assert(window.document.getElementById('nudge-offset').textContent === '+2000', 'accumulated correction is shown');
+
+  // Leaving the pause must abort any local hold state.
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true, pause: true}),
+  }));
+  assert(nudgePanel.classList.contains('is-collapsed'), 'RESUME hides belt correction again');
+  api.updateLineStatus(pauseStatus());
 
   calls.length = 0;
   btnResume.click();

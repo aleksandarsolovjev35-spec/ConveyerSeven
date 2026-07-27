@@ -311,6 +311,27 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("M9 5 L16 12 L9 19", self.html)
         self.assertIn("box-shadow: inset 0 0 0 1px var(--accent)", self.css)
 
+    def test_pause_correction_is_a_dead_man_hold_like_jog(self):
+        # Коррекция в паузе обязана работать удержанием и иметь все те же
+        # аварийные пути отпускания, что и JOG: иначе лента продолжит ход.
+        for token in (
+            "/api/nudge/hold/start",
+            "/api/nudge/hold/heartbeat",
+            "/api/nudge/hold/release",
+            "beginNudgeHold",
+            "releaseNudgeHold",
+            "releaseNudgeHoldBestEffort",
+            "state.backendControls.nudge_hold !== true",
+            "nudgeHeartbeatBusy",
+            "releaseNudgeHold('window blur')",
+            "releaseNudgeHoldBestEffort('document hidden')",
+            "releaseNudgeHoldBestEffort('page unload')",
+        ):
+            self.assertIn(token, self.js)
+        # Разовый пошаговый клик больше не используется.
+        self.assertNotIn("submitNudge", self.js)
+        self.assertIn(".nudge-btn.nudge-active", self.css)
+
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)
         self.assertIn("window.__TRANSPORTER_UI_TEST_API__", self.js)

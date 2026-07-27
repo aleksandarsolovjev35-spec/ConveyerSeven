@@ -68,6 +68,22 @@ def main() -> int:
         calibration["nudge_limit_steps"] * 2 < cell_steps,
         "Суммарная коррекция ±nudge_limit_steps должна быть меньше шага ячейки",
     )
+    hold_seconds = (
+        calibration["nudge_limit_steps"] / calibration["pause_hold_speed"]
+    )
+    print(
+        f"pause_hold_speed={calibration['pause_hold_speed']} "
+        f"(весь бюджет за {hold_seconds:.2f}s удержания)"
+    )
+    require(
+        calibration["pause_hold_speed"] < calibration["conveyor_speed"],
+        "Удержание коррекции должно идти медленнее производственного хода",
+    )
+    require(
+        hold_seconds >= 0.2,
+        "Бюджет коррекции должен выбираться не быстрее 0.2s: иначе "
+        "оператор не успевает отпустить кнопку",
+    )
     print(
         "distributor="
         f"DIST1_OPEN:{calibration['dist1_open_position']} "
