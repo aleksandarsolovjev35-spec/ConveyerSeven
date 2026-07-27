@@ -20,7 +20,7 @@ _REQUIRED_ROLES = (
 )
 _EXPECTED_SIZE = (1280, 720)
 _REQUESTED_FPS = 30.0
-_PREFLIGHT_TIMEOUT = 3.0
+_PREFLIGHT_TIMEOUT = 5.0
 _PREFLIGHT_VALID_FRAMES = 5
 _PREFLIGHT_READ_INTERVAL = 0.05
 _NEAR_BLACK_MEAN_MAX = 5.0
@@ -105,6 +105,10 @@ class CameraManager:
                 cap.set(cv2.CAP_PROP_FPS, _REQUESTED_FPS)
                 if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                # Краткая пауза для стабилизации экспозиции и потока камеры
+                time.sleep(0.5)
+
                 self.cameras[role] = cap
 
                 error = self._wait_for_stable_preflight(cap)
@@ -142,13 +146,14 @@ class CameraManager:
                 last_error = "read returned no frame"
                 time.sleep(_PREFLIGHT_READ_INTERVAL)
                 continue
-            last_error = cls._frame_error(frame)
-            if last_error is None:
+            last_frame_error = cls._frame_error(frame)
+            if last_frame_error is None:
                 consecutive_valid += 1
                 if consecutive_valid >= _PREFLIGHT_VALID_FRAMES:
                     return None
             else:
                 consecutive_valid = 0
+                last_error = last_frame_error
             time.sleep(_PREFLIGHT_READ_INTERVAL)
         return (
             f"{last_error}; stable_valid={consecutive_valid}/"

@@ -17,7 +17,7 @@ from hardware.distributor      import Distributor
 from hardware.jog_controller   import JogController
 
 from vision.camera_manager             import CameraManager
-from vision.camera_calibration_console import launch_camera_calibrator
+from tools.camera_calibration_console import launch_camera_calibrator
 from vision.vision_cluster             import VisionCluster
 from vision.ui                         import LiveMonitor
 
