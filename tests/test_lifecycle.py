@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from core.production_cycle import ProductionCycle
+from core.state_machine import State
 from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
 
 
@@ -59,6 +60,59 @@ class FakeCameras:
     def capture_all(self):
         self.captures += 1
         return {role: object() for role in ROLES}
+
+
+class NudgeJog:
+    """JOG-заглушка с ограниченной коррекцией и накопителем смещения."""
+
+    def __init__(self, micro_steps=500, nudge_limit_steps=1000):
+        self.micro_steps = micro_steps
+        self.nudge_limit_steps = nudge_limit_steps
+        self._offset = 0
+        self.applied = []
+
+    @property
+    def nudge_offset(self):
+        return self._offset
+
+    def reset_nudge_offset(self):
+        self._offset = 0
+
+    def nudge(self, direction, steps=None):
+        if direction not in ("+", "-"):
+            raise ValueError("bad direction")
+        requested = self.micro_steps if steps is None else int(steps)
+        signed = requested if direction == "+" else -requested
+        clamped = max(
+            -self.nudge_limit_steps,
+            min(self.nudge_limit_steps, self._offset + signed),
+        )
+        applied = clamped - self._offset
+        self._offset = clamped
+        self.applied.append(applied)
+        return applied
+
+    def release(self, reason="released"):
+        return True
+
+    @property
+    def busy(self):
+        return False
+
+    @property
+    def status(self):
+        return {
+            "hold_steps": 1000000,
+            "last_action": "-",
+            "busy": False,
+            "direction": None,
+            "error": None,
+            "micro_steps": self.micro_steps,
+            "nudge_limit_steps": self.nudge_limit_steps,
+            "nudge_offset": self._offset,
+            "nudge_remaining_forward": self.nudge_limit_steps - self._offset,
+            "nudge_remaining_backward": self.nudge_limit_steps + self._offset,
+        }
 
 
 class ScriptedInspector:
@@ -314,6 +368,61 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn(("drop", 2, CATEGORY_CLEANUP), events)
         self.assertIn(("prepare", 3, CATEGORY_BAD), events)
         self.assertIn(("drop", 3, CATEGORY_BAD), events)
+
+    def test_pause_and_nudge_preserve_part_cell_alignment_end_to_end(self):
+        """Пауза с коррекцией не должна разрушать соответствие деталь↔ячейка."""
+        events = []
+        inspector = ScriptedInspector([[]], [[]])
+        cycle = ProductionCycle(
+            FakeConveyor(events),
+            FakeCameras(),
+            inspector,
+            FakeDistributor(events),
+            archive=FakeArchive(),
+            jog=NudgeJog(),
+        )
+        self.assertTrue(cycle.request_start())
+
+        # Несколько штатных шагов, деталь входит на линию.
+        for _ in range(3):
+            cycle._run_once()
+        step_before = cycle.current_step
+        parts_before = [(part.id, part.step_created) for part in cycle.parts]
+        moves_before = events.count("move")
+
+        # Пауза на границе шага и коррекция до упора в обе стороны.
+        self.assertTrue(cycle.request_pause())
+        self.assertTrue(cycle.sm.request_pause())
+        cycle._enter_pause_frame()
+        for _ in range(5):
+            cycle.nudge_belt("+")
+        for _ in range(10):
+            cycle.nudge_belt("-")
+        self.assertEqual(cycle.jog.nudge_offset, -1000)
+
+        # Коррекция не выполнила ни одного производственного шага.
+        self.assertEqual(events.count("move"), moves_before)
+        self.assertEqual(cycle.current_step, step_before)
+        self.assertEqual(
+            [(part.id, part.step_created) for part in cycle.parts],
+            parts_before,
+        )
+
+        # После возобновления цикл продолжается с той же нумерации шагов.
+        self.assertTrue(cycle.request_resume())
+        self.assertEqual(cycle.sm.state, State.RUNNING)
+        cycle._run_once()
+        self.assertEqual(cycle.current_step, step_before + 1)
+        # Уже находившиеся на линии детали сохранили свои step_created,
+        # то есть их позиции пересчитываются от прежней точки отсчёта.
+        surviving = {
+            part.id: part.step_created
+            for part in cycle.parts
+            if part.id in {pid for pid, _ in parts_before}
+        }
+        for part_id, created in parts_before:
+            if part_id in surviving:
+                self.assertEqual(surviving[part_id], created)
 
 
 if __name__ == "__main__":

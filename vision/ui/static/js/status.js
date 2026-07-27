@@ -108,6 +108,7 @@ function markUiOffline() {
     showControlError('Нет связи с backend. Все команды заблокированы.');
     releaseJogHoldBestEffort('backend offline');
     applyButtonsForState('OFFLINE', true, {});
+    showNudgePanel(false);
     updateDistributorDiagnosticControls({
         diagnostic_allowed: false,
         diagnostic_busy: true,
@@ -208,6 +209,7 @@ function updateLineStatus(ls) {
     );
 
     updateJogState(ls.jog || null);
+    updatePauseState(ls);
     updateStateOverlay(ls);
     updateJogHardware(ls);
     handleJogAutoToggle(lineState, ls.jog || null);

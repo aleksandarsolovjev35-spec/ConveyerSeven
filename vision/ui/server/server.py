@@ -80,6 +80,9 @@ class UIServer:
         self.on_start: Optional[callable] = None
         self.on_stop:  Optional[callable] = None
         self.on_exit:  Optional[callable] = None
+        self.on_pause: Optional[callable] = None
+        self.on_resume: Optional[callable] = None
+        self.on_nudge: Optional[callable] = None
         self.on_distributor_diagnostic: Optional[callable] = None
         self.on_camera_diagnostic: Optional[callable] = None
         self.on_vision_rule_diagnostic: Optional[callable] = None

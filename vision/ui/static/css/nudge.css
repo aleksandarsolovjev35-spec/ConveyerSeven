@@ -1,0 +1,137 @@
+/* nudge.css — ограниченная коррекция ленты в паузе */
+
+.nudge-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warn);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    overflow: hidden;
+    isolation: isolate;
+}
+
+.nudge-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.nudge-title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+}
+
+.nudge-limit {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
+.nudge-dpad {
+    display: grid;
+    grid-template-columns: 56px 1fr 56px;
+    align-items: center;
+    gap: 10px;
+}
+
+.nudge-btn {
+    height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 120ms linear, border-color 120ms linear;
+}
+
+.nudge-btn:hover:not(:disabled) {
+    background: var(--panel-hover);
+    border-color: var(--warn);
+}
+
+.nudge-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.nudge-arrow {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.nudge-readout {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.nudge-offset {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.nudge-offset.is-limit { color: var(--warn); }
+
+.nudge-units {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+}
+
+.nudge-bar {
+    position: relative;
+    height: 4px;
+    margin-top: 10px;
+    background: var(--panel-raised);
+    border: 1px solid var(--border);
+}
+
+/* Центральная риска нулевого положения. */
+.nudge-bar::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -3px;
+    bottom: -3px;
+    width: 1px;
+    background: var(--text-dim);
+    opacity: 0.6;
+}
+
+.nudge-bar-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    background: var(--ok);
+    transition: width 120ms linear, left 120ms linear;
+}
+
+.nudge-bar-fill.is-limit { background: var(--warn); }
+
+.nudge-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--text-dim);
+}

@@ -54,6 +54,20 @@ def main() -> int:
     require(INSPECTION_RUNS == 3, "Production inspection must use exactly 3 runs")
     require(CONSENSUS_MIN_VOTES == 2, "Production consensus must require 2 votes")
     print(f"jog_hold_steps={calibration['jog_hold_steps']}")
+    cell_steps = calibration["normal_steps"] * 2
+    print(
+        f"belt_nudge=±{calibration['nudge_limit_steps']} "
+        f"по {calibration['micro_steps']} микрошагов "
+        f"(шаг ячейки {cell_steps})"
+    )
+    require(
+        calibration["micro_steps"] <= calibration["nudge_limit_steps"],
+        "Одно нажатие коррекции должно укладываться в суммарный лимит",
+    )
+    require(
+        calibration["nudge_limit_steps"] * 2 < cell_steps,
+        "Суммарная коррекция ±nudge_limit_steps должна быть меньше шага ячейки",
+    )
     print(
         "distributor="
         f"DIST1_OPEN:{calibration['dist1_open_position']} "

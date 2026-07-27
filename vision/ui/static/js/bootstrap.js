@@ -122,6 +122,7 @@ function init() {
     setupCameraHover();
     setupViewModeControls();
     setupJogControls();
+    setupPauseControls();
     setupDistributorDiagnostics();
     setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
@@ -144,6 +145,7 @@ function setupForTest() {
     setupCameraHover();
     setupViewModeControls();
     setupJogControls();
+    setupPauseControls();
     setupDistributorDiagnostics();
     setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
