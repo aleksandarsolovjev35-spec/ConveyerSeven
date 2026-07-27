@@ -814,6 +814,46 @@ async function main() {
   assert(nudgePanel.classList.contains('is-collapsed'), 'RESUME hides belt correction again');
   api.updateLineStatus(pauseStatus());
 
+  // Arrow keys must hold the bounded correction, exactly like in JOG.
+  api.clearNudgeHoldLocalState();
+  currentStatus = pauseStatus();
+  api.updateLineStatus(currentStatus);
+  calls.length = 0;
+  window.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+  await sleep(10);
+  window.dispatchEvent(new window.KeyboardEvent('keyup', {key: 'ArrowRight', bubbles: true}));
+  await sleep(10);
+  assert(calls.some(call => call.url === '/api/nudge/hold/start'), 'keyboard correction start');
+  assert(calls.some(call => call.url === '/api/nudge/hold/heartbeat'), 'keyboard correction heartbeat');
+  assert(calls.some(call => call.url === '/api/nudge/hold/release'), 'keyboard correction release');
+  assert(!calls.some(call => call.url.startsWith('/api/active_camera')), 'paused arrows never switch cameras');
+
+  // A direction with an exhausted budget must not be reachable by keyboard.
+  api.clearNudgeHoldLocalState();
+  api.updateLineStatus(pauseStatus({
+    pause: {nudge_offset: 2000, remaining_forward: 0, remaining_backward: 4000},
+  }));
+  calls.length = 0;
+  window.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+  await sleep(10);
+  assert(!calls.some(call => call.url === '/api/nudge/hold/start'), 'keyboard respects the exhausted budget');
+  window.dispatchEvent(new window.KeyboardEvent('keyup', {key: 'ArrowRight', bubbles: true}));
+  await sleep(5);
+
+  // Key auto-repeat must not open a second hold on top of the running one.
+  api.clearNudgeHoldLocalState();
+  api.updateLineStatus(pauseStatus());
+  calls.length = 0;
+  window.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true}));
+  await sleep(10);
+  window.dispatchEvent(new window.KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true, repeat: true}));
+  await sleep(10);
+  assert(calls.filter(call => call.url === '/api/nudge/hold/start').length === 1, 'key repeat does not restart the hold');
+  window.dispatchEvent(new window.KeyboardEvent('keyup', {key: 'ArrowLeft', bubbles: true}));
+  await sleep(10);
+  api.clearNudgeHoldLocalState();
+  api.updateLineStatus(pauseStatus());
+
   calls.length = 0;
   btnResume.click();
   await sleep(5);

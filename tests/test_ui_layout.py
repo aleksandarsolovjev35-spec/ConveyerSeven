@@ -332,6 +332,16 @@ class UiLayoutTests(unittest.TestCase):
         self.assertNotIn("submitNudge", self.js)
         self.assertIn(".nudge-btn.nudge-active", self.css)
 
+    def test_arrow_keys_hold_correction_in_pause_like_in_jog(self):
+        # Одна и та же клавиша не должна означать в JOG удержание ленты,
+        # а в паузе — переключение камеры.
+        for token in (
+            "if (state.pauseActive) {",
+            "beginNudgeHold(direction, button)",
+            "releaseNudgeHold(`key released: ${e.key}`)",
+        ):
+            self.assertIn(token, self.js)
+
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)
         self.assertIn("window.__TRANSPORTER_UI_TEST_API__", self.js)
