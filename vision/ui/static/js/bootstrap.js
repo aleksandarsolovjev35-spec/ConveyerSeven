@@ -154,7 +154,6 @@ function init() {
     setupDistributorDiagnostics();
     setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
-    startBeltDrive();
 
     fetchBoot();
     state.bootInterval = setInterval(fetchBoot, BOOT_INTERVAL);
@@ -178,7 +177,6 @@ function setupForTest() {
     setupDistributorDiagnostics();
     setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
-    startBeltDrive();
     state.bootDone = true;
     state.bootDoneAt = Date.now();
     state.statusReceived = true;
@@ -226,16 +224,7 @@ if (window.__TRANSPORTER_UI_TEST__ === true) {
         renderGalleryImages,
         showControlError,
         clearControlError,
-        updateBeltTelemetry,
-        freezeBeltMotion,
-        refreshBeltLanes,
-        setBootBeltProgress,
-        advanceBelt,
-        belt,
         getMainBufferSource: () => mainBuffer.src,
-        getBeltVar: (name) => (
-            document.documentElement.style.getPropertyValue(name).trim()
-        ),
     };
 } else if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
