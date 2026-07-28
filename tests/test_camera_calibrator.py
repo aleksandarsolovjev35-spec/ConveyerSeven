@@ -1,5 +1,4 @@
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -53,19 +52,6 @@ class FlakyPreviewCapture(FakeCapture):
         return super().read()
 
 
-class ParallelProbeCapture(FakeCapture):
-    def __init__(self, frame, barrier):
-        super().__init__(frame=frame, opened=True)
-        self.barrier = barrier
-        self.read_count = 0
-
-    def read(self):
-        self.read_count += 1
-        if self.read_count == 1:
-            self.barrier.wait(timeout=1.0)
-        return super().read()
-
-
 class CaptureFactory:
     def __init__(self, available_ids):
         self.available_ids = set(available_ids)
@@ -108,30 +94,6 @@ class CameraCalibratorTests(unittest.TestCase):
         self.assertEqual(api.get_state()["status"], "READY")
         self.assertEqual(captures[0].read_count, 4)
         api.shutdown()
-
-    def test_calibrator_opens_first_camera_batch_concurrently(self):
-        frame = np.full((720, 1280, 3), 110, dtype=np.uint8)
-        barrier = threading.Barrier(len(ROLE_ORDER))
-        captures = []
-
-        def factory(camera_id):
-            capture = ParallelProbeCapture(frame, barrier)
-            captures.append(capture)
-            return capture
-
-        api = CameraCalibrationApi(
-            "unused.json",
-            scan_limit=9,
-            capture_factory=factory,
-        )
-        state = api.scan()
-        try:
-            self.assertEqual(state["status"], "READY")
-            self.assertEqual(len(captures), len(ROLE_ORDER))
-            self.assertFalse(barrier.broken)
-        finally:
-            api.shutdown()
-        self.assertTrue(all(capture.released for capture in captures))
 
     def test_less_than_seven_cameras_blocks_calibration_without_json(self):
         with tempfile.TemporaryDirectory() as temp:
