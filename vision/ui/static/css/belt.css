@@ -1,0 +1,416 @@
+/* belt.css — движение интерфейса, повторяющее работу конвейера */
+
+/*
+ * Каждое правило этого модуля питается только переменными привода,
+ * которые motion.js вычисляет из телеметрии контроллера:
+ *   --belt-phase   пройденные ячейки линии
+ *   --belt-intra   доля текущего шага
+ *   --belt-speed   нормированная скорость 0..1
+ *   --belt-dir     направление хода
+ *   --belt-teeth   смещение зуба ленты в пикселях
+ *   --drive-turn   угол приводного вала
+ *   --belt-cadence измеренная длительность шага
+ * Лента стоит — переменные не меняются, интерфейс неподвижен.
+ */
+
+:root {
+    --belt-phase:      0;
+    --belt-intra:      0;
+    --belt-speed:      0;
+    --belt-dir:        1;
+    --belt-teeth:      0px;
+    --belt-cell-px:    96px;
+    --belt-cadence:    1.6;
+    --drive-turn:      0;
+    --drive-turn-fast: 0;
+    --dist1-turn:      0;
+    --dist2-turn:      0;
+    --boot-progress:   0;
+    --boot-teeth:      0px;
+    --tooth-pitch:     18px;
+}
+
+/* ─── Зубчатая лента: общий примитив ──────────────────────── */
+
+.belt-lane {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+}
+
+.belt-lane-strip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--tooth-pitch) * -2);
+    display: flex;
+    align-items: center;
+    gap: 0;
+    pointer-events: none;
+    transform: translate3d(var(--belt-teeth), 0, 0);
+}
+
+/*
+ * Зуб занимает ровно шаг ленты: box-sizing из base.css укладывает
+ * границу внутрь, поэтому рисунок остаётся периодичным и стык при
+ * зацикливании смещения незаметен.
+ */
+.belt-tooth {
+    flex: 0 0 var(--tooth-pitch);
+    height: 100%;
+    border-right: 1px solid var(--border);
+    opacity: calc(0.30 + var(--belt-speed) * 0.55);
+}
+
+.belt-back .belt-lane-strip {
+    transform: translate3d(calc(var(--belt-teeth) * -1), 0, 0);
+}
+
+.belt-running .belt-tooth {
+    border-right-color: var(--accent);
+}
+
+/* Приводной вал: угол — прямая функция пройденного пути ленты. */
+
+.drive-wheel {
+    position: relative;
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    transform: rotate(calc(var(--drive-turn) * 1deg));
+}
+
+.drive-wheel::before,
+.drive-wheel::after {
+    content: '';
+    position: absolute;
+    inset: 50% 1px auto 1px;
+    height: 1px;
+    background: var(--border-strong);
+}
+
+.drive-wheel::after {
+    inset: 1px 50% 1px auto;
+    width: 1px;
+    height: auto;
+}
+
+.belt-running .drive-wheel { border-color: var(--accent); }
+
+.belt-running .drive-wheel::before,
+.belt-running .drive-wheel::after { background: var(--accent); }
+
+.drive-wheel.drive-wheel-fast {
+    transform: rotate(calc(var(--drive-turn-fast) * 1deg));
+}
+
+/* ─── Путь деталей: ячейки едут вместе с лентой ───────────── */
+
+/* Статическая линия основы больше не нужна: её место занимает лента. */
+.production-line-wrapper::before { content: none; }
+
+.production-line-wrapper .belt-lane {
+    position: absolute;
+    left: 3%;
+    right: 3%;
+    top: 50%;
+    height: 9px;
+    margin-top: -4px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-0);
+    z-index: 0;
+}
+
+.process-line-head .belt-drive {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.belt-readout {
+    color: var(--text-muted);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.5px;
+}
+
+.belt-running .belt-readout { color: var(--accent); }
+
+/*
+ * Позицию ячейки задаёт кадровый цикл привода, поэтому собственный
+ * transition здесь только добавил бы задержку поверх уже сглаженного
+ * движения: положение детали отстало бы от ленты.
+ */
+.line-cell-main {
+    transition: none;
+    transform: translate3d(
+        calc(var(--belt-cell-px) * var(--belt-intra)), 0, 0
+    );
+}
+
+.belt-running .line-cell-main,
+.belt-running .belt-lane-strip {
+    will-change: transform;
+}
+
+.belt-src-jog .line-cell-main,
+.belt-src-nudge .line-cell-main {
+    transform: translate3d(
+        calc(var(--belt-cell-px) * var(--belt-intra)
+             + var(--belt-teeth) * var(--belt-dir) * 0.35), 0, 0
+    );
+}
+
+.line-cells.is-settling .line-cell.occupied {
+    animation: cellSettle 240ms var(--ease);
+}
+
+@keyframes cellSettle {
+    0%   { transform: translateY(0); }
+    45%  { transform: translateY(1px); }
+    100% { transform: translateY(0); }
+}
+
+/* Мгновенные события ленты: приход детали и сброс в лоток. */
+
+.line-cell-fx {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+}
+
+.line-cell-fx.is-arriving {
+    animation: partArrive 460ms var(--ease);
+}
+
+.line-cell-fx.is-dropping {
+    animation: partDrop 460ms var(--ease);
+}
+
+@keyframes partArrive {
+    0%   { opacity: 0; box-shadow: inset 6px 0 0 -3px var(--accent); }
+    40%  { opacity: 1; box-shadow: inset 24px 0 0 -3px var(--accent); }
+    100% { opacity: 0; box-shadow: inset 40px 0 0 -3px var(--accent); }
+}
+
+@keyframes partDrop {
+    0%   { opacity: 1; box-shadow: inset 0 -2px 0 0 var(--warn); }
+    100% { opacity: 0; box-shadow: inset 0 -14px 0 0 var(--warn); }
+}
+
+/* ─── Шаг цикла отбивается в шапке ────────────────────────── */
+
+.state-dot.step-pulse {
+    animation: stepTick 420ms var(--ease);
+}
+
+@keyframes stepTick {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.7); }
+    100% { transform: scale(1); }
+}
+
+.metrics span span.num-roll {
+    animation: numRoll 260ms var(--ease);
+}
+
+@keyframes numRoll {
+    0%   { opacity: 0.2; transform: translateY(-6px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Кадр: съёмка, анализ и сортировка на текущем шаге ───── */
+
+/*
+ * Один служебный слой на кадр. Геометрия задаётся отдельно для каждой
+ * операции, поэтому в box-shadow используются только пиксели: проценты
+ * там недопустимы и правило было бы отброшено браузером целиком.
+ * Такт анимации равен измеренной длительности шага линии, так что
+ * вспышка затвора и проход анализа идут в темпе реального цикла.
+ */
+.camera-container::after {
+    content: '';
+    position: absolute;
+    z-index: 12;
+    pointer-events: none;
+    opacity: 0;
+}
+
+.camera-container.is-capturing::after {
+    inset: 0;
+    box-shadow: inset 0 0 0 3px var(--accent);
+    animation: shutterFlash calc(var(--belt-cadence) * 1s) ease-out infinite;
+}
+
+.camera-container.is-analyzing::after {
+    inset: 0 0 auto 0;
+    height: 2px;
+    background: var(--accent);
+    will-change: top;
+    animation: scanSweep calc(var(--belt-cadence) * 1s) linear infinite;
+}
+
+.camera-container.is-routing::after {
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--warn);
+    will-change: left;
+    animation: routeSlide calc(var(--belt-cadence) * 1s) var(--ease) infinite;
+}
+
+@keyframes shutterFlash {
+    0%   { opacity: 0; }
+    8%   { opacity: 1; }
+    32%  { opacity: 0; }
+    100% { opacity: 0; }
+}
+
+@keyframes scanSweep {
+    0%   { opacity: 0.9; top: 0; }
+    100% { opacity: 0.9; top: 100%; }
+}
+
+@keyframes routeSlide {
+    0%   { opacity: 0; left: 0; }
+    35%  { opacity: 0.9; }
+    100% { opacity: 0; left: 100%; }
+}
+
+/* Полоса превью слегка «дышит» ровно на скорости хода ленты. */
+.line-working .preview-cam img {
+    opacity: calc(1 - var(--belt-speed) * 0.12);
+}
+
+/* ─── Распределитель: заслонки идут вместе с осями ────────── */
+
+.blade-card .blade-track { overflow: hidden; }
+
+.blade-card.is-moving .blade-marker {
+    box-shadow: 0 0 0 1px var(--warn);
+}
+
+.blade-card.is-moving .axis-name::after,
+.blade-card.is-open .axis-name::after {
+    content: ' ▸';
+    color: var(--warn);
+}
+
+.blade-cam {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-left: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 1px;
+    vertical-align: -1px;
+}
+
+#dist1-card .blade-cam { transform: rotate(calc(var(--dist1-turn) * 1deg)); }
+#dist2-card .blade-cam { transform: rotate(calc(var(--dist2-turn) * 1deg)); }
+
+.blade-card.is-moving .blade-cam { border-color: var(--warn); }
+
+/* ─── Ручное движение и коррекция: та же лента под кнопкой ── */
+
+/* Кнопке нужна собственная система координат для вложенной ленты. */
+.nudge-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.jog-hold-btn .belt-lane,
+.nudge-btn .belt-lane {
+    position: absolute;
+    inset: auto 6px 6px;
+    height: 6px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    opacity: 0.35;
+}
+
+.jog-hold-btn.jog-active .belt-lane,
+.nudge-btn.nudge-active .belt-lane {
+    opacity: 1;
+    border-color: var(--accent);
+}
+
+.jog-hold-btn.jog-active .jog-hold-arrow,
+.nudge-btn.nudge-active .nudge-arrow {
+    transform: translate3d(
+        calc(var(--belt-teeth) * var(--belt-dir) * 0.16), 0, 0
+    );
+}
+
+.nudge-bar { overflow: hidden; }
+
+.belt-src-nudge .nudge-bar-fill {
+    box-shadow: 0 0 0 1px var(--warn);
+}
+
+/* ─── История деталей: карточка приезжает на ленте ────────── */
+
+.history-card.is-fresh {
+    animation: cardRideIn 380ms var(--ease);
+}
+
+@keyframes cardRideIn {
+    0%   { opacity: 0; transform: translateX(-14px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Пусковой экран: инициализация едет по ленте ─────────── */
+
+.splash-progress-bar.belt-lane {
+    height: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-1);
+}
+
+.splash-progress-bar .belt-lane-strip {
+    transform: translate3d(var(--boot-teeth), 0, 0);
+}
+
+.splash-progress-fill {
+    position: relative;
+    z-index: 1;
+    width: calc(var(--boot-progress) * 1%);
+    transition: width 0.4s var(--ease);
+}
+
+.splash-drive {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* ─── Остановка и деградация ──────────────────────────────── */
+
+.main.ui-offline .belt-lane-strip,
+.main.ui-offline .drive-wheel {
+    opacity: 0.25;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .belt-lane-strip,
+    .line-cell-main,
+    .jog-hold-btn.jog-active .jog-hold-arrow,
+    .nudge-btn.nudge-active .nudge-arrow,
+    .drive-wheel,
+    .blade-cam {
+        transform: none !important;
+    }
+
+    .line-cells.is-settling .line-cell.occupied,
+    .line-cell-fx,
+    .state-dot.step-pulse,
+    .metrics span span.num-roll,
+    .camera-container::after,
+    .history-card.is-fresh {
+        animation: none !important;
+    }
+}

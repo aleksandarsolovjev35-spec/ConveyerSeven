@@ -29,10 +29,13 @@ function lineProcessTitle(key) {
     return item ? item.title : null;
 }
 
+// Смещение ячеек больше не пишется в inline-стиль: путь ленты рисует
+// belt.css по переменной --belt-intra, которую ведёт motion.js из тех же
+// координат контроллера. Здесь остаётся только признак хода для классов.
 function conveyorMotionState(cells, process = {}) {
     const phase = String(process.phase || '').toUpperCase();
     if (!phase.includes('CONVEYOR')) {
-        return {active: false, offsetPx: 0, progress: 0};
+        return {active: false, progress: 0, direction: 1};
     }
 
     const conveyor = process.conveyor || {};
@@ -43,21 +46,17 @@ function conveyorMotionState(cells, process = {}) {
         conveyor.pos ?? conveyor.position ?? conveyor.current ?? 0,
     );
     if (!Number.isFinite(rawTarget) || Math.abs(rawTarget) < 1) {
-        return {active: false, offsetPx: 0, progress: 0};
+        return {active: false, progress: 0, direction: 1};
     }
 
     const progress = Math.max(
         0,
         Math.min(1, Math.abs(rawPosition) / Math.abs(rawTarget)),
     );
-    const cellStepPx = cells.length > 1
-        ? Math.abs(cells[1].offsetLeft - cells[0].offsetLeft)
-        : 0;
-    const direction = rawTarget < 0 ? -1 : 1;
     return {
         active: phase.includes('CONVEYOR_MOVING') || progress > 0,
-        offsetPx: direction * cellStepPx * progress,
         progress,
+        direction: rawTarget < 0 ? -1 : 1,
     };
 }
 
@@ -172,6 +171,8 @@ function markUiOffline() {
         diagnostic_busy: true,
     });
     disablePrestartDiagnosticButtons();
+    // Нет связи — нет подтверждённого движения: интерфейс замирает.
+    freezeBeltMotion();
     if (els.analyzeSelectedFrame) els.analyzeSelectedFrame.disabled = true;
     updateViewModeControls();
     if (els.jogPanel) {
@@ -270,6 +271,10 @@ function updateLineStatus(ls) {
     updatePauseState(ls);
     updateStateOverlay(ls);
     updateJogHardware(ls);
+    // Телеметрия ленты, осей и фазы шага — единственный источник
+    // движения интерфейса. Вызывается после того, как панели уже
+    // отражают новое состояние.
+    updateBeltTelemetry(ls);
     handleJogAutoToggle(lineState, ls.jog || null);
 }
 
@@ -283,19 +288,26 @@ function updateLineCells(lineParts, process = {}) {
     const activeProcessKey = lineProcessKey(process.phase);
     const activeProcessTitle = lineProcessTitle(activeProcessKey);
     const conveyorMotion = conveyorMotionState(cells, process);
+    // Повреждённый или неполный ответ backend не должен ронять отрисовку
+    // пути деталей: пустая линия честнее, чем застывший прошлый кадр.
+    const parts = Array.isArray(lineParts) ? lineParts : [];
 
     for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
-        const part = lineParts.find(p => p.position === i);
+        const part = parts.find(p => p && p.position === i);
         const processActiveHere = activePositions.includes(i);
 
         cell.className = 'line-cell';
         cell.style.transform = '';
         cell.replaceChildren();
 
+        // Слой мгновенных событий ленты: приход детали и сброс в лоток.
+        const fx = document.createElement('div');
+        fx.className = 'line-cell-fx';
+        cell.appendChild(fx);
+
         const main = document.createElement('div');
         main.className = 'line-cell-main';
-        main.style.transform = '';
         if (part) {
             const partLabel = document.createElement('span');
             partLabel.className = 'line-cell-part';
@@ -339,7 +351,6 @@ function updateLineCells(lineParts, process = {}) {
 
         if (conveyorMotion.active) {
             cell.classList.add('belt-moving');
-            main.style.transform = `translateX(${conveyorMotion.offsetPx}px)`;
         }
 
         if (part) {

@@ -10,8 +10,11 @@ async function fetchBoot() {
     state.bootFetchBusy = false;
     if (!boot) return;
 
+    // Прогресс инициализации показывает та же лента: заполнение и зубья
+    // двигаются от одного значения, поэтому пусковой экран «едет» ровно
+    // настолько, насколько система реально готова.
     const pct = Math.round((boot.progress || 0) * 100);
-    els.splashProgress.style.width = `${pct}%`;
+    setBootBeltProgress(pct);
 
     if (!state.bootDone) {
         setIfChanged(els.splashMessage, boot.message || 'Загрузка');
@@ -31,7 +34,7 @@ async function fetchBoot() {
         }
         console.log('[BOOT] Backend ready, waiting for UI data...');
 
-        els.splashProgress.style.width = '100%';
+        setBootBeltProgress(100);
 
         startStatusPolling();
         fetchCameras();
@@ -115,6 +118,9 @@ function revealUi() {
             els.splash.classList.add('is-hidden');
             els.main.classList.remove('is-hidden');
             state.splashActive = false;
+            // Ленты основного экрана появились в DOM только сейчас.
+            refreshBeltLanes(true);
+            startBeltDrive();
             applyMainCameraSource();
         }, 400);
     }, 200);
