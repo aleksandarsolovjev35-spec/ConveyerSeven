@@ -19,6 +19,9 @@ _REQUIRED_ROLES = (
 _EXPECTED_SIZE = (1280, 720)
 _REQUESTED_FPS = 30.0
 _PREFLIGHT_TIMEOUT = 3.0
+# Общий предел на параллельное открытие: preflight каждой камеры уже
+# ограничен _PREFLIGHT_TIMEOUT, здесь запас на инициализацию драйвера.
+_OPEN_TIMEOUT = 30.0
 _PREFLIGHT_VALID_FRAMES = 5
 _PREFLIGHT_READ_INTERVAL = 0.05
 _NEAR_BLACK_MEAN_MAX = 5.0
@@ -80,45 +83,99 @@ class CameraManager:
             print(f"  {role} -> {cam_id}")
 
     def open_cameras(self):
-        try:
-            for role, cam_id in self.mapping.items():
+        """Открыть все камеры параллельно.
+
+        Preflight каждой камеры ждёт стабилизации экспозиции до
+        ``_PREFLIGHT_TIMEOUT``. Последовательно это давало бы задержку,
+        линейно растущую с числом камер, поэтому роли открываются
+        одновременно, по потоку на камеру. Ошибки собираются по всем
+        камерам сразу: оператор видит полный список проблем, а не первую.
+        """
+        started = time.monotonic()
+        errors = {}
+        opened = {}
+        opened_lock = threading.Lock()
+
+        def _open(role, cam_id):
+            cap = None
+            try:
                 cap = self._capture_factory(cam_id)
                 if not cap.isOpened():
-                    try:
-                        cap.release()
-                    finally:
-                        raise RuntimeError(
-                            f"Не удалось открыть камеру {cam_id} ({role})"
-                        )
+                    raise RuntimeError(
+                        f"Не удалось открыть камеру {cam_id} ({role})"
+                    )
+                self._configure_capture(cap)
+                with opened_lock:
+                    opened[role] = cap
+                cap = None
 
-                # MJPG существенно снижает USB-нагрузку семи камер. Не все
-                # драйверы подтверждают set(), поэтому реальный результат
-                # контролируется по фактической частоте, а не по return value.
-                cap.set(
-                    cv2.CAP_PROP_FOURCC,
-                    cv2.VideoWriter_fourcc(*"MJPG"),
-                )
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, _EXPECTED_SIZE[0])
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _EXPECTED_SIZE[1])
-                cap.set(cv2.CAP_PROP_FPS, _REQUESTED_FPS)
-                if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                self.cameras[role] = cap
-
-                error = self._wait_for_stable_preflight(cap)
+                error = self._wait_for_stable_preflight(opened[role])
                 if error is not None:
                     raise RuntimeError(
                         f"Камера {cam_id} ({role}) не прошла preflight: {error}"
                     )
-        except Exception:
-            self.release()
-            raise
+            except Exception as exc:
+                with opened_lock:
+                    errors[role] = f"{type(exc).__name__}: {exc}"
+            finally:
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception as release_error:
+                        print(
+                            f"[CAMERA] Ошибка освобождения {role}: "
+                            f"{release_error}"
+                        )
 
-        print(f"Открыто камер: {len(self.cameras)}")
+        threads = [
+            threading.Thread(
+                target=_open,
+                args=(role, cam_id),
+                daemon=True,
+                name=f"open-camera-{role}",
+            )
+            for role, cam_id in self.mapping.items()
+        ]
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + _OPEN_TIMEOUT
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                with opened_lock:
+                    errors.setdefault(thread.name, "open timeout")
+
+        # Порядок ролей задан camera_mapping.json и не должен зависеть
+        # от того, какой поток завершился первым.
+        self.cameras = {
+            role: opened[role] for role in self.mapping if role in opened
+        }
+
+        if errors:
+            self.release()
+            details = ", ".join(
+                f"{role}: {error}" for role, error in sorted(errors.items())
+            )
+            raise RuntimeError(f"Ошибка открытия камер: {details}")
+
+        elapsed = time.monotonic() - started
+        print(f"Открыто камер: {len(self.cameras)} за {elapsed:.1f} с")
         print(
             f"[CAMERA] Запрошено: {_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]} "
             f"MJPG @ {_REQUESTED_FPS:.0f} FPS"
         )
+
+    @staticmethod
+    def _configure_capture(cap):
+        # MJPG существенно снижает USB-нагрузку семи камер. Не все
+        # драйверы подтверждают set(), поэтому реальный результат
+        # контролируется по фактической частоте, а не по return value.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, _EXPECTED_SIZE[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _EXPECTED_SIZE[1])
+        cap.set(cv2.CAP_PROP_FPS, _REQUESTED_FPS)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     @classmethod
     def _wait_for_stable_preflight(cls, capture) -> str | None:

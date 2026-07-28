@@ -281,9 +281,9 @@ class CoreCycleTests(unittest.TestCase):
         )
         self.assertTrue(cycle.enter_jog())
         deadline = time.monotonic() + 1.0
-        while not cycle._jog_frame_error and time.monotonic() < deadline:
+        while not cycle.live.error and time.monotonic() < deadline:
             time.sleep(0.01)
-        self.assertTrue(cycle._jog_frame_error)
+        self.assertTrue(cycle.live.error)
         self.assertFalse(cycle.request_start())
         self.assertNotIn(("park", "production"), cycle.distributor.diagnostics)
         self.assertTrue(cycle.exit_jog())

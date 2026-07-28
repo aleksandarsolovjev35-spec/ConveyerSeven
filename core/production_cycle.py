@@ -3,6 +3,12 @@ import threading
 import traceback
 from collections import deque
 
+from core.live_preview import (
+    LIVE_AUX_BATCH_INTERVAL,
+    LIVE_FRAME_INTERVAL,
+    LIVE_THREAD_JOIN_TIMEOUT,
+    LivePreview,
+)
 from core.rule_report import build_rule_report_row
 from core.state_machine import StateMachine, State
 from domain.defect_rules import InputPartPresenceRule
@@ -22,10 +28,10 @@ from domain.part import (
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
 
-LIVE_TARGET_FPS          = 30.0
-JOG_FRAME_INTERVAL       = 1.0 / LIVE_TARGET_FPS
-JOG_AUX_BATCH_INTERVAL   = 0.20   # refresh all auxiliary previews as one batch
-JOG_THREAD_JOIN_TIMEOUT  = 6.0
+# Совместимость имён: параметры live-просмотра заданы в core.live_preview.
+JOG_FRAME_INTERVAL = LIVE_FRAME_INTERVAL
+JOG_AUX_BATCH_INTERVAL = LIVE_AUX_BATCH_INTERVAL
+JOG_THREAD_JOIN_TIMEOUT = LIVE_THREAD_JOIN_TIMEOUT
 
 
 class ProductionCycle:
@@ -107,15 +113,19 @@ class ProductionCycle:
             "updated_at": time.time(),
         }
 
+        # Живой просмотр: работает и в JOG, и во время движения ленты.
+        self.live = LivePreview(
+            cameras=cameras,
+            monitor=monitor,
+            get_active_role=self._get_active_camera_role,
+        )
+
+        # True, пока идёт статическая фаза шага и live-чтения запрещены.
+        self._static_phase = False
+
         # JOG
         self.jog_active: bool = False
         self._jog_lock = threading.Lock()
-        self._jog_thread = None
-        self._jog_aux_thread = None
-        self._jog_stop_event = threading.Event()
-        self._jog_frame_error = None
-        self._jog_frame_times = deque(maxlen=240)
-        self._live_capture_pause = threading.Event()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
         self._shutdown = False
@@ -162,7 +172,7 @@ class ProductionCycle:
         try:
             if self._selected_analysis_active:
                 return False
-            if self._jog_frame_error:
+            if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
@@ -170,7 +180,7 @@ class ProductionCycle:
                 print("[JOG] auto-exit on START")
                 self.exit_jog()
             # The frame thread may fail while START waits for JOG shutdown.
-            if self._jog_frame_error:
+            if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
@@ -203,6 +213,9 @@ class ProductionCycle:
                         "rules": [],
                         "updated_at": None,
                     }
+                # Оператор видит поток всё время, пока линия работает;
+                # на статических этапах шага он приостанавливается.
+                self.live.start()
                 self._set_process("READY", "Цикл запущен")
             return accepted
         finally:
@@ -415,7 +428,10 @@ class ProductionCycle:
             if role not in available_roles:
                 raise ValueError(f"Неизвестная роль камеры: {role}")
 
-            self._live_capture_pause.set()
+            if not self.live.pause():
+                raise RuntimeError(
+                    "Live-просмотр не освободил камеры для анализа кадров"
+                )
             self._selected_analysis_active = True
             self._selected_analysis_role = role
             self._set_diagnostic_running(
@@ -548,7 +564,7 @@ class ProductionCycle:
         except Exception as exc:
             self._selected_analysis_active = False
             self._selected_analysis_role = None
-            self._live_capture_pause.clear()
+            self.live.resume()
             self._set_diagnostic_error("SELECTED_MODEL", exc)
             self._handle_fault(f"Ошибка анализа выбранного кадра: {exc}")
             raise
@@ -578,7 +594,7 @@ class ProductionCycle:
                 "rules": [],
                 "updated_at": None,
             }
-            self._live_capture_pause.clear()
+            self.live.resume()
             self._set_process(
                 "LIVE_SELECTED_CAMERA",
                 f"Поток восстановлен: {role}",
@@ -589,7 +605,8 @@ class ProductionCycle:
 
     def request_force_exit(self):
         self._cancel_motion.set()
-        self._live_capture_pause.clear()
+        self._static_phase = False
+        self.live.reset_pause()
         accepted = self.sm.request_force_exit()
         if self.jog_active:
             try:
@@ -655,9 +672,9 @@ class ProductionCycle:
                         print("[EXIT] Not active -> exit.")
                         break
 
-                    if self._jog_frame_error and self.sm.state != State.FAULT:
+                    if self.live.error and self.sm.state != State.FAULT:
                         self._handle_fault(
-                            f"Ошибка камеры в режиме ручного управления: {self._jog_frame_error}"
+                            f"Ошибка камеры в режиме ручного управления: {self.live.error}"
                         )
                         continue
                     if self.jog is not None:
@@ -685,7 +702,9 @@ class ProductionCycle:
         finally:
             self._shutdown = True
             self._cancel_motion.set()
-            self._live_capture_pause.clear()
+            self._static_phase = False
+            self.live.reset_pause()
+            self.live.stop()
             try:
                 self.exit_jog()
             except Exception as e:
@@ -700,7 +719,9 @@ class ProductionCycle:
         self._cancel_motion.set()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
-        self._live_capture_pause.clear()
+        self._static_phase = False
+        self.live.reset_pause()
+        self.live.stop()
         self._fault_reason = reason
         print(f"[FAULT] {reason}")
         print(
@@ -758,6 +779,29 @@ class ProductionCycle:
         if self._cancel_motion.is_set() or self.sm.force_exit:
             raise RuntimeError("physical operation cancelled")
 
+    # Статическая фаза шага
+
+    def _enter_static_phase(self):
+        """Запретить live-чтения: дальше кадры принадлежат инспекции.
+
+        Держится до начала следующего движения, поэтому геометрия правил
+        остаётся на экране ровно на тех кадрах, по которым посчитана.
+        """
+        if self._static_phase:
+            return
+        if not self.live.pause():
+            raise RuntimeError(
+                "Live-просмотр не освободил камеры перед инспекцией"
+            )
+        self._static_phase = True
+
+    def _leave_static_phase(self):
+        """Вернуть камеры live-просмотру перед движением ленты."""
+        if not self._static_phase:
+            return
+        self._static_phase = False
+        self.live.resume()
+
     # Core step
 
     def _run_once(self):
@@ -771,6 +815,12 @@ class ProductionCycle:
 
         self._last_vision_results = {}
         self._last_rule_results = []
+
+        # Шаг начинается с движения: возвращаем камеры live-просмотру и
+        # снимаем разметку прошлого шага — она построена по статичному
+        # кадру и на движущемся изображении указывала бы мимо.
+        self._leave_static_phase()
+        self.live.clear_overlays()
 
         self._pending_drop = self._find_pending_drop()
         pending_id = self._pending_drop.id if self._pending_drop else None
@@ -811,11 +861,17 @@ class ProductionCycle:
         self._execute_drop()
         self._check_motion_cancelled()
 
+        # Лента уже стоит: входим в статическую фазу. Live-чтения запрещены
+        # до начала следующего движения, поэтому кадры для правил снимаются
+        # с неподвижной детали, а их разметка остаётся на экране.
+        self._enter_static_phase()
+
         frame_runs = []
         for run_number in range(1, INSPECTION_RUNS + 1):
             self._set_process(
                 "CAMERA_CAPTURE",
-                f"Синхронный захват семи камер: прогон {run_number}/{INSPECTION_RUNS}",
+                f"Синхронный захват семи камер: прогон "
+                f"{run_number}/{INSPECTION_RUNS}",
                 positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
             )
             frame_runs.append(self.cameras.capture_all())
@@ -1139,6 +1195,10 @@ class ProductionCycle:
         if new == State.STOPPING:
             self._set_process("DRAINING", "Завершение деталей на линии")
         elif new == State.STOPPED:
+            # Линия пуста: последние кадры с разметкой остаются на экране,
+            # пока оператор не войдёт в JOG или не запустит цикл заново.
+            self._leave_static_phase()
+            self.live.stop()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
@@ -1154,7 +1214,7 @@ class ProductionCycle:
             self.state in self.JOG_ALLOWED_STATES
             and not self.exit_requested
             and not self._operation_lock.locked()
-            and not self._jog_frame_error
+            and not self.live.error
             and not self.jog.status.get("error")
         )
 
@@ -1171,8 +1231,7 @@ class ProductionCycle:
                 return False
 
             self.jog_active = True
-            self._jog_frame_times.clear()
-            self._start_jog_frame_loop()
+            self.live.start()
             print("[JOG] entered")
 
         self._refresh_monitor()
@@ -1190,7 +1249,8 @@ class ProductionCycle:
                 release_error = exc
             finally:
                 self.jog_active = False
-                self._stop_jog_frame_loop()
+                if not self.sm.is_active:
+                    self.live.stop()
                 print("[JOG] exited")
 
         self._refresh_monitor()
@@ -1248,141 +1308,16 @@ class ProductionCycle:
             self._refresh_monitor()
         return accepted
 
-    # JOG live frame loop
-
-    def _start_jog_frame_loop(self):
-        self._jog_stop_event.clear()
-        self._jog_thread = threading.Thread(
-            target=self._jog_frame_loop,
-            daemon=True,
-            name="jog-selected-camera",
-        )
-        self._jog_aux_thread = threading.Thread(
-            target=self._jog_aux_frame_loop,
-            daemon=True,
-            name="jog-aux-cameras",
-        )
-        self._jog_thread.start()
-        self._jog_aux_thread.start()
-
-    def _stop_jog_frame_loop(self):
-        self._jog_stop_event.set()
-        deadline = time.monotonic() + JOG_THREAD_JOIN_TIMEOUT
-        for label, thread in (
-            ("selected", self._jog_thread),
-            ("auxiliary", self._jog_aux_thread),
-        ):
-            if thread and thread.is_alive():
-                thread.join(max(0.0, deadline - time.monotonic()))
-                if thread.is_alive():
-                    print(
-                        f"[JOG] {label} frame thread не остановился за "
-                        f"{JOG_THREAD_JOIN_TIMEOUT}s"
-                    )
-        self._jog_thread = None
-        self._jog_aux_thread = None
+    # Живой просмотр камер
 
     def _get_active_camera_role(self):
-        try:
-            server = getattr(self.monitor, "server", None)
-            if server is None:
-                return None
-            return getattr(server, "active_camera_role", None)
-        except Exception:
+        server = getattr(self.monitor, "server", None)
+        if server is None:
             return None
-
-    def _jog_frame_loop(self):
-        print("[JOG] live frame loop started")
-        while not self._jog_stop_event.is_set():
-            if self._live_capture_pause.is_set():
-                self._jog_stop_event.wait(0.02)
-                continue
-            iteration_started = time.monotonic()
-            try:
-                available_roles = list(getattr(self.cameras, "mapping", {}))
-                active_role = self._get_active_camera_role()
-                if active_role is None:
-                    active_role = available_roles[0] if available_roles else None
-                elif available_roles and active_role not in available_roles:
-                    active_role = available_roles[0]
-
-                if active_role is None:
-                    # Compatibility path for a camera provider without role map.
-                    frames = self.cameras.capture_all()
-                    self._jog_frame_times.append(time.monotonic())
-                    if self.monitor:
-                        self.monitor.update(
-                            frames=frames,
-                            vision_results={},
-                            rule_results=[],
-                        )
-                else:
-                    # Выбранная камера имеет приоритет, но публикация жёстко
-                    # ограничена частотой LIVE_TARGET_FPS.
-                    frame = self.cameras.capture_single(active_role)
-                    self._jog_frame_times.append(time.monotonic())
-                    if self.monitor:
-                        self.monitor.update(
-                            frames={active_role: frame},
-                            vision_results={},
-                            rule_results=[],
-                        )
-            except Exception as e:
-                self._jog_frame_error = f"{type(e).__name__}: {e}"
-                print(f"[JOG] frame loop error: {self._jog_frame_error}")
-                self._jog_stop_event.set()
-                break
-            elapsed = time.monotonic() - iteration_started
-            self._jog_stop_event.wait(max(0.0, JOG_FRAME_INTERVAL - elapsed))
-        print("[JOG] live frame loop stopped")
-
-    def _jog_aux_frame_loop(self):
-        print("[JOG] auxiliary frame loop started")
-        while not self._jog_stop_event.is_set():
-            if self._live_capture_pause.is_set():
-                self._jog_stop_event.wait(0.02)
-                continue
-            iteration_started = time.monotonic()
-            try:
-                available_roles = list(getattr(self.cameras, "mapping", {}))
-                active_role = self._get_active_camera_role()
-                auxiliary_roles = [
-                    role for role in available_roles
-                    if role != active_role
-                ]
-                if auxiliary_roles:
-                    capture_roles = getattr(self.cameras, "capture_roles", None)
-                    if callable(capture_roles):
-                        frames = capture_roles(auxiliary_roles)
-                    else:
-                        frames = {
-                            role: frame
-                            for role, frame in self.cameras.capture_all().items()
-                            if role in auxiliary_roles
-                        }
-                    if self.monitor and frames:
-                        self.monitor.update(frames=frames)
-            except Exception as exc:
-                if self._jog_stop_event.is_set():
-                    break
-                self._jog_frame_error = f"{type(exc).__name__}: {exc}"
-                print(f"[JOG] auxiliary frame loop error: {self._jog_frame_error}")
-                self._jog_stop_event.set()
-                break
-            elapsed = time.monotonic() - iteration_started
-            self._jog_stop_event.wait(
-                max(0.0, JOG_AUX_BATCH_INTERVAL - elapsed)
-            )
-        print("[JOG] auxiliary frame loop stopped")
+        return getattr(server, "active_camera_role", None)
 
     def _current_live_fps(self) -> float:
-        now = time.monotonic()
-        recent = [value for value in list(self._jog_frame_times) if now - value <= 2.0]
-        if len(recent) < 2:
-            return 0.0
-        elapsed = recent[-1] - recent[0]
-        measured = 0.0 if elapsed <= 0 else (len(recent) - 1) / elapsed
-        return min(LIVE_TARGET_FPS, measured)
+        return self.live.fps
 
     # Monitor
 
@@ -1463,7 +1398,7 @@ class ProductionCycle:
         operation_busy = self._operation_lock.locked()
         jog_snapshot = self.jog.status if self.jog is not None else {}
         jog_busy = bool(jog_snapshot.get("busy", False))
-        jog_error = jog_snapshot.get("error") or self._jog_frame_error
+        jog_error = jog_snapshot.get("error") or self.live.error
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
             and not self.parts
@@ -1532,6 +1467,15 @@ class ProductionCycle:
             "selected_analysis": {
                 "active": self._selected_analysis_active,
                 "role": self._selected_analysis_role,
+            },
+            # Живой просмотр: активен во время движения, приостановлен на
+            # статических этапах, по которым считаются defect rules.
+            "live": {
+                "running": self.live.running,
+                "streaming": self.live.running and not self._static_phase,
+                "static": self._static_phase,
+                "fps": self._current_live_fps(),
+                "error": self.live.error,
             },
             "frame_analysis": self._build_frame_analysis(state_name),
             "diagnostics": {

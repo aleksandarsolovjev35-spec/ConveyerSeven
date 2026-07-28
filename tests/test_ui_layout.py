@@ -226,14 +226,16 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("CAMERA_ROLE_LABELS", self.js)
         self.assertIn("LINE_STATE_LABELS", self.js)
         self.assertIn("const PREVIEW_INTERVAL       = 180", self.js)
-        production = (
-            Path(__file__).resolve().parents[1] / "core/production_cycle.py"
+        live_preview = (
+            Path(__file__).resolve().parents[1] / "core/live_preview.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("LIVE_TARGET_FPS          = 30.0", production)
-        self.assertIn("JOG_FRAME_INTERVAL       = 1.0 / LIVE_TARGET_FPS", production)
-        self.assertIn("JOG_AUX_BATCH_INTERVAL   = 0.20", production)
-        self.assertIn("target=self._jog_aux_frame_loop", production)
-        self.assertIn("frames = capture_roles(auxiliary_roles)", production)
+        self.assertIn("LIVE_TARGET_FPS = 30.0", live_preview)
+        self.assertIn(
+            "LIVE_FRAME_INTERVAL = 1.0 / LIVE_TARGET_FPS", live_preview
+        )
+        self.assertIn("LIVE_AUX_BATCH_INTERVAL = 0.20", live_preview)
+        self.assertIn("target=self._auxiliary_loop", live_preview)
+        self.assertIn("frames = capture_roles(auxiliary_roles)", live_preview)
 
     def test_operator_terms_follow_one_unambiguous_naming_standard(self):
         self.assertIn(

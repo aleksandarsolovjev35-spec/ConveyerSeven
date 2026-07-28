@@ -640,6 +640,13 @@ def _make_idle_status(distributor) -> dict:
             "active": False,
             "role": None,
         },
+        "live": {
+            "running": False,
+            "streaming": False,
+            "static": False,
+            "fps": 0.0,
+            "error": None,
+        },
         "frame_analysis": {
             "available": False,
             "kind": None,

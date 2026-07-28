@@ -107,6 +107,8 @@ const state = {
     lastDiagnosticRenderKey: null,
     lastFrameAnalysisRenderKey: null,
     liveFps:              0.0,
+    liveStreaming:        false,
+    liveStatic:           false,
     controlPending:       false,
     startPending:         false,
     backendControls:      {},

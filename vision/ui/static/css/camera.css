@@ -135,6 +135,14 @@
     cursor: default;
 }
 
+/* Лента стоит: показан статичный кадр, по которому считались правила. */
+.mode-badge.mode-static {
+    color: var(--text-dim);
+    border-color: var(--border-strong);
+    box-shadow: none;
+    cursor: default;
+}
+
 /* ─── State overlay ───────────────────────────────────────────────── */
 
 .camera-overlay {

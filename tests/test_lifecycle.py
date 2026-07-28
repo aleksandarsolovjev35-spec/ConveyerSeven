@@ -53,12 +53,29 @@ class StopDuringMoveConveyor(FakeConveyor):
 
 
 class FakeCameras:
+    """Камеры с полным API CameraManager.
+
+    ``captures`` считает только синхронные наборы ``capture_all`` для
+    инспекции; фоновый live-просмотр читает камеры через ``capture_single``
+    и ``capture_roles`` и на этот счётчик не влияет.
+    """
+
     def __init__(self):
         self.captures = 0
+        self.live_reads = 0
+        self.mapping = {role: index for index, role in enumerate(ROLES)}
 
     def capture_all(self):
         self.captures += 1
         return {role: object() for role in ROLES}
+
+    def capture_single(self, role):
+        self.live_reads += 1
+        return object()
+
+    def capture_roles(self, roles):
+        self.live_reads += 1
+        return {role: object() for role in roles}
 
 
 class ScriptedInspector:
