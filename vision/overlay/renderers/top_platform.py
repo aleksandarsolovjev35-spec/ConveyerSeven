@@ -1,5 +1,3 @@
-# vision/overlay/renderers/top_platform.py
-
 import cv2
 import numpy as np
 

@@ -1,5 +1,3 @@
-# domain/part.py
-
 CATEGORY_GOOD    = "GOOD"
 CATEGORY_BAD     = "BAD"
 CATEGORY_CLEANUP = "CLEANUP"
@@ -47,10 +45,6 @@ class Part:
         """Зафиксировать завершение spider-инспекции."""
         self.spider_inspected = True
         self._recompute()
-
-    def compute_final_decision(self):
-        """Обратная совместимость — вызывается после spider."""
-        self.mark_spider_done()
 
     def get_all_defects(self) -> list:
         return self.input_defects + self.spider_defects

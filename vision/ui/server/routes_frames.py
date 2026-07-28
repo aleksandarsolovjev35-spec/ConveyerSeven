@@ -1,5 +1,3 @@
-# vision/ui/server/routes_frames.py
-
 import asyncio
 
 from fastapi import HTTPException, Request, Response
@@ -14,7 +12,7 @@ STREAM_INITIAL_WAIT  = 5.0    # ждать до 5с появления перв�
 def setup_frame_routes(app, server):
 
     @app.get("/frame/{role}")
-    async def get_frame(role: str, mode: str = None, preview: int = 0):
+    async def get_frame(role: str, mode: str | None = None, preview: int = 0):
         actual_mode = (
             mode if mode in ("RAW", "RULES") else server.mode
         )
@@ -32,7 +30,7 @@ def setup_frame_routes(app, server):
         )
 
     @app.get("/stream/{role}")
-    async def get_stream(role: str, request: Request, mode: str = None):
+    async def get_stream(role: str, request: Request, mode: str | None = None):
         """MJPEG-стрим выбранной камеры в режиме RAW или RULES."""
         actual_mode = mode if mode in ("RAW", "RULES") else server.mode
         return StreamingResponse(

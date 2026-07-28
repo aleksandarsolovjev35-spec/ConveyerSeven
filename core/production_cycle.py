@@ -1,10 +1,9 @@
-# core/production_cycle.py
-
 import time
 import threading
 import traceback
 from collections import deque
 
+from core.rule_report import build_rule_report_row
 from core.state_machine import StateMachine, State
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
@@ -83,7 +82,6 @@ class ProductionCycle:
         self._frame_analysis_updated_at = None
 
         self._drain_start_time: float = 0
-        self._consecutive_errors: int = 0
         self._fault_reason = None
         self._operation_lock = threading.Lock()
         self._cancel_motion = threading.Event()
@@ -109,7 +107,7 @@ class ProductionCycle:
             "updated_at": time.time(),
         }
 
-        # ── JOG ────────────────────────────────────────────────
+        # JOG
         self.jog_active: bool = False
         self._jog_lock = threading.Lock()
         self._jog_thread = None
@@ -122,7 +120,7 @@ class ProductionCycle:
         self._selected_analysis_role = None
         self._shutdown = False
 
-    # ─── Process telemetry ───────────────────────────────────────
+    # Process telemetry
 
     def _set_process(
         self,
@@ -156,7 +154,7 @@ class ProductionCycle:
             conveyor_status=status,
         )
 
-    # ─── Public API ──────────────────────────────────────────────
+    # Public API
 
     def request_start(self):
         if not self._operation_lock.acquire(blocking=False):
@@ -191,7 +189,6 @@ class ProductionCycle:
             accepted = self.sm.request_start()
             if accepted:
                 self._drain_start_time = 0
-                self._consecutive_errors = 0
                 self._fault_reason = None
                 self._last_model_health = []
                 self._frame_analysis_rule_results = []
@@ -301,7 +298,7 @@ class ProductionCycle:
                 return False
             self._set_diagnostic_running(
                 "VISION_RULES",
-                "Камеры → модели → правила дефектов",
+                "Камеры -> модели -> правила дефектов",
             )
             self._set_process(
                 "VISION_RULE_DIAGNOSTIC",
@@ -402,650 +399,7 @@ class ProductionCycle:
 
     @staticmethod
     def _rule_report_row(result) -> dict:
-        details = getattr(result, "details", {}) or {}
-        detail = details.get("reason") or details.get("status")
-        detail_lines = []
-        skipped = False
-        per_role = details.get("per_role")
-        if isinstance(per_role, dict) and per_role:
-            skipped_rows = [
-                (role, role_details)
-                for role, role_details in per_role.items()
-                if isinstance(role_details, dict) and role_details.get("skipped")
-            ]
-            if len(skipped_rows) == len(per_role):
-                skipped = True
-                reasons = [
-                    f"{role}: {row.get('reason', 'нет измерения')}"
-                    for role, row in skipped_rows
-                ]
-                detail = "Не выполнено: " + "; ".join(reasons)
-            elif skipped_rows:
-                detail = "Частично выполнено: " + "; ".join(
-                    f"{role}: {row.get('reason', 'нет измерения')}"
-                    for role, row in skipped_rows
-                )
-        rule_name = getattr(result, "rule_name", "")
-        if rule_name == "window_geometry" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason:
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/"
-                        f"{int(role_details.get('expected_count') or 0)}"
-                    )
-                    continue
-                top_limits = role_details.get("top_limits_px") or [0, 0]
-                bottom_limits = role_details.get("bottom_limits_px") or [0, 0]
-                detail_lines.append(
-                    f"{role}: T {float(top_limits[0]):g}…"
-                    f"{float(top_limits[1]):g} px; B "
-                    f"{float(bottom_limits[0]):g}…"
-                    f"{float(bottom_limits[1]):g} px"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних detections показано серым: {ignored}"
-                    )
-                for item in role_details.get("items") or []:
-                    index = int(item.get("index") or 0)
-                    if not item.get("valid"):
-                        detail_lines.append(
-                            f"{role} #{index}: нет измерения T/B"
-                        )
-                        continue
-                    suffix = []
-                    if item.get("top_fail"):
-                        suffix.append("T вне допуска")
-                    if item.get("bottom_fail"):
-                        suffix.append("B вне допуска")
-                    text = (
-                        f"{role} #{index}: "
-                        f"T={float(item.get('top_px') or 0):.1f} px; "
-                        f"B={float(item.get('bottom_px') or 0):.1f} px"
-                    )
-                    if suffix:
-                        text += "; " + ", ".join(suffix)
-                    detail_lines.append(text)
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "contacts_long" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/5"
-                    )
-                    continue
-                if reason == "invalid_contact_masks":
-                    indices = ", ".join(
-                        f"#{index}"
-                        for index in role_details.get("invalid_mask_indices", [])
-                    )
-                    detail_lines.append(
-                        f"{role}: нет segmentation mask контакта: {indices}"
-                    )
-                    continue
-                if reason == "no_scale":
-                    detail_lines.append(
-                        f"{role}: невозможно вычислить scale по шагу 1.25 mm"
-                    )
-                    continue
-
-                tolerance = float(role_details.get("line_tolerance_px") or 0)
-                inscribe = role_details.get("inscribe_check") or {}
-                scale = inscribe.get("scale_px_per_mm")
-                detail_lines.append(
-                    f"{role}: допуск линий {tolerance:.1f} px; "
-                    f"rectangle {float(role_details.get('rect_width_mm') or 0):g}x"
-                    f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-                    f"scale {scale if scale is not None else '—'} px/mm"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                omission = role_details.get("omission_tilt_check") or {}
-                if omission.get("status") == "error":
-                    detail_lines.append(
-                        f"{role}: нет valid reference omission-long"
-                    )
-                else:
-                    detail_lines.append(
-                        f"{role}: omission tilt "
-                        f"{float(omission.get('distance_trend_ratio') or 0):.3f}/"
-                        f"предел {float(role_details.get('omission_tilt_ratio_max') or 0):.3f}"
-                    )
-                for item in role_details.get("items") or []:
-                    index = int(item.get("index") or 0)
-                    distance = item.get("omission_distance_px")
-                    distance_text = (
-                        f"{float(distance):.1f} px"
-                        if distance is not None else "—"
-                    )
-                    text = (
-                        f"{role} #{index}: верх "
-                        f"{float(item.get('dev_top_px') or 0):.1f}/{tolerance:.1f} px; "
-                        f"низ {float(item.get('dev_bottom_px') or 0):.1f}/{tolerance:.1f} px; "
-                        f"rect {'OK' if item.get('rect_fits') else 'FAIL'}; "
-                        f"d omission {distance_text}"
-                    )
-                    detail_lines.append(text)
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "contacts_short" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/2; "
-                        f"area min "
-                        f"{float(role_details.get('area_absolute_min_px2') or 0):g} px²"
-                    )
-                    invalid_indices = role_details.get(
-                        "invalid_mask_indices", []
-                    )
-                    if invalid_indices:
-                        detail_lines.append(
-                            f"{role}: нет segmentation mask контакта: "
-                            + ", ".join(
-                                f"#{index}" for index in invalid_indices
-                            )
-                        )
-                    continue
-                if reason == "invalid_contact_masks":
-                    indices = ", ".join(
-                        f"#{index}"
-                        for index in role_details.get("invalid_mask_indices", [])
-                    )
-                    detail_lines.append(
-                        f"{role}: нет segmentation mask контакта: {indices}"
-                    )
-                    continue
-                tolerance = float(role_details.get("tolerance") or 0)
-                detail_lines.append(
-                    f"{role}: area min "
-                    f"{float(role_details.get('area_absolute_min_px2') or 0):g} px²; "
-                    f"Δtop {float(role_details.get('delta_top') or 0):.1f}/"
-                    f"{tolerance:.1f} px; Δbottom "
-                    f"{float(role_details.get('delta_bottom') or 0):.1f}/"
-                    f"{tolerance:.1f} px; Δheight "
-                    f"{float(role_details.get('delta_height') or 0):.1f}/"
-                    f"{tolerance:.1f} px"
-                )
-                inscribe = role_details.get("inscribe_check") or {}
-                scale = inscribe.get("scale_px_per_mm")
-                detail_lines.append(
-                    f"{role}: rectangle "
-                    f"{float(role_details.get('rect_width_mm') or 0):g}x"
-                    f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-                    f"scale {scale if scale is not None else '—'} px/mm"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                omission = role_details.get("omission_tilt_check") or {}
-                if omission.get("status") == "error":
-                    detail_lines.append(
-                        f"{role}: нет valid reference omission-short"
-                    )
-                else:
-                    detail_lines.append(
-                        f"{role}: omission tilt "
-                        f"{float(omission.get('distance_delta_ratio') or 0):.3f}/"
-                        f"предел {float(role_details.get('omission_tilt_ratio_max') or 0):.3f}"
-                    )
-                for item in role_details.get("items") or []:
-                    distance = item.get("omission_distance_px")
-                    distance_text = (
-                        f"{float(distance):.1f} px"
-                        if distance is not None else "—"
-                    )
-                    detail_lines.append(
-                        f"{role} #{int(item.get('index') or 0)}: "
-                        f"top={float(item.get('top_y') or 0):.1f}; "
-                        f"bottom={float(item.get('bottom_y') or 0):.1f}; "
-                        f"height={float(item.get('height_px') or 0):.1f} px; "
-                        f"rect {'OK' if item.get('rect_fits') else 'FAIL'}; "
-                        f"d omission {distance_text}"
-                    )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "top_contacts" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found_raw') or 0)}/14"
-                    )
-                    continue
-                if reason == "insufficient_valid_contact_masks":
-                    detail_lines.append(
-                        f"{role}: valid contact masks "
-                        f"{int(role_details.get('found') or 0)}/14"
-                    )
-                    indices = role_details.get("invalid_mask_indices", [])
-                    if indices:
-                        detail_lines.append(
-                            f"{role}: нет segmentation mask: "
-                            + ", ".join(f"#{index}" for index in indices)
-                        )
-                    continue
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_bbox":
-                    detail_lines.append(f"{role}: нет valid platform bbox")
-                    continue
-                if reason == "layout_groups_failed":
-                    counts = role_details.get("group_counts") or {}
-                    detail_lines.append(
-                        f"{role}: layout "
-                        + ", ".join(
-                            f"{group}={int(counts.get(group) or 0)}/"
-                            f"{TopContactsRuleCount}"
-                            for group, TopContactsRuleCount in (
-                                ("L", 5), ("R", 5), ("T", 2), ("B", 2)
-                            )
-                        )
-                    )
-                    continue
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                for group in ("L", "R", "T", "B"):
-                    check = (role_details.get("group_checks") or {}).get(group) or {}
-                    detail_lines.append(
-                        f"{role} {group}: distance median "
-                        f"{float(check.get('median_distance_px') or 0):.1f} px; "
-                        f"max deviation "
-                        f"{float(check.get('max_deviation_px') or 0):.1f}/"
-                        f"{float(check.get('allowed_deviation_px') or 0):.1f} px"
-                    )
-                for item in role_details.get("items") or []:
-                    detail_lines.append(
-                        f"{role} #{int(item.get('index') or 0)} {item.get('group')}: "
-                        f"distance {float(item.get('distance_px') or 0):.1f} px; "
-                        f"deviation {float(item.get('deviation_px') or 0):.1f}/"
-                        f"{float(item.get('allowed_deviation_px') or 0):.1f} px; "
-                        f"rect {float(item.get('rect_width_px') or 0):g}x"
-                        f"{float(item.get('rect_height_px') or 0):g} px "
-                        f"{'OK' if item.get('rect_fits') else 'FAIL'}"
-                    )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "top_platform" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_orientation":
-                    detail_lines.append(f"{role}: не построена orientation platform")
-                    continue
-                placement = role_details.get("placement") or "not_fitted"
-                placement_text = {
-                    "centered": "по центру",
-                    "shifted": "сдвинут",
-                    "not_fitted": "не вписался",
-                }.get(placement, str(placement))
-                detail_lines.append(
-                    f"{role}: rectangle "
-                    f"{float(role_details.get('rect_width_px') or 0):g}x"
-                    f"{float(role_details.get('rect_height_px') or 0):g} px; "
-                    f"angle {float(role_details.get('angle_deg') or 0):.1f}°"
-                )
-                detail_lines.append(
-                    f"{role}: {placement_text}; shift "
-                    f"{float(role_details.get('shift_distance_px') or 0):.1f} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "platform_contacts_overlap" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_orientation":
-                    detail_lines.append(f"{role}: не построена orientation platform")
-                    continue
-                if reason == "inner_platform_reference_not_fitted":
-                    detail_lines.append(
-                        f"{role}: не построен inner rectangle 260x120 px"
-                    )
-                    continue
-                detail_lines.append(
-                    f"{role}: boundary "
-                    f"{float(role_details.get('boundary_width_px') or 0):g}x"
-                    f"{float(role_details.get('boundary_height_px') or 0):g} px; "
-                    f"component min "
-                    f"{int(role_details.get('excess_component_min_px') or 0)} px"
-                )
-                detail_lines.append(
-                    f"{role}: largest component "
-                    f"{int(role_details.get('largest_component_pixels') or 0)} px; "
-                    f"confirmed "
-                    f"{int(role_details.get('excess_pixels') or 0)} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if (
-            rule_name in ("long_omission", "short_omission")
-            and isinstance(per_role, dict)
-        ):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason:
-                    detail_lines.append(
-                        f"{role}: нет valid omission reference ({reason})"
-                    )
-                    continue
-                detail_lines.append(
-                    f"{role}: толщина "
-                    f"{float(role_details.get('allowed_thickness_px') or 0):.1f} px; "
-                    f"component min "
-                    f"{int(role_details.get('excess_component_min_px') or 0)} px; "
-                    f"residual "
-                    f"{float(role_details.get('top_line_actual_max_residual_px') or 0):.1f}/"
-                    f"{float(role_details.get('top_line_max_residual_px') or 0):.1f} px"
-                )
-                detail_lines.append(
-                    f"{role}: largest component "
-                    f"{int(role_details.get('largest_component_pixels') or 0)} px; "
-                    f"confirmed "
-                    f"{int(role_details.get('excess_pixels') or 0)} px; "
-                    f"max depth "
-                    f"{float(role_details.get('max_excess_depth_px') or 0):.1f} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if (
-            result.triggered
-            and rule_name not in (
-                "window_geometry",
-                "contacts_long",
-                "contacts_short",
-                "top_contacts",
-                "top_platform",
-                "platform_contacts_overlap",
-                "long_omission",
-                "short_omission",
-            )
-            and isinstance(per_role, dict)
-        ):
-            failure_rows = []
-            for role, role_details in per_role.items():
-                if (
-                    not isinstance(role_details, dict)
-                    or not role_details.get("triggered")
-                ):
-                    continue
-                failures = []
-                reason = role_details.get("reason")
-                if reason:
-                    failures.append(str(reason))
-
-                if rule_name == "window_sinks":
-                    failures = []
-                    if reason and str(reason).startswith(
-                        "invalid_window_reference_count"
-                    ):
-                        failures.append(
-                            "нет семи mask окон: "
-                            f"{int(role_details.get('selected_windows') or 0)}/7"
-                        )
-                    elif reason == "invalid_window_masks":
-                        failures.append(
-                            "нет segmentation mask окна: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_window_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "invalid_sink_masks":
-                        failures.append(
-                            "нет segmentation mask раковины: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_sink_indices", []
-                                )
-                            )
-                        )
-                    elif not reason:
-                        threshold = int(
-                            role_details.get("overlap_min_px") or 0
-                        )
-                        for hit in role_details.get("hits") or []:
-                            failures.append(
-                                f"раковина #{hit.get('sink_index')} → "
-                                f"окно #{hit.get('window_index')}: "
-                                f"overlap {hit.get('overlap_px')} px "
-                                f">= {threshold} px"
-                            )
-
-                elif rule_name == "sinks":
-                    failures = []
-                    if reason == "invalid_sink_masks":
-                        failures.append(
-                            "нет segmentation mask shell: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_sink_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "invalid_case_central_reference":
-                        failures.append(
-                            "case_central reference: "
-                            f"{int(role_details.get('case_central_found') or 0)}/1"
-                        )
-                    elif reason == "no_valid_platform":
-                        failures.append("нет valid platform mask")
-                    elif reason == "invalid_platform_bbox":
-                        failures.append("нет valid platform bbox")
-                    elif reason == "insufficient_valid_contacts":
-                        failures.append(
-                            "valid contact masks: "
-                            f"{int(role_details.get('valid_contacts') or 0)}/14"
-                        )
-                    elif reason == "invalid_contact_layout":
-                        counts = role_details.get("contact_group_counts") or {}
-                        failures.append(
-                            "contact layout: "
-                            + ", ".join(
-                                f"{group}={int(counts.get(group) or 0)}/{expected}"
-                                for group, expected in (
-                                    ("L", 5), ("R", 5),
-                                    ("T", 2), ("B", 2),
-                                )
-                            )
-                        )
-                    elif not reason:
-                        for hit in role_details.get("hits") or []:
-                            failures.append(
-                                f"shell #{hit.get('sink_index')}: forbidden "
-                                f"{hit.get('forbidden_pixels')} px; "
-                                f"central {hit.get('central_overlap_px')} px; "
-                                f"platform {hit.get('platform_overlap_px')} px; "
-                                f"contacts {hit.get('contacts_overlap_px')} px"
-                            )
-
-                elif rule_name == "glass":
-                    failures = []
-                    for hit in role_details.get("hits") or []:
-                        failures.append(
-                            f"glass #{hit.get('glass_index')} → ОЧИСТКА: "
-                            f"platform {hit.get('platform_overlap_px')} px; "
-                            f"pin {hit.get('pin_overlap_px')} px; "
-                            f"ring {hit.get('ring_overlap_px')} px; "
-                            f"union {hit.get('cleanup_overlap_px')} px"
-                        )
-
-                elif rule_name == "glass_on_contacts":
-                    failures = []
-                    if reason == "missing_glass_mask":
-                        failures.append(
-                            "нет segmentation mask glass: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_glass_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "no_valid_platform":
-                        failures.append("нет valid platform mask")
-                    elif reason == "invalid_platform_bbox":
-                        failures.append("нет valid platform bbox")
-                    elif reason == "insufficient_valid_contacts":
-                        failures.append(
-                            "valid contact masks: "
-                            f"{int(role_details.get('valid_contacts') or 0)}/14"
-                        )
-                    elif reason == "invalid_contact_layout":
-                        counts = role_details.get("contact_group_counts") or {}
-                        failures.append(
-                            "contact layout: "
-                            + ", ".join(
-                                f"{group}={int(counts.get(group) or 0)}/{expected}"
-                                for group, expected in (
-                                    ("L", 5), ("R", 5),
-                                    ("T", 2), ("B", 2),
-                                )
-                            )
-                        )
-                    elif reason and str(reason).startswith("wrong_pin_count"):
-                        failures.append(
-                            f"pins: {int(role_details.get('pins_found') or 0)}/14"
-                        )
-                    elif reason == "missing_pin_mask":
-                        failures.append(
-                            "нет pin mask: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_pin_indices", []
-                                )
-                            )
-                        )
-                    elif reason and str(reason).startswith("invalid_case_count"):
-                        failures.append(
-                            f"case: {int(role_details.get('case_found') or 0)}/1"
-                        )
-                    elif reason and str(reason).startswith(
-                        "invalid_case_central_count"
-                    ):
-                        failures.append(
-                            "case_central: "
-                            f"{int(role_details.get('case_central_found') or 0)}/1"
-                        )
-                    elif reason == "case_central_not_inside_case":
-                        failures.append("invalid case ring")
-                    elif reason == "empty_case_ring":
-                        failures.append("empty case ring")
-                    elif not reason:
-                        for pair in role_details.get("pairs") or []:
-                            failures.append(
-                                f"glass #{pair.get('glass_index')} → "
-                                f"contact #{pair.get('contact_index')}: "
-                                f"overlap {pair.get('overlap_pixels')} px → БРАК"
-                            )
-
-
-                if failures:
-                    failure_rows.append(f"{role}: " + "; ".join(failures))
-            if failure_rows:
-                detail = "; ".join(failure_rows)
-
-        consensus = details.get("consensus")
-        if not isinstance(consensus, dict):
-            consensus = {}
-
-        if rule_name == "part_presence":
-            detail = (
-                "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
-                if details.get("empty_tray")
-                else "Деталь обнаружена"
-            )
-        if not detail:
-            detail = "Сработало" if result.triggered else "Норма"
-
-        status_label = None
-        neutral = False
-        if rule_name == "part_presence" and details.get("empty_tray"):
-            status_label = "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
-            neutral = True
-            if consensus:
-                status_label += (
-                    f" · {int(consensus.get('empty_votes') or 0)}/"
-                    f"{int(consensus.get('runs') or 0)}"
-                )
-        elif rule_name == "part_presence" and consensus:
-            status_label = (
-                "ДЕТАЛЬ ОБНАРУЖЕНА · "
-                f"{int(consensus.get('present_votes') or 0)}/"
-                f"{int(consensus.get('runs') or 0)}"
-            )
-        elif consensus:
-            votes_key = "triggered_votes" if result.triggered else "normal_votes"
-            status_label = (
-                ("СРАБОТАЛО" if result.triggered else "НОРМА")
-                + f" · {int(consensus.get(votes_key) or 0)}/"
-                f"{int(consensus.get('runs') or 0)}"
-            )
-
-        return {
-            "name": result.rule_name,
-            "triggered": bool(result.triggered),
-            "skipped": skipped,
-            "status_label": status_label,
-            "neutral": neutral,
-            "show_detail": rule_name in (
-                "window_geometry",
-                "contacts_long",
-                "contacts_short",
-                "top_contacts",
-                "top_platform",
-                "platform_contacts_overlap",
-                "long_omission",
-                "short_omission",
-            ),
-            "detail": str(detail),
-            "detail_lines": detail_lines,
-            "consensus": dict(consensus),
-        }
+        return build_rule_report_row(result)
 
     def diagnostic_analyze_selected_camera(self, role: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -1245,7 +599,7 @@ class ProductionCycle:
         self._safe_emergency_stop()
         return accepted
 
-    # ─── Properties для UI и main.py ─────────────────────────────
+    # Properties для UI и main.py
 
     @property
     def state(self) -> str:
@@ -1263,7 +617,7 @@ class ProductionCycle:
     def dist1_open_position(self) -> int:
         return self.distributor.dist1_open_position
 
-    # ─── Main loop ───────────────────────────────────────────────
+    # Main loop
 
     def start(self):
         print("Система готова. Ожидание команды START.")
@@ -1280,7 +634,7 @@ class ProductionCycle:
                         self.sm.notify_line_empty()
                         self._refresh_monitor()
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty → exit.")
+                            print("[EXIT] Line empty -> exit.")
                             break
                         continue
 
@@ -1294,11 +648,11 @@ class ProductionCycle:
                         self._refresh_monitor()
 
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty → exit.")
+                            print("[EXIT] Line empty -> exit.")
                             break
                 else:
                     if self.sm.exit_requested:
-                        print("[EXIT] Not active → exit.")
+                        print("[EXIT] Not active -> exit.")
                         break
 
                     if self._jog_frame_error and self.sm.state != State.FAULT:
@@ -1340,7 +694,7 @@ class ProductionCycle:
             self._archive_inflight("runtime_shutdown")
             print("Цикл конвейера завершён.")
 
-    # ─── Fault ───────────────────────────────────────────────────
+    # Fault
 
     def _handle_fault(self, reason: str):
         self._cancel_motion.set()
@@ -1363,7 +717,7 @@ class ProductionCycle:
         self._safe_emergency_stop()
         self._refresh_monitor()
 
-    # ─── Safe run ────────────────────────────────────────────────
+    # Safe run
 
     def _run_once_safe(self):
         if self.sm.state == State.STOPPING and self.parts:
@@ -1378,11 +732,9 @@ class ProductionCycle:
 
         try:
             self._run_once()
-            self._consecutive_errors = 0
         except Exception as e:
-            # Repeating a failed physical step loses part-to-cell alignment.
-            # Fail closed on the first incomplete cycle instead.
-            self._consecutive_errors += 1
+            # Повтор неудачного физического шага теряет соответствие
+            # деталь/ячейка, поэтому падаем в FAULT на первой же ошибке.
             print(f"[CYCLE] Error in _run_once: {e}")
             traceback.print_exc()
             self._handle_fault(f"Ошибка производственного шага: {e}")
@@ -1406,7 +758,7 @@ class ProductionCycle:
         if self._cancel_motion.is_set() or self.sm.force_exit:
             raise RuntimeError("physical operation cancelled")
 
-    # ─── Core step ───────────────────────────────────────────────
+    # Core step
 
     def _run_once(self):
         self._check_motion_cancelled()
@@ -1506,7 +858,7 @@ class ProductionCycle:
         self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
         self._refresh_monitor(display_frames)
 
-    # ─── Input stage ─────────────────────────────────────────────
+    # Input stage
 
     def _process_input_stage(self, frame_runs):
         """Обработать INPUT по трём свежим кадрам и majority 2 из 3."""
@@ -1577,7 +929,7 @@ class ProductionCycle:
         )
         return result
 
-    # ─── Inspection ──────────────────────────────────────────────
+    # Inspection
 
     def _run_spider_inspection(self, frame_runs):
         for part in self.parts:
@@ -1636,7 +988,7 @@ class ProductionCycle:
             return result
         return None
 
-    # ─── Distributor flow ────────────────────────────────────────
+    # Distributor flow
 
     def _find_pending_drop(self):
         next_step = self.current_step + 1
@@ -1656,7 +1008,7 @@ class ProductionCycle:
         if category == CATEGORY_UNKNOWN:
             print(
                 f"[WARN] Деталь #{part.id} не прошла полную "
-                f"инспекцию → принудительно BAD"
+                f"инспекцию -> принудительно BAD"
             )
             part.route_category = CATEGORY_BAD
             part.final_decision = "incomplete_inspection"
@@ -1683,13 +1035,13 @@ class ProductionCycle:
         if category == CATEGORY_BAD:
             self.bad_count += 1
             print(
-                f"[REJECT] #{part.id} → BAD "
+                f"[REJECT] #{part.id} -> BAD "
                 f"({self.bad_count})"
             )
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
             print(
-                f"[CLEANUP] #{part.id} → CLEANUP "
+                f"[CLEANUP] #{part.id} -> CLEANUP "
                 f"({self.cleanup_count})"
             )
 
@@ -1717,11 +1069,11 @@ class ProductionCycle:
             self._register_finished(part)
             self._remove_part(part)
             print(
-                f"[PASS] #{part.id} → GOOD "
+                f"[PASS] #{part.id} -> GOOD "
                 f"({self.good_count})"
             )
 
-    # ─── Archive ─────────────────────────────────────────────────
+    # Archive
 
     def _archive_part(self, part, extra=None):
         if not self.archive:
@@ -1758,7 +1110,7 @@ class ProductionCycle:
             self._remove_part(part)
         self._pending_drop = None
 
-    # ─── Helpers ─────────────────────────────────────────────────
+    # Helpers
 
     def _remove_part(self, part):
         if part in self.parts:
@@ -1793,7 +1145,7 @@ class ProductionCycle:
         else:
             self._refresh_monitor()
 
-    # ─── JOG mode ────────────────────────────────────────────────
+    # JOG mode
 
     def can_enter_jog(self) -> bool:
         if self.jog is None or self._shutdown:
@@ -1896,7 +1248,7 @@ class ProductionCycle:
             self._refresh_monitor()
         return accepted
 
-    # ─── JOG live frame loop ─────────────────────────────────────
+    # JOG live frame loop
 
     def _start_jog_frame_loop(self):
         self._jog_stop_event.clear()
@@ -2032,7 +1384,7 @@ class ProductionCycle:
         measured = 0.0 if elapsed <= 0 else (len(recent) - 1) / elapsed
         return min(LIVE_TARGET_FPS, measured)
 
-    # ─── Monitor ─────────────────────────────────────────────────
+    # Monitor
 
     def _build_frame_analysis(self, state_name: str) -> dict:
         report = self._diagnostics
@@ -2218,7 +1570,7 @@ class ProductionCycle:
 
         return status
 
-    def _refresh_monitor(self, frames: dict = None):
+    def _refresh_monitor(self, frames: dict | None = None):
         if not self.monitor:
             return
         status = self._build_status()

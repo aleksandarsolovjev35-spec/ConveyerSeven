@@ -452,8 +452,8 @@ class CoreCycleTests(unittest.TestCase):
             }}},
         )
         row = ProductionCycle._rule_report_row(sinks)
-        self.assertIn("раковина #1 → окно #2: overlap 8 px >= 5 px", row["detail"])
-        self.assertIn("раковина #2 → окно #5: overlap 13 px >= 5 px", row["detail"])
+        self.assertIn("раковина #1 -> окно #2: overlap 8 px >= 5 px", row["detail"])
+        self.assertIn("раковина #2 -> окно #5: overlap 13 px >= 5 px", row["detail"])
         self.assertNotIn("снаружи", row["detail"])
 
     def test_window_geometry_report_exposes_all_seven_rows(self):
@@ -656,7 +656,7 @@ class CoreCycleTests(unittest.TestCase):
             }}},
         )
         row = ProductionCycle._rule_report_row(glass)
-        self.assertIn("glass #1 → ОЧИСТКА", row["detail"])
+        self.assertIn("glass #1 -> ОЧИСТКА", row["detail"])
         self.assertIn("platform 12 px", row["detail"])
         self.assertIn("pin 3 px", row["detail"])
         self.assertIn("ring 4 px", row["detail"])
@@ -690,8 +690,8 @@ class CoreCycleTests(unittest.TestCase):
             }}},
         )
         row = ProductionCycle._rule_report_row(bad_glass)
-        self.assertIn("glass #1 → contact #4", row["detail"])
-        self.assertIn("overlap 9 px → БРАК", row["detail"])
+        self.assertIn("glass #1 -> contact #4", row["detail"])
+        self.assertIn("overlap 9 px -> БРАК", row["detail"])
 
     def test_running_status_exposes_current_models_and_rules(self):
         cycle = self.make_cycle()

@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_glass.py
-
 import cv2
 import numpy as np
 
@@ -8,7 +6,7 @@ from domain.defect_rules.top_glass_context import build_top_glass_context
 
 
 class TopGlassRule(BaseRule):
-    """Glass на platform/pin/case ring → CLEANUP; contacts → BAD rule."""
+    """Glass на platform/pin/case ring -> CLEANUP; contacts -> BAD rule."""
 
     name = "glass"
     ROLES = ("TOP",)

@@ -143,23 +143,26 @@ def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
 
     scores = [
         sum(
-            bool(getattr(result, "triggered")) == decision
-            for result, decision in zip(results, decisions)
+            bool(result.triggered) == decision
+            for result, decision in zip(results, decisions, strict=True)
         )
         for results in runs
     ]
     # При равенстве используем самый свежий кадр.
-    evidence_index = max(range(INSPECTION_RUNS), key=lambda index: (scores[index], index))
+    evidence_index = max(
+        range(INSPECTION_RUNS),
+        key=lambda index: (scores[index], index),
+    )
 
     final_results = []
     rules_metadata = {}
     for result_index, (rule_name, decision, vote_row) in enumerate(
-        zip(expected_names, decisions, vote_rows)
+        zip(expected_names, decisions, vote_rows, strict=True)
     ):
         matching_runs = [
             run_index
             for run_index, results in enumerate(runs)
-            if bool(getattr(results[result_index], "triggered")) == decision
+            if bool(results[result_index].triggered) == decision
         ]
         if len(matching_runs) < CONSENSUS_MIN_VOTES:
             raise InspectionConsensusError(

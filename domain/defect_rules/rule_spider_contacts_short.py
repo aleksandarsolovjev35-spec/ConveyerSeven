@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_spider_contacts_short.py
-
 import cv2
 import numpy as np
 from itertools import combinations
@@ -21,7 +19,7 @@ class SpiderContactsShortRule(BaseRule):
     """Короткие контакты: собственная геометрия + наклон к omission-short."""
 
     name = "contacts_short"
-    ROLES = ["SPIDER_IN", "SPIDER_OUT"]
+    ROLES = ("SPIDER_IN", "SPIDER_OUT")
     TARGET_CLASS = "flatness_short"
     OMISSION_CLASS = "omission-short"
 
@@ -202,7 +200,7 @@ class SpiderContactsShortRule(BaseRule):
         median_height = max(1.0, float(np.median([p_a["height"], p_b["height"]])))
         tolerance = median_height * level_dev_ratio
 
-        # ── Проверка 1: ровность между собой ───────────────────
+        # Проверка 1: ровность между собой
         delta_top = abs(p_a["top_y"] - p_b["top_y"])
         delta_bottom = abs(p_a["bottom_y"] - p_b["bottom_y"])
         delta_height = abs(p_a["height"] - p_b["height"])
@@ -211,7 +209,7 @@ class SpiderContactsShortRule(BaseRule):
         height_fail = delta_height > tolerance
         level_fail = top_fail or bottom_fail or height_fail
 
-        # ── Проверка 2: наклон относительно верхней линии omission ──
+        # Проверка 2: наклон относительно верхней линии omission
         omission_tilt_check = self._check_omission_tilt(
             omissions=omissions,
             contact_a=p_a,
@@ -223,7 +221,7 @@ class SpiderContactsShortRule(BaseRule):
         omission_tilt_fail = omission_tilt_check["status"] == "fail"
         omission_fail = omission_reference_fail or omission_tilt_fail
 
-        # ── Проверка 3: вписываемость ──────────────────────────
+        # Проверка 3: вписываемость
         dx = p_b["center_x"] - p_a["center_x"]
         dy = p_b["center_y"] - p_a["center_y"]
         step_px = float(np.hypot(dx, dy))
@@ -260,7 +258,7 @@ class SpiderContactsShortRule(BaseRule):
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
         role_triggered = level_fail or omission_fail or inscribe_fail
 
-        # ── Отрисовка ──────────────────────────────────────────
+        # Отрисовка
         omission_distances = {}
         if omission_tilt_check.get("status") != "error":
             omission_distances = {
@@ -321,7 +319,7 @@ class SpiderContactsShortRule(BaseRule):
                 "failures": failures,
             })
 
-        # ── Линии ──────────────────────────────────────────────
+        # Линии
         x_left = min(p_a["bbox_x1"], p_b["bbox_x1"]) - 40
         x_right = max(p_a["bbox_x2"], p_b["bbox_x2"]) + 40
 
@@ -336,7 +334,7 @@ class SpiderContactsShortRule(BaseRule):
                 "label": label, "delta": round(delta, 1),
                 "tolerance": round(tolerance, 1), "triggered": fail})
 
-        # ── Опорная линия omission и расстояния контактов ─────
+        # Опорная линия omission и расстояния контактов
         if omission_tilt_check["status"] != "error":
             drawings.append({
                 "type": "contacts_short_omission_line",
@@ -412,7 +410,7 @@ class SpiderContactsShortRule(BaseRule):
             "items": items,
         }
 
-    # ─── Верхняя опорная линия omission ───────────────────────
+    # Верхняя опорная линия omission
 
     @classmethod
     def _check_omission_tilt(
@@ -483,7 +481,7 @@ class SpiderContactsShortRule(BaseRule):
             "ratio_max": round(float(ratio_max), 6),
         }
 
-    # ─── Вписываемость ─────────────────────────────────────────
+    # Вписываемость
 
     @staticmethod
     def _try_inscribe_in_contact(det, expected_short_px, expected_long_px, common_angle):
@@ -549,7 +547,7 @@ class SpiderContactsShortRule(BaseRule):
 
         return {"fits": fits, "points": cl.astype(np.int32).tolist(), "center": (float(cx), float(cy))}
 
-    # ─── Отбор пары ────────────────────────────────────────────
+    # Отбор пары
 
     @classmethod
     def _select_pair(cls, candidates, expected, area_absolute_min, y_filter_ratio):
@@ -598,7 +596,7 @@ class SpiderContactsShortRule(BaseRule):
         g = [c for i,c in enumerate(candidates) if i not in best_pair]
         return s, g, f"area-drop={len(dropped)} y-drop={len(yd)} score={best_score:.3f}"
 
-    # ─── Helpers ───────────────────────────────────────────────
+    # Helpers
 
     @staticmethod
     def _combined_bbox(detections):
@@ -630,29 +628,28 @@ class SpiderContactsShortRule(BaseRule):
         return points
 
     @staticmethod
-    def _bbox_center_x(bbox): return (bbox[0]+bbox[2])/2
+    def _bbox_center_x(bbox):
+        return (bbox[0] + bbox[2]) / 2
 
     @classmethod
     def _extract_params_basic(cls, det):
-        b = det["bbox"]; x1,y1,x2,y2 = b
-        w, h = abs(x2-x1), abs(y2-y1)
+        x1, y1, x2, y2 = det["bbox"]
         points = cls._mask_points(det)
         area = (
             abs(float(cv2.contourArea(points)))
             if points is not None else 0.0
         )
         return {
-            "center_x": (x1+x2)/2,
-            "center_y": (y1+y2)/2,
-            "height": h,
+            "center_x": (x1 + x2) / 2,
+            "center_y": (y1 + y2) / 2,
+            "height": abs(y2 - y1),
             "area": area,
         }
 
     @classmethod
     def _extract_params(cls, det):
-        b = det["bbox"]
-        x1, _y1, x2, _y2 = b
-        width = abs(x2-x1)
+        x1, _y1, x2, _y2 = det["bbox"]
+        width = abs(x2 - x1)
         points = cls._mask_points(det)
         if points is None:
             raise ValueError("valid contact segmentation mask required")

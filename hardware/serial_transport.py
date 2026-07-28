@@ -1,5 +1,3 @@
-# hardware/serial_transport.py
-
 import serial
 import time
 import threading
@@ -27,11 +25,6 @@ class SerialTransport:
         with self.lock:
             self._do_send(command)
 
-    def send_raw(self, data: bytes):
-        """Отправить сырые байты один раз без автоматического retry."""
-        with self.lock:
-            self._do_send_raw(data)
-
     def query(self, command: str, delay: float = 0.15) -> str:
         """Один атомарный request/response без reconnect во время цикла."""
         with self.lock:
@@ -45,7 +38,7 @@ class SerialTransport:
                 except Exception as exc:
                     print(f"[SERIAL] Ошибка закрытия порта: {exc}")
 
-    # ─── Internal ────────────────────────────────────────────────────
+    # Internal
 
     @staticmethod
     def _open(port: str, baudrate: int) -> serial.Serial:
@@ -60,10 +53,6 @@ class SerialTransport:
 
     def _do_send(self, command: str):
         self.ser.write(f"{command}\n".encode())
-        self.ser.flush()
-
-    def _do_send_raw(self, data: bytes):
-        self.ser.write(data)
         self.ser.flush()
 
     def _do_query(self, command: str, delay: float) -> str:

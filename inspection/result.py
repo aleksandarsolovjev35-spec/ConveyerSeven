@@ -20,7 +20,3 @@ class InspectionResult:
     # диагностики/offline-анализа остаются пустыми.
     consensus: dict = field(default_factory=dict)
     model_health: list = field(default_factory=list)
-
-    @property
-    def has_defects(self) -> bool:
-        return bool(self.defects)

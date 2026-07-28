@@ -1,5 +1,3 @@
-# domain/defect_rules/top_glass_context.py
-
 import cv2
 import numpy as np
 

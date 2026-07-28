@@ -1,5 +1,3 @@
-# domain/defect_rules/__init__.py
-
 from domain.defect_rules.base import BaseRule, RuleResult
 
 from domain.defect_rules.rule_input_part_presence   import InputPartPresenceRule

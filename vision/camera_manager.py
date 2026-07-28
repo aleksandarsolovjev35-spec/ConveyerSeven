@@ -1,5 +1,3 @@
-# vision/camera_manager.py
-
 import json
 import threading
 import time
@@ -50,7 +48,7 @@ class CameraManager:
 
     def load_config(self):
         try:
-            with open(self._config_file, "r", encoding="utf-8") as stream:
+            with open(self._config_file, encoding="utf-8") as stream:
                 mapping = json.load(stream)
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -246,6 +244,8 @@ class CameraManager:
         return self.capture_roles((role,))[role]
 
     def release(self):
+        # Менеджер не открывает окна OpenCV, поэтому destroyAllWindows()
+        # здесь не нужен: на headless-сборках он лишь бросает исключение.
         with self._state_lock:
             self._closed = True
         for cap in list(self.cameras.values()):
@@ -254,7 +254,6 @@ class CameraManager:
             except Exception as exc:
                 print(f"[CAMERA] Ошибка освобождения камеры: {exc}")
         self.cameras.clear()
-        cv2.destroyAllWindows()
 
     def _latch_failure(self, reason: str):
         with self._state_lock:

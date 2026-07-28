@@ -1,5 +1,3 @@
-# vision/overlay/renderers/__init__.py
-
 from vision.overlay.renderers.primitives       import DrawPrimitives
 from vision.overlay.renderers.construction_error import draw_construction_error
 from vision.overlay.renderers.window_geometry  import WindowGeometryRenderer

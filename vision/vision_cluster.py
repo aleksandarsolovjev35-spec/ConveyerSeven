@@ -1,5 +1,3 @@
-# vision/vision_cluster.py
-
 import math
 import os
 import time
@@ -15,9 +13,6 @@ AGGRESSIVE_IOU_ROLES = {"TOP", "SPIDER_LEFT", "SPIDER_RIGHT"}
 DEFAULT_IOU    = 0.45
 AGGRESSIVE_IOU = 0.10
 
-# Максимум точек для split_top_row (защита от O(n!) в combinations)
-MAX_DETECTIONS_PER_CLASS = 30
-
 
 class VisionCluster:
 
@@ -29,7 +24,7 @@ class VisionCluster:
         self._load_all_models()
 
     def _load_all_models(self):
-        for _group_name, model_list in MODEL_GROUPS.items():
+        for model_list in MODEL_GROUPS.values():
             for entry in model_list:
                 path = entry["path"]
                 if path not in self.models:

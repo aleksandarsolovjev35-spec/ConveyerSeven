@@ -1,5 +1,3 @@
-# core/decision_engine.py
-
 from domain.threshold_loader import ThresholdLoader
 from domain.defect_rules import (
     BaseRule,
@@ -23,7 +21,7 @@ class DecisionEngine:
     Оркестратор правил.
     """
 
-    def __init__(self, thresholds: dict = None):
+    def __init__(self, thresholds: dict | None = None):
         if thresholds is None:
             thresholds = ThresholdLoader().get_all()
 
@@ -60,20 +58,6 @@ class DecisionEngine:
         if not self.rules:
             raise RuntimeError("No active defect rules; production inspection blocked")
         print(f"[RULES] Active: {[r.name for r in self.rules]}")
-
-    def evaluate_all(self, vision_results, frames=None):
-        if not vision_results:
-            return []
-
-        defects = []
-        for rule in self.rules:
-            result = self._run_rule(rule, vision_results, frames)
-            if result.triggered:
-                defect_name = result.rule_name
-                if defect_name not in defects:
-                    defects.append(defect_name)
-
-        return defects
 
     def evaluate_all_detailed(self, vision_results, frames=None):
         return self.evaluate_rules_detailed(

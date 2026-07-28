@@ -1,5 +1,3 @@
-# inspection/debug_recorder.py
-
 import os
 import cv2
 from datetime import datetime
@@ -29,7 +27,7 @@ class DebugRecorder:
         if self.enabled:
             os.makedirs(self.folder, exist_ok=True)
 
-    # ─── Public API ──────────────────────────────────────────────────
+    # Public API
 
     def process(
         self,
@@ -48,19 +46,7 @@ class DebugRecorder:
 
         return annotated
 
-    def get_annotated(self) -> dict:
-        return self._last_annotated.copy()
-
-    def overlay_on(self, frames: dict) -> dict:
-        result = {}
-        for role, frame in frames.items():
-            if role in self._last_annotated:
-                result[role] = self._last_annotated[role]
-            else:
-                result[role] = frame
-        return result
-
-    # ─── Internal ────────────────────────────────────────────────────
+    # Internal
 
     def _annotate(
         self,

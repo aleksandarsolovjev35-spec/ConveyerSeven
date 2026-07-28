@@ -65,7 +65,7 @@ def _validate(data: dict) -> dict:
 def load_calibration(path: str = "calibration.json") -> dict:
     """Загрузить полную проверенную калибровку; unsafe defaults запрещены."""
     try:
-        with open(path, "r", encoding="utf-8") as stream:
+        with open(path, encoding="utf-8") as stream:
             data = json.load(stream)
     except FileNotFoundError as exc:
         raise RuntimeError(f"Файл калибровки не найден: {path}") from exc

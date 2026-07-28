@@ -1,5 +1,3 @@
-# vision/overlay/renderers/omission_boundary.py
-
 import cv2
 import numpy as np
 

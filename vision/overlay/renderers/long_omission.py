@@ -1,5 +1,3 @@
-# vision/overlay/renderers/long_omission.py
-
 from vision.overlay.renderers.omission_boundary import draw_omission_item
 
 

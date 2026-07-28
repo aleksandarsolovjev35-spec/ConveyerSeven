@@ -1,5 +1,3 @@
-# hardware/jog_controller.py
-
 """Dead-man continuous JOG control for the Conveyor.
 
 A long movement segment runs while a UI heartbeat is alive. Releasing

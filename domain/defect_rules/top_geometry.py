@@ -1,5 +1,3 @@
-# domain/defect_rules/top_geometry.py
-
 from __future__ import annotations
 
 import cv2

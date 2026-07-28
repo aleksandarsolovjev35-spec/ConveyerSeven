@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_input_window_sinks.py
-
 import cv2
 import numpy as np
 
@@ -11,7 +9,7 @@ class InputWindowSinksRule(BaseRule):
     """Раковины objects внутри тех же семи flatness, что и window_geometry."""
 
     name = "window_sinks"
-    ROLES = ["INPUT_LEFT", "INPUT_RIGHT"]
+    ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     SINK_CLASS = "objects"
     WINDOW_CLASS = "flatness"
 
@@ -220,11 +218,11 @@ class InputWindowSinksRule(BaseRule):
         hits = []
         confirmed_sinks = set()
         for sink_index, (sink, sink_raster) in enumerate(
-            zip(sinks, sink_rasters),
+            zip(sinks, sink_rasters, strict=True),
             start=1,
         ):
             for window_index, (window, window_raster) in enumerate(
-                zip(selected, window_rasters),
+                zip(selected, window_rasters, strict=True),
                 start=1,
             ):
                 overlap = cv2.bitwise_and(sink_raster, window_raster)

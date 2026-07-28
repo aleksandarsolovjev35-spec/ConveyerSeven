@@ -1,5 +1,3 @@
-# main.py
-
 import os
 import signal
 import threading
@@ -34,18 +32,18 @@ CYCLE_JOIN_TIMEOUT   = 15.0
 INIT_JOIN_TIMEOUT    = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
 COMPRESS_TIMEOUT     = 60.0
-ERROR_CLOSE_DELAY    = 5.0
 
 
 def main():
 
-    if not os.path.exists("camera_mapping.json"):
-        if not launch_camera_calibrator("camera_mapping.json"):
-            print(
-                "[STARTUP] camera_mapping.json не создан; "
-                "основное приложение не запускается"
-            )
-            return
+    if not os.path.exists("camera_mapping.json") and not launch_camera_calibrator(
+        "camera_mapping.json"
+    ):
+        print(
+            "[STARTUP] camera_mapping.json не создан; "
+            "основное приложение не запускается"
+        )
+        return
 
     monitor = LiveMonitor(
         start_callback=None,
@@ -70,7 +68,7 @@ def main():
     exit_press_count = 0
     exit_lock = threading.Lock()
 
-    # ─── Exit logic ──────────────────────────────────────────────
+    # Exit logic
 
     def handle_exit_request():
         nonlocal exit_press_count
@@ -92,7 +90,7 @@ def main():
             if cycle:
                 cycle.request_force_exit()
         else:
-            print("[EXIT] Штатная остановка → завершение деталей на линии")
+            print("[EXIT] Штатная остановка -> завершение деталей на линии")
             if cycle:
                 cycle.request_exit()
 
@@ -120,9 +118,8 @@ def main():
             target=_wait_and_close, daemon=True,
         ).start()
 
-    def _delayed_shutdown(delay: float = ERROR_CLOSE_DELAY):
+    def _report_startup_failure():
         """Оставить startup-ошибку на splash до решения оператора."""
-        del delay
         print("[INIT] Startup failed; waiting for operator to close the UI")
 
     # EXIT должен работать даже при ошибке до создания ProductionCycle.
@@ -132,7 +129,7 @@ def main():
         if shutdown_requested.is_set():
             raise RuntimeError("initialization cancelled by operator")
 
-    # ─── System init ─────────────────────────────────────────────
+    # System init
 
     def initialize_system():
         nonlocal cameras, transport, cycle, cycle_thread, archive
@@ -142,7 +139,7 @@ def main():
             calib = load_calibration()
             _ensure_initialization_active()
 
-            # ── Serial (автопоиск) ───────────────────────────────
+            # Serial (автопоиск)
             monitor.boot_step_start(
                 "serial", "Поиск контроллера",
             )
@@ -161,7 +158,7 @@ def main():
                     monitor.boot_step_error(
                         "serial", port_message,
                     )
-                    _delayed_shutdown()
+                    _report_startup_failure()
                     return
 
                 transport = SerialTransport(
@@ -175,7 +172,7 @@ def main():
                     "serial",
                     f"Ошибка последовательного порта: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
 
             monitor.boot_step_done(
@@ -184,7 +181,7 @@ def main():
             )
             _ensure_initialization_active()
 
-            # ── Hardware ─────────────────────────────────────────
+            # Hardware
             monitor.boot_step_start(
                 "hardware", "Инициализация оборудования",
             )
@@ -248,14 +245,14 @@ def main():
                     "hardware",
                     f"Ошибка оборудования: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done(
                 "hardware", "Лента и две оси инициализированы",
             )
             _ensure_initialization_active()
 
-            # ── Cameras ──────────────────────────────────────────
+            # Cameras
             monitor.boot_step_start(
                 "cameras", "Открытие камер",
             )
@@ -270,7 +267,7 @@ def main():
                     "cameras",
                     f"Ошибка камеры: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done(
                 "cameras",
@@ -278,7 +275,7 @@ def main():
             )
             _ensure_initialization_active()
 
-            # ── Models load ──────────────────────────────────────
+            # Models load
             monitor.boot_step_start(
                 "models_load", "Загрузка моделей",
             )
@@ -289,7 +286,7 @@ def main():
                     "models_load",
                     f"Ошибка загрузки моделей: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done(
                 "models_load",
@@ -297,7 +294,7 @@ def main():
             )
             _ensure_initialization_active()
 
-            # ── Models warmup ────────────────────────────────────
+            # Models warmup
             monitor.boot_step_start(
                 "models_warm", "Прогрев моделей",
             )
@@ -308,14 +305,14 @@ def main():
                     "models_warm",
                     f"Ошибка прогрева моделей: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done(
                 "models_warm", "Прогрев завершён",
             )
             _ensure_initialization_active()
 
-            # ── Inspection pipeline ──────────────────────────────
+            # Inspection pipeline
             monitor.boot_step_start(
                 "inspection", "Настройка системы контроля",
             )
@@ -341,7 +338,7 @@ def main():
                     "inspection",
                     f"Ошибка настройки контроля: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done(
                 "inspection",
@@ -349,7 +346,7 @@ def main():
             )
             _ensure_initialization_active()
 
-            # ── Production cycle ─────────────────────────────────
+            # Production cycle
             monitor.boot_step_start(
                 "cycle", "Создание производственного цикла",
             )
@@ -396,12 +393,12 @@ def main():
                     "cycle",
                     f"Ошибка создания цикла: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
             monitor.boot_step_done("cycle")
             _ensure_initialization_active()
 
-            # ── Preview ──────────────────────────────────────────
+            # Preview
             monitor.boot_step_start(
                 "preview", "Получение начальных кадров",
             )
@@ -421,12 +418,12 @@ def main():
                 monitor.boot_step_error(
                     "preview", f"Ошибка получения начальных кадров: {e}",
                 )
-                _delayed_shutdown()
+                _report_startup_failure()
                 return
 
             _ensure_initialization_active()
 
-            # ── Start cycle thread ───────────────────────────────
+            # Start cycle thread
             monitor.boot_step_start(
                 "ready", "Запуск системы",
             )
@@ -447,22 +444,22 @@ def main():
             traceback.print_exc()
             current = monitor.server.boot_current or "init"
             monitor.boot_step_error(current, str(e))
-            _delayed_shutdown()
+            _report_startup_failure()
 
     init_thread = threading.Thread(
         target=initialize_system, daemon=True,
     )
     init_thread.start()
 
-    # ─── Signal handler ──────────────────────────────────────────
+    # Signal handler
 
-    def signal_handler(sig, frame):
-        print("\n[SIGINT] Ctrl+C → запрос выхода")
+    def signal_handler(_signum, _frame):
+        print("\n[SIGINT] Ctrl+C -> запрос выхода")
         handle_exit_request()
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    # ─── Console info ────────────────────────────────────────────
+    # Console info
 
     print("=" * 60)
     print("Система запускается.")
@@ -470,7 +467,7 @@ def main():
     print("  ESC ВЫХОД (1× штатная остановка, 2× принудительный выход)")
     print("=" * 60)
 
-    # ─── Main: webview blocks here ───────────────────────────────
+    # Main: webview blocks here
 
     try:
         window = webview.create_window(
@@ -566,7 +563,7 @@ def main():
         )
 
 
-# ─── Helpers ─────────────────────────────────────────────────────
+# Helpers
 
 def _shutdown_compress(archive):
     if not archive or not archive.enabled:

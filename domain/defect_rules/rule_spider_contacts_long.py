@@ -16,7 +16,7 @@ class SpiderContactsLongRule(BaseRule):
     """Длинные контакты: собственная геометрия + наклон к omission-long."""
 
     name = "contacts_long"
-    ROLES = ["SPIDER_LEFT", "SPIDER_RIGHT"]
+    ROLES = ("SPIDER_LEFT", "SPIDER_RIGHT")
     TARGET_CLASS = "contacts-long"
     OMISSION_CLASS = "omission-long"
 
@@ -213,7 +213,7 @@ class SpiderContactsLongRule(BaseRule):
         omission_tilt_fail = omission_tilt_check["status"] == "fail"
         omission_fail = omission_reference_fail or omission_tilt_fail
 
-        inscribe_check, inscribe_results, inscribe_fail_indices = self._run_inscribe(
+        inscribe_check, inscribe_results, _fail_indices = self._run_inscribe(
             sorted_dets, scale, rect_width_mm, rect_height_mm,
         )
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
@@ -398,7 +398,7 @@ class SpiderContactsLongRule(BaseRule):
                 "distance_px": round(float(distance), 3),
             })
 
-        if len(set(round(value, 6) for value in xs)) < 2:
+        if len({round(value, 6) for value in xs}) < 2:
             return {
                 "status": "error",
                 "reason": "contact_span_too_small",

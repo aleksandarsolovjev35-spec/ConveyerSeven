@@ -1,5 +1,3 @@
-# vision/overlay/renderers/contacts_short.py
-
 import cv2
 
 from vision.overlay.renderers.contacts_long import (

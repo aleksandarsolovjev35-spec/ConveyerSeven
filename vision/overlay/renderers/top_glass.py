@@ -1,5 +1,3 @@
-# vision/overlay/renderers/top_glass.py
-
 import cv2
 import numpy as np
 
@@ -32,6 +30,7 @@ class TopGlassRenderer:
         for mask, bbox in zip(
             drawing.get("pin_masks") or [],
             drawing.get("pin_bboxes") or [],
+            strict=False,
         ):
             cv2.polylines(
                 img, [_points(mask, bbox)], True, COLOR_SKIP, LINE_THIN,
@@ -55,6 +54,7 @@ class TopGlassRenderer:
         for mask, bbox in zip(
             drawing.get("contact_masks") or [],
             drawing.get("contact_bboxes") or [],
+            strict=False,
         ):
             cv2.polylines(
                 img, [_points(mask, bbox)], True, COLOR_SKIP, LINE_THIN,

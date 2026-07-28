@@ -165,7 +165,7 @@ async function runPrestartDiagnostic(kind) {
             status: 'RUNNING',
             message: kind === 'CAMERAS'
                 ? 'Проверка семи камер'
-                : 'Камеры → модели → defect rules',
+                : 'Камеры -> модели -> defect rules',
         },
     });
     const endpoint = kind === 'CAMERAS'

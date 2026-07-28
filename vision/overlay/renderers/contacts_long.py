@@ -1,5 +1,3 @@
-# vision/overlay/renderers/contacts_long.py
-
 import cv2
 import numpy as np
 

@@ -1,41 +1,21 @@
-# vision/overlay/renderers/primitives.py
-
 import cv2
 import numpy as np
 
-# --- Цвета для debug ---
-COLOR_PASS      = (0, 200, 0)
-COLOR_FAIL      = (0, 0, 255)
-COLOR_SKIP      = (128, 128, 128)
-COLOR_AXIS      = (255, 255, 0)
-COLOR_ANGLE_ARC = (0, 200, 255)
-COLOR_INTERSECT = (0, 0, 255)
-COLOR_HEIGHT    = (255, 180, 0)
-COLOR_GLASS     = (200, 100, 0)
-COLOR_PLATFORM  = (255, 0, 255)
+# Цвета отрисовки debug-оверлея
+COLOR_PASS     = (0, 200, 0)
+COLOR_FAIL     = (0, 0, 255)
+COLOR_SKIP     = (128, 128, 128)
+COLOR_GLASS    = (200, 100, 0)
+COLOR_PLATFORM = (255, 0, 255)
 
-COLOR_SINK_IGNORED = (120, 120, 120)
-COLOR_FIT_LINE     = (0, 200, 255)
-COLOR_FIT_LINE_BAD = (0, 100, 255)
+FONT   = cv2.FONT_HERSHEY_SIMPLEX
+FONT_S = 0.4
+THICK  = 1
 
-COLOR_ACCENT    = (0, 200, 255)
-COLOR_INDEX_BG  = (0, 0, 0)
-COLOR_INDEX_FG  = (255, 255, 255)
+LINE_THIN  = 1
+LINE_FAIL  = 2
+MASK_ALPHA = 0.15
 
-PANEL_BG        = (20, 20, 20)
-PANEL_ALPHA     = 0.75
-
-FONT            = cv2.FONT_HERSHEY_SIMPLEX
-FONT_S          = 0.4
-FONT_M          = 0.5
-FONT_L          = 0.6
-THICK           = 1
-
-LINE_THIN       = 1
-LINE_NORMAL     = 1
-LINE_FAIL       = 2
-
-MASK_ALPHA      = 0.15
 
 class DrawPrimitives:
     @staticmethod
@@ -68,14 +48,6 @@ class DrawPrimitives:
             cv2.polylines(img, [pts], True, color, thickness)
         else:
             cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
-
-    @staticmethod
-    def draw_index_badge(img, x, y, index, color):
-        text = str(index)
-        (tw, th), _ = cv2.getTextSize(text, FONT, FONT_S, THICK)
-        pad = 2
-        cv2.rectangle(img, (x - pad, y - th - pad), (x + tw + pad, y + pad), color, -1)
-        cv2.putText(img, text, (x, y), FONT, FONT_S, COLOR_INDEX_FG, THICK)
 
     @staticmethod
     def draw_text_with_bg(img, text, pos, color, font_scale=FONT_S, bg_pad=2, center_x=False):

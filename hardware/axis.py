@@ -1,5 +1,3 @@
-# hardware/axis.py
-
 import re
 import time
 
@@ -40,20 +38,6 @@ class Axis:
         self.transport.send(f"G27 S{position} P{self.axis_id}")
         time.sleep(0.1)
 
-    def move_relative(self, steps: int):
-        """Относительное перемещение с host-side проверкой конечной цели."""
-        if type(steps) is not int:
-            raise ValueError("relative steps должны быть int")
-        current = self.position
-        target = current + steps
-        if not self.minimum <= target <= self.maximum:
-            raise ValueError(
-                f"Axis {self.axis_id}: relative target {target} outside "
-                f"{self.minimum}..{self.maximum}"
-            )
-        self.transport.send(f"G20 S{steps} P{self.axis_id}")
-        time.sleep(0.1)
-
     def home(self):
         """Выполнить физический homing через концевик (firmware G28)."""
         self.transport.send(f"G28 P{self.axis_id}")
@@ -82,10 +66,6 @@ class Axis:
             "limits_enabled": field("LIM"),
             "endstop": field("ES"),
         }
-
-    def read_state(self) -> tuple[int | None, int | None]:
-        status = self.read_status()
-        return status["position"], status["moving"]
 
     def read_config(self) -> dict:
         data = self.transport.query("I11")

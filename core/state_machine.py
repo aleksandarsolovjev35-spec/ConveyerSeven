@@ -1,8 +1,6 @@
-# core/state_machine.py
-
 import threading
 from enum import Enum
-from typing import Optional, Callable
+from collections.abc import Callable
 
 
 class State(str, Enum):
@@ -30,7 +28,7 @@ class StateMachine:
     Потокобезопасный конечный автомат производственной линии.
     """
 
-    def __init__(self, on_transition: Optional[Callable] = None):
+    def __init__(self, on_transition: Callable | None = None):
         self._state = State.IDLE
         self._exit_requested = False
         self._force_exit = False

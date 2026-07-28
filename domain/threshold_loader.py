@@ -1,5 +1,3 @@
-# domain/threshold_loader.py
-
 import json
 import math
 import os
@@ -143,7 +141,7 @@ class ThresholdLoader:
             raise RuntimeError(f"Файл не найден: {self.path}")
 
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 raw_data = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Ошибка чтения {self.path}: {exc}") from exc

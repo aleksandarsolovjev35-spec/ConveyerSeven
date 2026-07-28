@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_input_part_presence.py
-
 from domain.defect_rules.base import BaseRule, RuleResult
 
 
@@ -15,7 +13,7 @@ class InputPartPresenceRule(BaseRule):
     """
 
     name = "part_presence"
-    ROLES = ["INPUT_LEFT", "INPUT_RIGHT"]
+    ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     TARGET_CLASS = "flatness"
 
     def check(self, vision_results: dict, **kwargs) -> RuleResult:

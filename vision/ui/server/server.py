@@ -1,11 +1,8 @@
-# vision/ui/server/server.py
-
 import asyncio
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 import cv2
 from fastapi import FastAPI
@@ -75,22 +72,22 @@ class UIServer:
 
         self.mode = "RULES"
 
-        self.active_camera_role: Optional[str] = None
+        self.active_camera_role: str | None = None
 
-        self.on_start: Optional[callable] = None
-        self.on_stop:  Optional[callable] = None
-        self.on_exit:  Optional[callable] = None
-        self.on_distributor_diagnostic: Optional[callable] = None
-        self.on_camera_diagnostic: Optional[callable] = None
-        self.on_vision_rule_diagnostic: Optional[callable] = None
-        self.on_selected_model_analysis: Optional[callable] = None
-        self.on_selected_model_release: Optional[callable] = None
+        self.on_start: callable | None = None
+        self.on_stop:  callable | None = None
+        self.on_exit:  callable | None = None
+        self.on_distributor_diagnostic: callable | None = None
+        self.on_camera_diagnostic: callable | None = None
+        self.on_vision_rule_diagnostic: callable | None = None
+        self.on_selected_model_analysis: callable | None = None
+        self.on_selected_model_release: callable | None = None
 
-        self.on_jog_enter: Optional[callable] = None
-        self.on_jog_exit: Optional[callable] = None
-        self.on_jog_hold_start: Optional[callable] = None
-        self.on_jog_hold_heartbeat: Optional[callable] = None
-        self.on_jog_hold_release: Optional[callable] = None
+        self.on_jog_enter: callable | None = None
+        self.on_jog_exit: callable | None = None
+        self.on_jog_hold_start: callable | None = None
+        self.on_jog_hold_heartbeat: callable | None = None
+        self.on_jog_hold_release: callable | None = None
 
         self.archive = None
 
@@ -111,11 +108,11 @@ class UIServer:
         self._setup_static()
         self._setup_routes()
 
-        self._server_thread: Optional[threading.Thread] = None
-        self._uvicorn_server: Optional[uvicorn.Server] = None
+        self._server_thread: threading.Thread | None = None
+        self._uvicorn_server: uvicorn.Server | None = None
         self._server_loop = None
 
-    # ─── Public API ─────────────────────────────────────────
+    # Public API
 
     def update(
         self,
@@ -269,10 +266,10 @@ class UIServer:
         self._server_thread = None
         self._uvicorn_server = None
 
-    def get_server_thread(self) -> Optional[threading.Thread]:
+    def get_server_thread(self) -> threading.Thread | None:
         return self._server_thread
 
-    # ─── Stream helpers ─────────────────────────────────────
+    # Stream helpers
 
     def get_frame_version(self, role: str) -> int:
         with self.lock:
@@ -321,7 +318,7 @@ class UIServer:
 
         return jpeg, current_ver
 
-    # ─── Internal setup ─────────────────────────────────────
+    # Internal setup
 
     def _setup_static(self):
         if _STATIC_DIR.exists():
@@ -342,7 +339,7 @@ class UIServer:
         setup_api_routes(self.app, self)
         setup_archive_routes(self.app, self)
 
-    # ─── Rendering & caching (pull) ────────────────────────
+    # Rendering & caching (pull)
 
     def _get_or_render(self, role, mode, size_kind):
         cache_key = (role, mode, size_kind)
@@ -403,7 +400,7 @@ class UIServer:
         )
 
     @staticmethod
-    def _encode_jpeg(frame, quality: int = None):
+    def _encode_jpeg(frame, quality: int | None = None):
         q = quality if quality is not None else UIServer.JPEG_QUALITY
         ok, buf = cv2.imencode(
             ".jpg", frame,
@@ -411,7 +408,7 @@ class UIServer:
         )
         return buf.tobytes() if ok else b""
 
-    # ─── Helpers ────────────────────────────────────────────
+    # Helpers
 
     @staticmethod
     def _sort_by_order(roles: list) -> list:

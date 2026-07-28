@@ -1,5 +1,3 @@
-# hardware/port_discovery.py
-
 """
 Автоматический поиск COM-порта контроллера.
 
@@ -101,7 +99,7 @@ def try_port(
 
 def find_controller(
     baudrate: int = 115200,
-    preferred_port: str = None,
+    preferred_port: str | None = None,
 ) -> tuple[str | None, str]:
     """
     Найти порт контроллера автоматически.
@@ -150,7 +148,7 @@ def find_controller(
 
         if success:
             print(
-                f"[PORT] ✓ Controller found on {port}: "
+                f"[PORT] Controller found on {port}: "
                 f"'{response[:80]}'"
             )
             return port, (

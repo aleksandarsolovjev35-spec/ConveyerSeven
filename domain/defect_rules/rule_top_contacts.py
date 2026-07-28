@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_contacts.py
-
 from __future__ import annotations
 
 import math
@@ -295,7 +293,6 @@ class TopContactsRule(BaseRule):
                 "triggered": False,
             })
 
-        x1, y1, x2, y2 = map(float, platform_bbox)
         group_checks = {}
         failed_groups = []
         item_rows = []
@@ -307,17 +304,15 @@ class TopContactsRule(BaseRule):
         distance_data = {}
         for group in ("L", "R", "T", "B"):
             detections = cls._sort_group(selected_groups[group], group)
-            parameters = [cls._contact_parameters(item) for item in detections]
+            group_parameters = [
+                cls._contact_parameters(item) for item in detections
+            ]
             distances = [
-                cls._distance_to_side(parameters[index], group, platform_bbox)
-                for index in range(len(parameters))
+                cls._distance_to_side(item, group, platform_bbox)
+                for item in group_parameters
             ]
-            scale_values = [
-                parameters[index][
-                    "width" if group in ("L", "R") else "height"
-                ]
-                for index in range(len(parameters))
-            ]
+            scale_key = "width" if group in ("L", "R") else "height"
+            scale_values = [item[scale_key] for item in group_parameters]
             median_distance = float(np.median(distances))
             scale = max(1.0, float(np.median(scale_values)))
             allowed_deviation = scale * distance_ratio_max
@@ -349,9 +344,9 @@ class TopContactsRule(BaseRule):
                 ),
                 "triggered": failed,
             })
-            for detection, parameters, distance, deviation in zip(
+            for detection, item_parameters, distance, deviation in zip(
                 detections,
-                parameters,
+                group_parameters,
                 distances,
                 deviations,
                 strict=True,
@@ -361,7 +356,7 @@ class TopContactsRule(BaseRule):
                 if distance_failed:
                     distance_fail_ids.add(id(detection))
                 start, end = cls._distance_segment(
-                    parameters,
+                    item_parameters,
                     group,
                     platform_bbox,
                 )
@@ -558,10 +553,10 @@ class TopContactsRule(BaseRule):
 
     @classmethod
     def _distance_to_side(cls, parameters, group, platform_bbox):
-        candidates = dict(
-            (side, distance)
+        candidates = {
+            side: distance
             for distance, side in cls._side_candidates(parameters, platform_bbox)
-        )
+        }
         return float(candidates[group])
 
     @staticmethod

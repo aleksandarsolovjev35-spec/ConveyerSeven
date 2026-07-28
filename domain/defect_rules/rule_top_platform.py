@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_platform.py
-
 from domain.defect_rules.base import BaseRule, RuleResult
 from domain.defect_rules.top_geometry import (
     largest_valid_mask,

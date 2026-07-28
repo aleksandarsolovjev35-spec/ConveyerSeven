@@ -1,5 +1,3 @@
-# vision/ui/server/routes_archive.py
-
 import os
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -24,7 +22,7 @@ def setup_archive_routes(app, server):
         meta_path = os.path.join(info["folder"], "meta.json")
         if os.path.exists(meta_path):
             import json
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
 
         sorted_role_names = server._sort_by_order(list(images.keys()))

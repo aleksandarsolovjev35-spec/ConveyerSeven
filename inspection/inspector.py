@@ -28,7 +28,7 @@ class Inspector:
         self.decision = decision
         self.recorder = recorder
 
-    # ─── Production: три свежих кадра, голосование 2 из 3 ─────────
+    # Production: три свежих кадра, голосование 2 из 3
 
     def inspect_input_consensus(
         self,
@@ -99,6 +99,7 @@ class Inspector:
             for vision_results, stage_frames in zip(
                 vision_runs,
                 stage_frame_runs,
+                strict=True,
             )
         ]
         final_rule_results, rule_vote, evidence_index = combine_rule_results(
@@ -146,6 +147,7 @@ class Inspector:
             for vision_results, stage_frames in zip(
                 vision_runs,
                 stage_frame_runs,
+                strict=True,
             )
         ]
         final_rule_results, consensus, evidence_index = combine_rule_results(
@@ -259,7 +261,7 @@ class Inspector:
             model_health=model_health,
         )
 
-    # ─── Одиночный прогон для диагностики и offline-анализа ──────
+    # Одиночный прогон для диагностики и offline-анализа
 
     def inspect_input(
         self,
@@ -331,7 +333,7 @@ class Inspector:
             force_bad=force_bad,
         )
 
-    # ─── Empty tray detector ─────────────────────────────────────
+    # Empty tray detector
 
     def _evaluate_part_presence(self, vision_results: dict):
         rule = InputPartPresenceRule(thresholds=self.decision.thresholds)
@@ -339,11 +341,7 @@ class Inspector:
             raise RuntimeError("part_presence rule is disabled")
         return rule.check(vision_results)
 
-    def _check_empty_tray(self, vision_results: dict) -> bool:
-        result = self._evaluate_part_presence(vision_results)
-        return bool(result.details.get("empty_tray"))
-
-    # ─── Internal single-run path ────────────────────────────────
+    # Internal single-run path
 
     def _inspect(
         self,
@@ -353,8 +351,8 @@ class Inspector:
         step: int,
         frames: dict,
         force_bad: bool,
-        vision_results: dict = None,
-        stage_frames: dict = None,
+        vision_results: dict | None = None,
+        stage_frames: dict | None = None,
     ) -> InspectionResult:
         missing_frames = set(roles) - set(frames)
         if missing_frames:

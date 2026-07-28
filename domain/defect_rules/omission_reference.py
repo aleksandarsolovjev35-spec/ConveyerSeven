@@ -1,5 +1,3 @@
-# domain/defect_rules/omission_reference.py
-
 from __future__ import annotations
 
 import cv2
