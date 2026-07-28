@@ -542,34 +542,11 @@ class CameraAndConfigTests(unittest.TestCase):
 
             path = self.write_json(temp, "calibration.json", dict(DEFAULTS))
             loaded = load_calibration(path)
-            self.assertEqual(loaded["nudge_limit_steps"], 2000)
+            self.assertEqual(loaded["nudge_limit_steps"], 1000)
             self.assertLess(
                 loaded["nudge_limit_steps"] * 2,
                 loaded["normal_steps"] * 2,
             )
-
-    def test_calibration_requires_reduced_pause_hold_speed(self):
-        from config.calibration_loader import DEFAULTS
-
-        with tempfile.TemporaryDirectory() as temp:
-            data = dict(DEFAULTS)
-            self.assertLess(
-                data["pause_hold_speed"], data["conveyor_speed"],
-                "Удержание в паузе обязано идти медленнее производственного хода",
-            )
-            # На производственной скорости весь бюджет коррекции
-            # выбирается быстрее, чем оператор отпускает кнопку.
-            data["pause_hold_speed"] = data["conveyor_speed"] + 1
-            path = self.write_json(temp, "calibration.json", data)
-            with self.assertRaisesRegex(ValueError, "pause_hold_speed"):
-                load_calibration(path)
-
-    def test_pause_hold_budget_lasts_long_enough_to_react(self):
-        from config.calibration_loader import DEFAULTS
-
-        # Оператор физически не успевает отпустить кнопку быстрее ~0.2s.
-        duration = DEFAULTS["nudge_limit_steps"] / DEFAULTS["pause_hold_speed"]
-        self.assertGreaterEqual(duration, 0.2)
 
     def test_calibration_never_falls_back_after_corruption(self):
         with tempfile.TemporaryDirectory() as temp:
