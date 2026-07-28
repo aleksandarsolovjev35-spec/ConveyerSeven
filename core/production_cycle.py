@@ -6,7 +6,11 @@ from collections import deque
 from core.live_preview import LivePreview
 from core.rule_report import build_rule_report_row
 from core.state_machine import StateMachine, State
-from core.step_stages import StepSequencer
+from core.step_stages import (
+    STAGE_SETTLE_SECONDS,
+    STAGE_TRACE_SECONDS,
+    StepSequencer,
+)
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
@@ -45,7 +49,8 @@ class ProductionCycle:
         monitor=None,
         archive=None,
         jog=None,
-        settle_seconds=None,
+        settle_seconds=STAGE_SETTLE_SECONDS,
+        stage_trace_seconds=STAGE_TRACE_SECONDS,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -113,10 +118,11 @@ class ProductionCycle:
         )
 
         # Фазы шага и передача камер между live-просмотром и инспекцией.
-        self.stages = (
-            StepSequencer(self.live)
-            if settle_seconds is None
-            else StepSequencer(self.live, settle_seconds=settle_seconds)
+        self.stages = StepSequencer(
+            self.live,
+            settle_seconds=settle_seconds,
+            trace_seconds=stage_trace_seconds,
+            on_stage=self._on_stage_change,
         )
 
         # JOG
@@ -1200,6 +1206,13 @@ class ProductionCycle:
         if not isinstance(rows, list):
             return
         self._last_model_health = [dict(item) for item in rows]
+
+    def _on_stage_change(self, previous, current, elapsed: float):
+        """Печать границы фаз шага: видно, где именно проводится время."""
+        print(
+            f"[STAGE] {previous.value} -> {current.value} "
+            f"(предыдущая фаза {elapsed:.2f} с)"
+        )
 
     def _on_state_change(self, old, new, action: str):
         if new == State.STOPPING:

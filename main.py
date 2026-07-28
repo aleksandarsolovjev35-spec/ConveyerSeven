@@ -364,6 +364,7 @@ def main():
                     archive=archive,
                     jog=jog,
                     settle_seconds=calib["settle_time"],
+                    stage_trace_seconds=calib["stage_trace_time"],
                 )
                 monitor.start_callback = cycle.request_start
                 monitor.stop_callback  = cycle.request_stop
@@ -537,6 +538,13 @@ def main():
         )
 
         phase_started = time.monotonic()
+        # Live-просмотр останавливается до освобождения камер: иначе фоновые
+        # чтения продолжались бы на уже закрытых VideoCapture.
+        if cycle:
+            try:
+                cycle.live.stop()
+            except Exception as exc:
+                print(f"[SHUTDOWN] Live preview stop failed: {exc}")
         try:
             if cameras:
                 cameras.release()

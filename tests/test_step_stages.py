@@ -34,13 +34,10 @@ class RecordingLive:
 
 class StepSequencerOrderTests(unittest.TestCase):
     def make(self, **kwargs):
+        """Секвенсор с подменённым sleep: паузы фиксируются, а не берутся."""
         live = kwargs.pop("live", None) or RecordingLive()
         sleeps = []
-        sequencer = StepSequencer(
-            live,
-            sleep=sleeps.append,
-            **kwargs,
-        )
+        sequencer = StepSequencer(live, sleep=sleeps.append, **kwargs)
         return sequencer, live, sleeps
 
     def test_full_step_follows_the_declared_order(self):
@@ -132,6 +129,108 @@ class StepSequencerOrderTests(unittest.TestCase):
         self.assertEqual(sequencer.stage, StepStage.IDLE)
         self.assertFalse(sequencer.static)
         self.assertEqual(live.paused_depth, 0)
+
+    def test_trace_delay_precedes_every_phase(self):
+        sequencer, _, sleeps = self.make(settle_seconds=0.0, trace_seconds=0.2)
+        sequencer.enter_motion()
+        sequencer.enter_settle()
+        sequencer.enter_capture()
+        sequencer.enter_analysis()
+        sequencer.enter_publish()
+        # По одной паузе на каждый из пяти переходов.
+        self.assertEqual(sleeps, [0.2] * 5)
+
+    def test_trace_delay_is_absent_by_default(self):
+        sequencer, _, sleeps = self.make(settle_seconds=0.0)
+        sequencer.enter_motion()
+        sequencer.enter_settle()
+        sequencer.enter_capture()
+        self.assertEqual(sleeps, [])
+
+    def test_stage_observer_receives_every_transition(self):
+        seen = []
+        live = RecordingLive()
+        sequencer = StepSequencer(
+            live,
+            settle_seconds=0.0,
+            on_stage=lambda old, new, elapsed: seen.append(
+                (old.value, new.value)
+            ),
+            sleep=lambda _seconds: None,
+        )
+        sequencer.enter_motion()
+        sequencer.enter_settle()
+        sequencer.enter_capture()
+        sequencer.enter_analysis()
+        sequencer.enter_publish()
+
+        self.assertEqual(
+            seen,
+            [
+                ("IDLE", "MOTION"),
+                ("MOTION", "SETTLE"),
+                ("SETTLE", "CAPTURE"),
+                ("CAPTURE", "ANALYSIS"),
+                ("ANALYSIS", "PUBLISH"),
+            ],
+        )
+
+    def test_broken_stage_observer_does_not_break_the_step(self):
+        def explode(old, new, elapsed):
+            raise RuntimeError("наблюдатель сломан")
+
+        live = RecordingLive()
+        sequencer = StepSequencer(
+            live,
+            settle_seconds=0.0,
+            on_stage=explode,
+            sleep=lambda _seconds: None,
+        )
+        sequencer.enter_motion()
+        sequencer.enter_settle()
+        sequencer.enter_capture()
+        self.assertEqual(sequencer.stage, StepStage.CAPTURE)
+        self.assertTrue(sequencer.static)
+
+    def test_reset_during_camera_handover_does_not_strand_the_gate(self):
+        """reset() во время передачи камер не должен оставить паузу висеть.
+
+        Иначе шаг сбрасывается, а live-просмотр остаётся замороженным до
+        перезапуска программы.
+        """
+        released = threading.Event()
+
+        class SlowLive:
+            def __init__(self):
+                self.depth = 0
+
+            def pause(self, timeout=None):
+                released.wait(2.0)
+                self.depth += 1
+                return True
+
+            def resume(self):
+                self.depth -= 1
+
+        live = SlowLive()
+        sequencer = StepSequencer(live, settle_seconds=0.0)
+        sequencer.enter_motion()
+        sequencer.enter_settle()
+
+        def reset_during_handover():
+            time.sleep(0.05)
+            sequencer.reset()
+            released.set()
+
+        worker = threading.Thread(target=reset_during_handover)
+        worker.start()
+        with self.assertRaises(StageSequenceError):
+            sequencer.enter_capture()
+        worker.join(2.0)
+
+        self.assertEqual(sequencer.stage, StepStage.IDLE)
+        self.assertFalse(sequencer.static)
+        self.assertEqual(live.depth, 0)
 
     def test_reset_is_idempotent_and_does_not_double_resume(self):
         sequencer, live, _ = self.make()

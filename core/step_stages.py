@@ -39,6 +39,12 @@ STAGE_SETTLE_SECONDS = 0.15
 # Предел ожидания освобождения камер live-просмотром перед захватом.
 STAGE_CAPTURE_HANDOVER_TIMEOUT = 5.0
 
+# Наблюдательная пауза перед каждой фазой. Ноль в production; ненулевое
+# значение растягивает шаг, чтобы оператор видел фазы по отдельности при
+# отладке. На физику линии не влияет: пауза берётся тогда, когда лента уже
+# остановлена или ещё не тронулась.
+STAGE_TRACE_SECONDS = 0.0
+
 
 class StageSequenceError(RuntimeError):
     """Фазы шага вызваны не в том порядке."""
@@ -64,9 +70,6 @@ _ALLOWED = {
     StepStage.PUBLISH: (StepStage.MOTION,),
 }
 
-# Фазы, на которых камеры принадлежат инспекции, а не live-просмотру.
-_STATIC_STAGES = (StepStage.CAPTURE, StepStage.ANALYSIS, StepStage.PUBLISH)
-
 
 class StepSequencer:
     """Владелец фаз шага и единственная точка передачи камер.
@@ -81,15 +84,23 @@ class StepSequencer:
         live,
         settle_seconds: float = STAGE_SETTLE_SECONDS,
         handover_timeout: float = STAGE_CAPTURE_HANDOVER_TIMEOUT,
+        trace_seconds: float = STAGE_TRACE_SECONDS,
+        on_stage=None,
         sleep=time.sleep,
     ):
         self._live = live
         self._settle_seconds = float(settle_seconds)
         self._handover_timeout = float(handover_timeout)
+        self._trace_seconds = float(trace_seconds)
+        self._on_stage = on_stage
         self._sleep = sleep
         self._lock = threading.Lock()
         self._stage = StepStage.IDLE
         self._static_held = False
+        self._stage_started_at = time.monotonic()
+        # Номер поколения шага. reset() увеличивает его, поэтому передача
+        # камер, начатая до сброса, понимает, что её результат уже неактуален.
+        self._generation = 0
 
     @property
     def stage(self) -> StepStage:
@@ -103,6 +114,14 @@ class StepSequencer:
             return self._static_held
 
     def _switch(self, target: StepStage):
+        """Перейти в фазу, выдержав наблюдательную паузу перед ней.
+
+        Пауза берётся до смены фазы и вне блокировки: она не должна
+        задерживать чтение ``stage`` из потоков UI.
+        """
+        if self._trace_seconds > 0:
+            self._sleep(self._trace_seconds)
+
         with self._lock:
             current = self._stage
             if target not in _ALLOWED[current]:
@@ -110,7 +129,21 @@ class StepSequencer:
                     f"Недопустимый переход шага: {current.value} -> "
                     f"{target.value}"
                 )
+            now = time.monotonic()
+            elapsed = now - self._stage_started_at
             self._stage = target
+            self._stage_started_at = now
+
+        self._report(current, target, elapsed)
+
+    def _report(self, previous: StepStage, target: StepStage, elapsed: float):
+        if self._on_stage is None:
+            return
+        try:
+            self._on_stage(previous, target, elapsed)
+        except Exception as exc:
+            # Наблюдение за фазами не должно ронять производственный шаг.
+            print(f"[STAGE] Ошибка обработчика фаз: {exc}")
 
     def enter_motion(self):
         """Начать движение: камеры возвращаются live-просмотру."""
@@ -140,20 +173,35 @@ class StepSequencer:
         """Сбросить шаг в IDLE и вернуть камеры live-просмотру."""
         with self._lock:
             self._stage = StepStage.IDLE
+            self._generation += 1
         self._release_static()
 
     def _acquire_static(self):
         with self._lock:
             if self._static_held:
                 return
+            generation = self._generation
+
         if not self._live.pause(self._handover_timeout):
             # pause() снимает свою неудачную паузу сам.
             raise StageSequenceError(
                 "Live-просмотр не освободил камеры за "
                 f"{self._handover_timeout}s; шаг остановлен"
             )
+
         with self._lock:
-            self._static_held = True
+            if generation != self._generation:
+                # Пока шли переговоры о камерах, шаг успели сбросить.
+                # Держать паузу больше нельзя: live-просмотр завис бы.
+                stale = True
+            else:
+                stale = False
+                self._static_held = True
+        if stale:
+            self._live.resume()
+            raise StageSequenceError(
+                "Шаг сброшен во время передачи камер инспекции"
+            )
 
     def _release_static(self):
         with self._lock:

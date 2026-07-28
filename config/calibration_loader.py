@@ -22,9 +22,13 @@ OPTIONAL_DEFAULTS = {
     # инспекции: контроллер подтверждает остановку по счётчику шагов,
     # а механика в этот момент ещё качается.
     "settle_time": 0.15,
+    # Наблюдательная пауза перед каждой фазой шага. 0 в production;
+    # ненулевое значение растягивает шаг для отладки и на физику линии
+    # не влияет.
+    "stage_trace_time": 0.0,
 }
 
-_FLOAT_KEYS = ("drop_time", "settle_time")
+_FLOAT_KEYS = ("drop_time", "settle_time", "stage_trace_time")
 _INTEGER_KEYS = tuple(key for key in DEFAULTS if key not in _FLOAT_KEYS)
 
 
@@ -72,6 +76,10 @@ def _validate(data: dict) -> dict:
         raise ValueError("drop_time должен быть в диапазоне 0.05..30 секунд")
     if not 0.0 <= float(data["settle_time"]) <= 5.0:
         raise ValueError("settle_time должен быть в диапазоне 0..5 секунд")
+    if not 0.0 <= float(data["stage_trace_time"]) <= 5.0:
+        raise ValueError(
+            "stage_trace_time должен быть в диапазоне 0..5 секунд"
+        )
     return dict(data)
 
 
