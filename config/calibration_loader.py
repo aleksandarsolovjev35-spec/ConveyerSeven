@@ -12,7 +12,6 @@ DEFAULTS = {
     "axis_speed":             300,
     "axis_accel":             100,
     "micro_steps":            500,
-    "nudge_limit_steps":      1000,
     "jog_hold_steps":         1_000_000,
     "normal_steps":           19048,
 }
@@ -45,7 +44,6 @@ def _validate(data: dict) -> dict:
         "axis_speed",
         "axis_accel",
         "micro_steps",
-        "nudge_limit_steps",
         "jog_hold_steps",
         "normal_steps",
     )
@@ -53,22 +51,6 @@ def _validate(data: dict) -> dict:
         raise ValueError("Положительные calibration-параметры должны быть > 0")
     if not 1 <= data["micro_steps"] <= 5000:
         raise ValueError("micro_steps должен быть в диапазоне 1..5000")
-    if not 1 <= data["nudge_limit_steps"] <= 5000:
-        raise ValueError("nudge_limit_steps должен быть в диапазоне 1..5000")
-    if data["micro_steps"] > data["nudge_limit_steps"]:
-        raise ValueError(
-            "micro_steps не может превышать nudge_limit_steps: "
-            "одно нажатие обязано укладываться в суммарный лимит коррекции"
-        )
-    # Коррекция обязана оставаться внутри одной ячейки. Иначе накопленное
-    # смещение сдвинет деталь в соседнюю позицию, а current_step об этом
-    # не узнает: логическая карта линии разойдётся с физикой.
-    cell_steps = data["normal_steps"] * 2
-    if data["nudge_limit_steps"] * 2 >= cell_steps:
-        raise ValueError(
-            "Суммарный ход коррекции (±nudge_limit_steps) должен быть строго "
-            f"меньше шага ячейки {cell_steps}"
-        )
     if not 10_000 <= data["jog_hold_steps"] <= 10_000_000:
         raise ValueError("jog_hold_steps должен быть в диапазоне 10000..10000000")
     if data["dist2_bad_position"] < 0 or data["dist2_cleanup_position"] < 0:

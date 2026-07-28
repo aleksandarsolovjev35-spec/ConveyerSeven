@@ -103,56 +103,6 @@ class ApiTests(unittest.TestCase):
     def test_commands_report_not_ready_rejected_and_success(self):
         asyncio.run(self._run())
 
-    def test_pause_resume_and_bounded_nudge_endpoints(self):
-        asyncio.run(self._run_pause())
-
-    async def _run_pause(self):
-        server = UIServer()
-        transport = httpx.ASGITransport(app=server.app)
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://127.0.0.1:8000",
-        ) as client:
-            # Пока backend не готов, команды паузы обязаны отклоняться.
-            for path in ("/api/pause", "/api/resume", "/api/nudge/forward"):
-                response = await client.post(path)
-                self.assertEqual(response.status_code, 503)
-                self.assertFalse(response.json()["ok"])
-
-            # Недоступность в текущем состоянии — 409, а не тихий успех.
-            server.on_pause = lambda: False
-            response = await client.post("/api/pause")
-            self.assertEqual(response.status_code, 409)
-
-            calls = []
-            server.on_pause = lambda: calls.append("pause") or True
-            server.on_resume = lambda: calls.append("resume") or True
-            server.on_nudge = lambda direction: calls.append(direction) or True
-
-            response = await client.post("/api/pause")
-            self.assertEqual(response.status_code, 200)
-            response = await client.post("/api/nudge/forward")
-            self.assertEqual(response.status_code, 200)
-            response = await client.post("/api/nudge/backward")
-            self.assertEqual(response.status_code, 200)
-            response = await client.post("/api/resume")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(calls, ["pause", "+", "-", "resume"])
-
-            # Произвольное направление не должно доходить до железа.
-            response = await client.post("/api/nudge/sideways")
-            self.assertEqual(response.status_code, 404)
-            self.assertEqual(len(calls), 4)
-
-            # Отказ железа обязан возвращать 500, а не «ok».
-            def failing_nudge(direction):
-                raise RuntimeError("motion rejected")
-
-            server.on_nudge = failing_nudge
-            response = await client.post("/api/nudge/forward")
-            self.assertEqual(response.status_code, 500)
-            self.assertFalse(response.json()["ok"])
-
     async def _run(self):
         server = UIServer()
         transport = httpx.ASGITransport(app=server.app)

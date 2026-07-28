@@ -118,21 +118,6 @@ def setup_api_routes(app, server):
         print("[API] /api/stop called")
         return await invoke("СТОП", server.on_stop)
 
-    @app.post("/api/pause")
-    async def post_pause():
-        return await invoke("ПАУЗА", server.on_pause)
-
-    @app.post("/api/resume")
-    async def post_resume():
-        return await invoke("ПРОДОЛЖИТЬ", server.on_resume)
-
-    @app.post("/api/nudge/{direction}")
-    async def post_nudge(direction: str):
-        if direction not in ("forward", "backward"):
-            raise HTTPException(status_code=404, detail="Unknown nudge direction")
-        sign = "+" if direction == "forward" else "-"
-        return await invoke("КОРРЕКЦИЯ", server.on_nudge, sign)
-
     @app.post("/api/exit")
     async def api_exit():
         print("[API] /api/exit called")
