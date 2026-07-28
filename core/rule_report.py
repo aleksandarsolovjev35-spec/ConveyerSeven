@@ -636,6 +636,54 @@ def _status_label(rule_name: str, triggered: bool, details: dict, consensus: dic
     ), False
 
 
+# === Упрощённые человеческие причины дефектов (для быстрого понимания оператором) ===
+HUMAN_CAUSE_MAP = {
+    # INPUT
+    ("window_geometry", True): "НЕПРАВИЛЬНАЯ ГЕОМЕТРИЯ ОКОН",
+    ("window_sinks", True): "РАКОВИНА В ОКНЕ",
+    # SPIDER
+    ("contacts_long", True): "НАКЛОН / СМЕЩЕНИЕ ДЛИННЫХ КОНТАКТОВ",
+    ("contacts_short", True): "НАКЛОН / СМЕЩЕНИЕ КОРОТКИХ КОНТАКТОВ",
+    ("long_omission", True): "ИЗБЫТОЧНАЯ ТОЛЩИНА (LONG OMISSION)",
+    ("short_omission", True): "ИЗБЫТОЧНАЯ ТОЛЩИНА (SHORT OMISSION)",
+    # TOP
+    ("top_contacts", True): "СМЕЩЕНИЕ КОНТАКТОВ НА ПЛАТФОРМЕ",
+    ("top_platform", True): "ПЛАТФОРМА НЕ ВПИСАЛАСЬ",
+    ("platform_contacts_overlap", True): "ЗАПЛЫВ ПЛАТФОРМЫ",
+    ("sinks", True): "РАКОВИНА ВНУТРИ КОРПУСА",
+    ("glass", True): "СТЕКЛО НА ПЛАТФОРМЕ / ПИНАХ",
+    ("glass_on_contacts", True): "СТЕКЛО НА КОНТАКТАХ",
+}
+
+def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | None:
+    """Возвращает короткую читаемую причину дефекта."""
+    if not triggered:
+        return None
+
+    key = (rule_name, True)
+    if key in HUMAN_CAUSE_MAP:
+        return HUMAN_CAUSE_MAP[key]
+
+    # Fallback: пытаемся вытащить самую важную причину
+    per_role = details.get("per_role") or {}
+    reasons = []
+    for role, rd in per_role.items():
+        if isinstance(rd, dict) and rd.get("triggered"):
+            r = rd.get("reason")
+            if r:
+                reasons.append(str(r))
+            # для некоторых правил берём первую проблему
+            if rule_name in ("window_sinks", "sinks", "glass_on_contacts"):
+                for hit in (rd.get("hits") or rd.get("pairs") or []):
+                    if hit:
+                        reasons.append("пересечение")
+                        break
+
+    if reasons:
+        return reasons[0].upper().replace("_", " ")[:60]
+    return "ДЕФЕКТ"
+
+
 def build_rule_report_row(result) -> dict:
     """Собрать одну строку отчёта по правилу для HMI и диагностики."""
     details = getattr(result, "details", {}) or {}
@@ -673,8 +721,14 @@ def build_rule_report_row(result) -> dict:
             if details.get("empty_tray")
             else "Деталь обнаружена"
         )
+
+    # === НОВАЯ ПРОСТАЯ ПРИЧИНА ДЛЯ ОПЕРАТОРА ===
+    human_cause = None
+    if triggered:
+        human_cause = get_human_cause(rule_name, triggered, details)
+
     if not detail:
-        detail = "Сработало" if triggered else "Норма"
+        detail = human_cause or ("Сработало" if triggered else "Норма")
 
     status_label, neutral = _status_label(
         rule_name, triggered, details, consensus,
@@ -688,6 +742,7 @@ def build_rule_report_row(result) -> dict:
         "neutral": neutral,
         "show_detail": rule_name in DETAILED_RULES,
         "detail": str(detail),
+        "human_cause": human_cause,
         "detail_lines": detail_lines,
         "consensus": dict(consensus),
     }

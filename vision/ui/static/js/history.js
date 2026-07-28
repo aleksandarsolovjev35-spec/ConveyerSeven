@@ -56,9 +56,10 @@ function updateDefects(parts) {
     const rows = [];
     const counter = {};
     for (const part of parts) {
-        const decision = part.decision;
-        if (!decision || decision === 0 || decision === '0' || decision === 'none') continue;
-        const key = String(decision);
+        // Prefer human-readable cause if available in future payloads
+        const cause = part.human_cause || part.decision;
+        if (!cause || cause === 0 || cause === '0' || cause === 'none' || cause === 'unknown') continue;
+        const key = String(cause).toUpperCase().slice(0, 42);
         counter[key] = (counter[key] || 0) + 1;
     }
     for (const [name, count] of Object.entries(counter)
