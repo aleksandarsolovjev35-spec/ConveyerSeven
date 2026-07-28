@@ -5,16 +5,15 @@ UI uses ordered classic browser modules and does not require a production bundle
 ## JavaScript load order
 
 1. `core.js` — constants, state, DOM cache, API and shared helpers.
-2. `motion.js` — привод анимаций: телеметрия ленты, осей и фазы шага.
-3. `boot.js` — splash, boot polling and readiness.
-4. `diagnostics.js` — pre-start checks and distributor diagnostics.
-5. `status.js` — backend status, OFFLINE, process telemetry and part path.
-6. `controls.js` — START/STOP/EXIT, errors and state overlay.
-7. `cameras.js` — camera selection, RAW/RULES and frame refresh.
-8. `jog.js` — dead-man hold/heartbeat/release logic.
-9. `pause.js` — in-cycle pause and bounded belt correction held dead-man style.
-10. `history.js` — recent parts, archive gallery and fullscreen.
-11. `bootstrap.js` — hotkeys, initialization and test-only hook.
+2. `boot.js` — splash, boot polling and readiness.
+3. `diagnostics.js` — pre-start checks and distributor diagnostics.
+4. `status.js` — backend status, OFFLINE, process telemetry and part path.
+5. `controls.js` — START/STOP/EXIT, errors and state overlay.
+6. `cameras.js` — camera selection, RAW/RULES and frame refresh.
+7. `jog.js` — dead-man hold/heartbeat/release logic.
+8. `pause.js` — in-cycle pause and bounded belt correction held dead-man style.
+9. `history.js` — recent parts, archive gallery and fullscreen.
+10. `bootstrap.js` — hotkeys, initialization and test-only hook.
 
 Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html` without updating the asset-order regression test.
 
@@ -31,44 +30,6 @@ Functions may call functions from later modules only after all scripts have load
 - `gallery.css` — archive modal and fullscreen.
 - `process.css` — process line, distributor, diagnostics and OFFLINE/error additions.
 - `motion.css` — non-blocking fades, panel collapse/expand and frame/content transitions.
-- `belt.css` — движение, повторяющее работу конвейера: зубчатые ленты, приводные валы, ход пути деталей, кулачки заслонок и операции текущего шага.
-
-## Движение интерфейса = работа конвейера
-
-В интерфейсе нет декоративной анимации. Любое движение — отображение
-физического процесса, подтверждённого backend. Единственный источник
-движения — `motion.js`: он превращает телеметрию в CSS-переменные, а
-`belt.css` рисует по ним геометрию.
-
-| Что видит оператор | Чем вызвано |
-|---|---|
-| Ход зубчатой ленты и вращение валов | `process.conveyor` (`POS`/`TGT` из `I2`) |
-| Смещение ячеек пути деталей | доля пройденного шага, `--belt-intra` |
-| Отбивка шага и подсветка счётчика | рост `line_status.step` |
-| Ручной ход ленты | `jog.busy` и `jog.direction` |
-| Коррекция в паузе | приращение `pause.nudge_offset` в микрошагах |
-| Поворот кулачков заслонок | `dist1_position` / `dist2_position` |
-| Вспышка затвора, проход анализа, метка сортировки | `process.phase` текущего шага |
-| Приезд карточки в историю | деталь, впервые появившаяся на линии |
-| Заполнение ленты на пусковом экране | `/api/boot` progress |
-
-Переменные привода: `--belt-phase`, `--belt-intra`, `--belt-speed`,
-`--belt-dir`, `--belt-teeth`, `--belt-cadence`, `--drive-turn`,
-`--dist1-turn`, `--dist2-turn`, `--boot-progress`.
-
-Правила, которые нельзя нарушать:
-
-- Анимация не запускается по таймеру «для красоты». Если механизм стоит,
-  соответствующая переменная не меняется и интерфейс неподвижен.
-- Остановка линии, отпускание JOG и потеря связи обязаны приводить
-  интерфейс в полный покой (`freezeBeltMotion`, класс `belt-running`).
-- Скачок координаты больше `BELT_RESYNC_CELLS` считается пересинхронизацией
-  счётчика, а не ходом ленты, и подхватывается мгновенно.
-- Бесконечные `animation` допустимы только на время работы механизма и
-  синхронизируются с измеренным темпом шага `--belt-cadence`.
-- Всё движение идёт через `transform` и `opacity`, положение пути деталей
-  не пишется в inline-стили.
-- `prefers-reduced-motion` обязан оставлять интерфейс статичным.
 
 ## Профессиональная HMI-компоновка
 
@@ -108,8 +69,6 @@ Functions may call functions from later modules only after all scripts have load
 - Polling requests must not overlap.
 - Dynamic operator data must use `textContent`, not untrusted `innerHTML`.
 - Add every new interaction to `tests/ui_interaction_matrix.js`.
-- New motion must be fed by backend telemetry through `motion.js` and must
-  stop when the corresponding mechanism stops.
 
 ## Tests
 
