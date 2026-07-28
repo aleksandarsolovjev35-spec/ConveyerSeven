@@ -38,7 +38,7 @@ class ProductionCycle:
     OFFSET_SPIDER = 4
     OFFSET_REJECT = 7
 
-    JOG_ALLOWED_STATES = ("IDLE", "STOPPED")
+    JOG_ALLOWED_STATES = ("IDLE", "STOPPED", "PAUSED")
 
     def __init__(
         self,
@@ -132,6 +132,10 @@ class ProductionCycle:
         self._selected_analysis_role = None
         self._shutdown = False
 
+        # Пауза в рабочем цикле
+        self._pause_requested = threading.Event()
+        self._pause_frame_active = False
+
     # Process telemetry
 
     def _set_process(
@@ -224,10 +228,56 @@ class ProductionCycle:
             self._operation_lock.release()
 
     def request_stop(self):
+        self._pause_requested.clear()
+        if self._pause_frame_active:
+            self._stop_pause_frame_loop()
         return self.sm.request_stop()
 
     def request_exit(self):
+        self._pause_requested.clear()
+        if self._pause_frame_active:
+            self._stop_pause_frame_loop()
         return self.sm.request_exit()
+
+    def request_pause(self) -> bool:
+        """Запросить паузу после остановки шага и до работы нейронок."""
+        if self.state != "RUNNING" or self.exit_requested:
+            return False
+        if self._pause_requested.is_set():
+            return True
+        self._pause_requested.set()
+        self._set_process(
+            "PAUSE_REQUESTED",
+            "Пауза будет применена после остановки шага и до работы нейронок",
+            positions=range(self.OFFSET_REJECT + 1),
+        )
+        self._refresh_monitor()
+        return True
+
+    def request_resume(self) -> bool:
+        """Возобновить работу линии из паузы."""
+        if not self._operation_lock.acquire(blocking=False):
+            return False
+        try:
+            if self.state != "PAUSED" or self.exit_requested:
+                return False
+            if self.jog is not None and (self.jog.busy or self.jog.status.get("error")):
+                return False
+            self._pause_requested.clear()
+            accepted = self.sm.request_resume()
+            if not accepted:
+                return False
+            self._stop_pause_frame_loop()
+            print("[PAUSE] resume; работа возобновлена")
+            self._set_process(
+                "RESUMED",
+                "Работа возобновлена после паузы",
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+            self._refresh_monitor()
+            return True
+        finally:
+            self._operation_lock.release()
 
     def distributor_diagnostic(self, command: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -607,6 +657,9 @@ class ProductionCycle:
 
     def request_force_exit(self):
         self._cancel_motion.set()
+        self._pause_requested.clear()
+        if self._pause_frame_active:
+            self._stop_pause_frame_loop()
         self.stages.reset()
         self.live.reset_pause()
         accepted = self.sm.request_force_exit()
@@ -704,6 +757,11 @@ class ProductionCycle:
         finally:
             self._shutdown = True
             self._cancel_motion.set()
+            self._pause_requested.clear()
+            try:
+                self._stop_pause_frame_loop()
+            except Exception as e:
+                print(f"[SHUTDOWN] stop pause frame loop failed: {e}")
             self.stages.reset()
             self.live.reset_pause()
             self.live.stop()
@@ -719,6 +777,8 @@ class ProductionCycle:
 
     def _handle_fault(self, reason: str):
         self._cancel_motion.set()
+        self._pause_requested.clear()
+        self._stop_pause_frame_loop()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
         self.stages.reset()
@@ -804,6 +864,7 @@ class ProductionCycle:
 
         pending_id = self._stage_motion()
         self._stage_settle(pending_id)
+        self._check_pause_barrier()
         frame_runs = self._stage_capture()
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
@@ -929,6 +990,66 @@ class ProductionCycle:
 
         self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
         self._refresh_monitor(display_frames)
+
+    # Пауза в рабочем цикле
+
+    def _check_pause_barrier(self):
+        """Пауза после полной остановки шага и до работы нейронок.
+
+        Оператор может поправить линию с помощью jog без ограничений.
+        """
+        if (
+            self.sm.state == State.RUNNING
+            and self._pause_requested.is_set()
+            and not self.sm.exit_requested
+        ):
+            if self.sm.request_pause():
+                self._enter_pause_frame()
+            else:
+                self._pause_requested.clear()
+
+        while self.sm.state == State.PAUSED:
+            if self.sm.exit_requested or self.sm.force_exit:
+                self._pause_requested.clear()
+                self._stop_pause_frame_loop()
+                self.sm.request_stop()
+                break
+            if self.live.error:
+                self._handle_fault(
+                    "Ошибка камеры во время паузы: "
+                    f"{self.live.error}"
+                )
+                break
+            jog_error = (
+                self.jog.status.get("error")
+                if self.jog is not None else None
+            )
+            if jog_error:
+                self._handle_fault(f"Ошибка ручного управления (JOG): {jog_error}")
+                break
+            self._refresh_monitor()
+            time.sleep(0.05)
+
+        if self._pause_frame_active:
+            self._stop_pause_frame_loop()
+
+    def _enter_pause_frame(self):
+        """Включить режим JOG и отображение состояния паузы."""
+        if not self._pause_frame_active:
+            self._pause_frame_active = True
+        self.enter_jog()
+        print("[PAUSE] линия остановлена на границе шага после полной остановки")
+        self._set_process(
+            "PAUSED",
+            "Пауза: доступна ручная коррекция ленты с помощью JOG",
+            positions=range(self.OFFSET_REJECT + 1),
+        )
+
+    def _stop_pause_frame_loop(self):
+        if not self._pause_frame_active:
+            return
+        self._pause_frame_active = False
+        self.exit_jog()
 
     # Input stage
 
@@ -1448,7 +1569,19 @@ class ProductionCycle:
                 and not self._selected_analysis_active
                 and not sm_snap["exit_requested"]
             ),
-            "stop": state_name == "RUNNING" and not operation_busy,
+            "stop": state_name in ("RUNNING", "PAUSED") and not operation_busy,
+            "pause": (
+                state_name == "RUNNING"
+                and not operation_busy
+                and not sm_snap["exit_requested"]
+            ),
+            "resume": (
+                state_name == "PAUSED"
+                and not operation_busy
+                and not jog_busy
+                and not jog_error
+                and not sm_snap["exit_requested"]
+            ),
             "exit": (
                 not self._shutdown
                 and not operation_busy

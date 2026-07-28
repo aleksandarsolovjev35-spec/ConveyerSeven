@@ -10,36 +10,64 @@ function applyButtonsForState(lineState, exitRequested, controls = {}) {
         (lineState === 'IDLE' || lineState === 'STOPPED')
         && !exitRequested
     );
-    const stopVisible = lineState === 'RUNNING';
+    const stopVisible = (lineState === 'RUNNING' || lineState === 'PAUSED');
+    const pauseVisible = lineState === 'RUNNING' && !exitRequested;
+    const resumeVisible = lineState === 'PAUSED' && !exitRequested;
     const exitText = (
         lineState === 'FAULT'
         || (exitRequested && lineState === 'STOPPING')
     ) ? 'ПРИНУДИТЕЛЬНЫЙ ВЫХОД' : 'ВЫХОД';
 
-    els.btnStart.classList.toggle('is-hidden', !startVisible);
-    els.btnStart.disabled = (
-        !startVisible
-        || controls.start !== true
-        || pending
-        || offline
-    );
+    if (els.btnStart) {
+        els.btnStart.classList.toggle('is-hidden', !startVisible);
+        els.btnStart.disabled = (
+            !startVisible
+            || controls.start !== true
+            || pending
+            || offline
+        );
+    }
 
-    els.btnStop.classList.toggle('is-hidden', !stopVisible);
-    els.btnStop.disabled = (
-        !stopVisible
-        || controls.stop !== true
-        || pending
-        || offline
-    );
+    if (els.btnPause) {
+        els.btnPause.classList.toggle('is-hidden', !pauseVisible);
+        els.btnPause.disabled = (
+            !pauseVisible
+            || controls.pause !== true
+            || pending
+            || offline
+        );
+    }
 
-    els.btnExit.classList.remove('is-hidden');
-    els.btnExit.textContent = exitText;
-    els.btnExit.className = 'btn btn-exit';
-    els.btnExit.disabled = (
-        controls.exit !== true
-        || pending
-        || offline
-    );
+    if (els.btnResume) {
+        els.btnResume.classList.toggle('is-hidden', !resumeVisible);
+        els.btnResume.disabled = (
+            !resumeVisible
+            || controls.resume !== true
+            || pending
+            || offline
+        );
+    }
+
+    if (els.btnStop) {
+        els.btnStop.classList.toggle('is-hidden', !stopVisible);
+        els.btnStop.disabled = (
+            !stopVisible
+            || controls.stop !== true
+            || pending
+            || offline
+        );
+    }
+
+    if (els.btnExit) {
+        els.btnExit.classList.remove('is-hidden');
+        els.btnExit.textContent = exitText;
+        els.btnExit.className = 'btn btn-exit';
+        els.btnExit.disabled = (
+            controls.exit !== true
+            || pending
+            || offline
+        );
+    }
 }
 
 function flashButton(btn) {
@@ -111,6 +139,24 @@ function setupButtons() {
         await submitControl('/api/start');
     });
 
+    if (els.btnPause) {
+        els.btnPause.addEventListener('click', async () => {
+            if (els.btnPause.classList.contains('is-hidden')
+                || els.btnPause.disabled) return;
+            flashButton(els.btnPause);
+            await submitControl('/api/pause');
+        });
+    }
+
+    if (els.btnResume) {
+        els.btnResume.addEventListener('click', async () => {
+            if (els.btnResume.classList.contains('is-hidden')
+                || els.btnResume.disabled) return;
+            flashButton(els.btnResume);
+            await submitControl('/api/resume');
+        });
+    }
+
     els.btnStop.addEventListener('click', async () => {
         if (els.btnStop.classList.contains('is-hidden')
             || els.btnStop.disabled) return;
@@ -165,6 +211,15 @@ function updateStateOverlay(ls) {
             ? `На линии осталось деталей: ${remaining}`
             : 'Завершение работы...';
         peekable = true;
+    } else if (lineState === 'PAUSED') {
+        if (state.jogActive) {
+            mainText = '';
+        } else {
+            mainCode = 'PAUSED';
+            mainText = 'ПАУЗА В ЦИКЛЕ';
+            subText = 'Доступна ручная коррекция ленты. Нажмите ПРОДОЛЖИТЬ';
+            peekable = true;
+        }
     } else if (lineState === 'STOPPED') {
         if (state.jogActive) {
             mainText = '';

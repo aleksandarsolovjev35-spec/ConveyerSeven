@@ -80,9 +80,11 @@ class UiDemo:
         prestart = self.state in {"IDLE", "STOPPED"} and not self.parts and not self.jog_busy and not self.selected_analysis
         return {
             "start": prestart,
-            "stop": self.state == "RUNNING",
+            "stop": self.state in {"RUNNING", "PAUSED"},
+            "pause": self.state == "RUNNING",
+            "resume": self.state == "PAUSED",
             "exit": not self.jog_busy,
-            "jog_hold": self.jog_active and prestart,
+            "jog_hold": self.jog_active and (prestart or self.state == "PAUSED"),
             "selected_model_analysis": prestart,
             "selected_model_release": self.selected_analysis,
             "distributor_diagnostic": prestart,
@@ -175,7 +177,7 @@ class UiDemo:
             "diagnostics": dict(self.diagnostics),
             "jog": {
                 "active": self.jog_active,
-                "can_enter": self.state in {"IDLE", "STOPPED"},
+                "can_enter": self.state in {"IDLE", "STOPPED", "PAUSED"},
                 "busy": self.jog_busy,
                 "hold_steps": 1000000,
                 "last_action": "ДЕМО-РЕЖИМ",
@@ -217,10 +219,36 @@ class UiDemo:
 
     def stop(self):
         with self.lock:
-            if self.state != "RUNNING":
+            if self.state not in {"RUNNING", "PAUSED"}:
                 return False
             self.state = "STOPPING"
             self.process = self._process("DRAINING", "Опорожнение демонстрационной линии")
+            self.publish()
+        return True
+
+    def pause(self):
+        with self.lock:
+            if self.state != "RUNNING":
+                return False
+            self.state = "PAUSED"
+            self.process = self._process(
+                "PAUSED",
+                "Пауза после остановки шага: доступна ручная коррекция ленты",
+                range(8),
+            )
+            self.publish()
+        return True
+
+    def resume(self):
+        with self.lock:
+            if self.state != "PAUSED":
+                return False
+            self.state = "RUNNING"
+            self.process = self._process(
+                "RESUMED",
+                "Работа демонстрационной линии возобновлена",
+                range(8),
+            )
             self.publish()
         return True
 
@@ -231,7 +259,7 @@ class UiDemo:
 
     def jog_enter(self):
         with self.lock:
-            if self.state not in {"IDLE", "STOPPED"}:
+            if self.state not in {"IDLE", "STOPPED", "PAUSED"}:
                 return False
             self.jog_active = True
             self.publish()
@@ -357,7 +385,7 @@ class UiDemo:
         last_step = time.monotonic()
         while not self.stop_event.wait(0.1):
             with self.lock:
-                if self.state in {"RUNNING", "STOPPING"} and time.monotonic() - last_step >= 1.0:
+                if self.state in {"RUNNING", "STOPPING"} and time.monotonic() - last_step >= 2.0:
                     last_step = time.monotonic()
                     self.step += 1
                     for part in self.parts:
@@ -379,6 +407,8 @@ def main():
     monitor = demo.monitor
     monitor.start_callback = demo.start
     monitor.stop_callback = demo.stop
+    monitor.pause_callback = demo.pause
+    monitor.resume_callback = demo.resume
     monitor.exit_callback = demo.exit
     monitor.distributor_diagnostic_callback = demo.distributor
     monitor.camera_diagnostic_callback = demo.check_cameras

@@ -116,6 +116,16 @@ def setup_api_routes(app, server):
         print("[API] /api/stop called")
         return await invoke("СТОП", server.on_stop)
 
+    @app.post("/api/pause")
+    async def api_pause():
+        print("[API] /api/pause called")
+        return await invoke("ПАУЗА", server.on_pause)
+
+    @app.post("/api/resume")
+    async def api_resume():
+        print("[API] /api/resume called")
+        return await invoke("ПРОДОЛЖИТЬ", server.on_resume)
+
     @app.post("/api/exit")
     async def api_exit():
         print("[API] /api/exit called")

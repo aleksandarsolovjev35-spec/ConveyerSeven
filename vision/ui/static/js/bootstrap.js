@@ -45,6 +45,16 @@ function setupHotkeys() {
             return;
         }
 
+        if (e.key === 'F7' || e.key === 'p' || e.key === 'P') {
+            e.preventDefault();
+            if (els.btnPause && !els.btnPause.classList.contains('is-hidden') && !els.btnPause.disabled) {
+                els.btnPause.click();
+            } else if (els.btnResume && !els.btnResume.classList.contains('is-hidden') && !els.btnResume.disabled) {
+                els.btnResume.click();
+            }
+            return;
+        }
+
         if (e.key === 'F11') {
             e.preventDefault();
             if (

@@ -582,7 +582,8 @@ class CameraAndConfigTests(unittest.TestCase):
             path = Path(temp) / "calibration.json"
 
             path.write_text(json.dumps(DEFAULTS), encoding="utf-8")
-            self.assertEqual(load_calibration(path)["settle_time"], 0.15)
+            self.assertEqual(load_calibration(path)["settle_time"], 0.5)
+            self.assertEqual(load_calibration(path)["stage_trace_time"], 0.5)
 
             path.write_text(
                 json.dumps({**DEFAULTS, "settle_time": 0.4}), encoding="utf-8"

@@ -232,6 +232,7 @@ html, body {
 }
 
 .state-section.state-box-running { border-left-color: var(--ok); }
+.state-section.state-box-paused { border-left-color: var(--warn); }
 .state-section.state-box-stopping { border-left-color: var(--warn); }
 .state-section.state-box-fault,
 .state-section.state-box-offline { border-left-color: var(--bad); }
@@ -252,6 +253,11 @@ html, body {
 
 .state-dot.state-running {
     background: var(--ok);
+}
+
+.state-dot.state-paused {
+    background: var(--warn);
+    box-shadow: 0 0 6px var(--warn);
 }
 
 .state-dot.state-stopping {

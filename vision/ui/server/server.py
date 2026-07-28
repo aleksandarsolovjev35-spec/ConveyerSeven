@@ -74,9 +74,11 @@ class UIServer:
 
         self.active_camera_role: str | None = None
 
-        self.on_start: callable | None = None
-        self.on_stop:  callable | None = None
-        self.on_exit:  callable | None = None
+        self.on_start:  callable | None = None
+        self.on_stop:   callable | None = None
+        self.on_pause:  callable | None = None
+        self.on_resume: callable | None = None
+        self.on_exit:   callable | None = None
         self.on_distributor_diagnostic: callable | None = None
         self.on_camera_diagnostic: callable | None = None
         self.on_vision_rule_diagnostic: callable | None = None

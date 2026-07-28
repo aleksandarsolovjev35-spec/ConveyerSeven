@@ -124,6 +124,16 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.json()["ok"])
 
+            server.on_pause = lambda: True
+            response = await client.post("/api/pause")
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["ok"])
+
+            server.on_resume = lambda: True
+            response = await client.post("/api/resume")
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["ok"])
+
             response = await client.post("/api/mode/RAW")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["mode"], "RAW")

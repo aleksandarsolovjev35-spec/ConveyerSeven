@@ -845,6 +845,79 @@ class CoreCycleTests(unittest.TestCase):
         bad.mark_spider_done()
         self.assertEqual(bad.route_category, CATEGORY_BAD)
 
+    def test_request_pause_sets_flag_and_controls_reflect_state(self):
+        cycle = self.make_cycle()
+        self.assertTrue(cycle.request_start())
+        controls = cycle._build_status()["controls"]
+        self.assertTrue(controls["pause"])
+        self.assertFalse(controls["resume"])
+
+        self.assertTrue(cycle.request_pause())
+        self.assertTrue(cycle._pause_requested.is_set())
+
+    def test_pause_after_full_step_stop_allows_unrestricted_jog(self):
+        jog = FakeJog()
+        cycle = self.make_cycle(jog=jog)
+        self.assertTrue(cycle.request_start())
+        self.assertTrue(cycle.request_pause())
+
+        thread = threading.Thread(target=cycle.start, daemon=True)
+        thread.start()
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and cycle.sm.state != State.PAUSED:
+            time.sleep(0.02)
+
+        self.assertEqual(cycle.sm.state, State.PAUSED)
+        status = cycle._build_status()
+        controls = status["controls"]
+        self.assertTrue(controls["resume"])
+        self.assertTrue(controls["stop"])
+        self.assertTrue(controls["jog_hold"])
+
+        # В состоянии PAUSED разрешена ручная коррекция ленты с помощью JOG без ограничений
+        self.assertTrue(cycle.jog_hold_start("+"))
+        self.assertTrue(cycle.jog_hold_heartbeat("+"))
+        self.assertTrue(cycle.jog_hold_release("operator adjust"))
+
+        # Возобновление цикла
+        self.assertTrue(cycle.request_resume())
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and cycle.sm.state == State.PAUSED:
+            time.sleep(0.02)
+        self.assertEqual(cycle.sm.state, State.RUNNING)
+
+        cycle.request_stop()
+        thread.join(3.0)
+
+    def test_stop_directly_from_paused_state_drains_and_stops_line(self):
+        jog = FakeJog()
+        cycle = self.make_cycle(jog=jog)
+        self.assertTrue(cycle.request_start())
+        self.assertTrue(cycle.request_pause())
+
+        thread = threading.Thread(target=cycle.start, daemon=True)
+        thread.start()
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and cycle.sm.state != State.PAUSED:
+            time.sleep(0.02)
+
+        self.assertEqual(cycle.sm.state, State.PAUSED)
+        self.assertTrue(cycle._pause_frame_active)
+
+        # Остановка прямо из состояния паузы
+        self.assertTrue(cycle.request_stop())
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and cycle.sm.state == State.PAUSED:
+            time.sleep(0.02)
+
+        self.assertIn(cycle.sm.state, (State.STOPPING, State.STOPPED))
+        self.assertFalse(cycle._pause_frame_active)
+        self.assertFalse(cycle.jog_active)
+
+        thread.join(3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

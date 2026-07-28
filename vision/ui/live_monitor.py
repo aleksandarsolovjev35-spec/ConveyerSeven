@@ -21,9 +21,11 @@ class LiveMonitor:
         self.port = port
         self.fullscreen = fullscreen
 
-        self.start_callback = start_callback
-        self.stop_callback  = stop_callback
-        self.exit_callback  = exit_callback
+        self.start_callback  = start_callback
+        self.stop_callback   = stop_callback
+        self.pause_callback  = None
+        self.resume_callback = None
+        self.exit_callback   = exit_callback
         self.distributor_diagnostic_callback = None
         self.camera_diagnostic_callback = None
         self.vision_rule_diagnostic_callback = None
@@ -97,6 +99,12 @@ class LiveMonitor:
         )
         self.server.on_stop = (
             lambda: self._invoke(self.stop_callback)
+        )
+        self.server.on_pause = (
+            lambda: self._invoke(self.pause_callback)
+        )
+        self.server.on_resume = (
+            lambda: self._invoke(self.resume_callback)
         )
         self.server.on_exit = (
             lambda: self._invoke(self.exit_callback)
