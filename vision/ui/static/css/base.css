@@ -108,8 +108,8 @@ html, body {
 }
 
 .splash-inner {
-    width: 760px;
-    max-width: 94vw;
+    width: 420px;
+    max-width: 90vw;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -119,28 +119,19 @@ html, body {
 }
 
 .splash-title {
-    width: 100%;
     font-size: 28px;
     font-weight: 700;
     color: var(--accent);
     letter-spacing: 6px;
     text-transform: uppercase;
-    text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .splash-status {
-    width: 100%;
     color: var(--text-dim);
     font-family: var(--font-mono);
     font-size: 13px;
     letter-spacing: 0.5px;
     text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .splash-progress-bar {
@@ -194,19 +185,14 @@ html, body {
     font-size: 12px;
     letter-spacing: 1.5px;
     margin-bottom: 6px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .splash-error-message {
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 11px;
+    word-break: break-word;
     line-height: 1.5;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* ─── Main layout ─────────────────────────────────────────────────── */

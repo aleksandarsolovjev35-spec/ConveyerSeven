@@ -80,58 +80,6 @@
     to { opacity: 1; transform: translateY(0); }
 }
 
-.line-process-interval.is-active::before {
-    animation: processSweep 0.95s linear infinite;
-}
-
-.line-process-interval.process-move.is-active::after {
-    animation: processMoveSymbol 0.55s ease-in-out infinite;
-}
-
-.line-process-interval.process-capture.is-active::after {
-    animation: processCameraFlash 0.9s ease-in-out infinite;
-}
-
-.line-process-interval.process-analysis.is-active::after {
-    animation: processAnalyzeSpin 1.1s linear infinite;
-}
-
-.line-process-interval.process-route.is-active::after {
-    animation: processRoutePulse 0.9s ease-in-out infinite;
-}
-
-.line-process-interval.process-adjust.is-active::after {
-    animation: processAdjustTwinkle 0.8s ease-in-out infinite;
-}
-
-@keyframes processSweep {
-    to { transform: translateX(315%); }
-}
-
-@keyframes processMoveSymbol {
-    0%, 100% { transform: translateX(-2px); }
-    50% { transform: translateX(2px); }
-}
-
-@keyframes processCameraFlash {
-    0%, 100% { opacity: 0.75; transform: scale(0.82); }
-    45% { opacity: 1; transform: scale(1.28); }
-}
-
-@keyframes processAnalyzeSpin {
-    to { transform: rotate(360deg); }
-}
-
-@keyframes processRoutePulse {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-1px); }
-}
-
-@keyframes processAdjustTwinkle {
-    0%, 100% { opacity: 0.78; transform: scale(0.9) rotate(0deg); }
-    50% { opacity: 1; transform: scale(1.24) rotate(45deg); }
-}
-
 @media (prefers-reduced-motion: reduce) {
     .ui-collapse,
     .camera-view-switch,
@@ -140,9 +88,7 @@
     }
 
     .ui-value-change,
-    .ui-content-change,
-    .line-process-interval.is-active::before,
-    .line-process-interval.is-active::after {
+    .ui-content-change {
         animation: none !important;
     }
 }

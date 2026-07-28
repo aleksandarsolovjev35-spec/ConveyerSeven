@@ -464,7 +464,7 @@ class HardwareTests(unittest.TestCase):
 
     HOLD_CALIB = {
         "micro_steps": 500,
-        "nudge_limit_steps": 5000,
+        "nudge_limit_steps": 2000,
         "jog_hold_steps": 1_000_000,
         "normal_steps": 19048,
         "conveyor_speed": 20000,
@@ -527,21 +527,22 @@ class HardwareTests(unittest.TestCase):
         self.assertLessEqual(jog.nudge_offset, limit)
         self.assertEqual(jog.nudge_offset, limit)
 
-    def test_pause_hold_release_sends_g1_like_jog(self):
+    def test_pause_hold_release_finishes_chunk_without_g1(self):
+        # G1 оборвал бы чанк и обнулил POS: позиция стала бы неизвестной.
         transport = self._convey15_transport()
         jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        self._hold_for(jog, "+", 0.12)
+        self._hold_for(jog, "+", 0.2)
         offset = jog.release_nudge_hold("pointerup")
 
-        self.assertGreater(transport.g1_while_moving, 0)
-        self.assertIn("G1", transport.commands)
-        self.assertGreater(offset, 0)
-        self.assertLess(offset, self.HOLD_CALIB["nudge_limit_steps"])
-        self.assertLessEqual(offset, transport.true_travel)
+        self.assertEqual(transport.g1_while_moving, 0)
+        self.assertNotIn("G1", transport.commands)
+        # Смещение кратно чанку: оборванных ходов не было.
+        self.assertEqual(offset % self.HOLD_CALIB["nudge_hold_chunk_steps"], 0)
+        self.assertEqual(offset, transport.true_travel)
 
-    def test_pause_hold_uses_jog_profile_and_restores_geometry(self):
+    def test_pause_hold_restores_speed_pause_and_geometry(self):
         transport = self._convey15_transport()
         jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=1.0)
 
@@ -549,10 +550,14 @@ class HardwareTests(unittest.TestCase):
         self._hold_for(jog, "+", 0.15)
         jog.release_nudge_hold("pointerup")
 
-        self.assertNotIn("G5 S2000", transport.commands)
-        self.assertNotIn("G9 S0", transport.commands)
-        self.assertIn("G1", transport.commands)
-        self.assertEqual(transport.commands[-2:], ["G7 S19048", "G6 S2"])
+        self.assertIn("G5 S2000", transport.commands)
+        # Пауза между ходами обнуляется, иначе чанки рвались бы на 2 секунды.
+        self.assertIn("G9 S0", transport.commands)
+        self.assertIn("G12 S1", transport.commands)
+        self.assertEqual(
+            transport.commands[-4:],
+            ["G5 S20000", "G9 S2000", "G7 S19048", "G6 S2"],
+        )
 
     def test_pause_hold_stops_on_heartbeat_timeout(self):
         transport = self._convey15_transport()
@@ -565,24 +570,49 @@ class HardwareTests(unittest.TestCase):
             time.sleep(0.02)
 
         self.assertFalse(jog.busy, "Пропажа heartbeat обязана остановить ленту")
-        self.assertGreater(jog.nudge_offset, 0)
-        self.assertLessEqual(jog.nudge_offset, transport.true_travel)
-        self.assertIn("G1", transport.commands)
-        self.assertEqual(transport.commands[-2:], ["G7 S19048", "G6 S2"])
+        self.assertEqual(jog.nudge_offset, transport.true_travel)
+        self.assertEqual(
+            transport.commands[-4:],
+            ["G5 S20000", "G9 S2000", "G7 S19048", "G6 S2"],
+        )
 
-    def test_pause_hold_heartbeat_timeout_sends_g1_without_chunk_error(self):
-        transport = self._convey15_transport()
-        jog = JogController(transport, self.HOLD_CALIB, heartbeat_timeout=0.2)
+    def test_pause_hold_fails_closed_when_chunk_never_completes(self):
+        class StuckTransport:
+            def __init__(self):
+                self.commands = []
+
+            def send(self, command):
+                self.commands.append(command)
+
+            def query(self, command, delay=0.15):
+                self.commands.append(command)
+                # Лента «висит» в движении: чанк не завершается никогда.
+                return "1" if command == "I1" else "MOV=1 WAIT=0 lastErr=0"
+
+        transport = StuckTransport()
+        calib = dict(self.HOLD_CALIB)
+        jog = JogController(transport, calib, heartbeat_timeout=2.0)
+        jog._wait_chunk_done = (
+            lambda chunk, timeout=0.3: JogController._wait_chunk_done(
+                jog, chunk, timeout,
+            )
+        )
 
         self.assertTrue(jog.start_nudge_hold("+"))
-        jog.heartbeat("+", mode="nudge")
-        deadline = time.monotonic() + 2.0
+        # Даём воркеру начать чанк и упереться в таймаут.
+        deadline = time.monotonic() + 5.0
         while jog.busy and time.monotonic() < deadline:
+            jog.heartbeat("+", mode="nudge")
             time.sleep(0.02)
+        self.assertFalse(jog.busy, "Зависший чанк обязан завершиться ошибкой")
 
-        self.assertFalse(jog.busy, "Потеря heartbeat обязана остановить JOG в паузе")
+        with self.assertRaises(RuntimeError):
+            jog.release_nudge_hold("pointerup")
+        # Смещение не засчитано: позиция ленты неизвестна.
+        self.assertEqual(jog.nudge_offset, 0)
+        self.assertIsNotNone(jog.status["error"])
+        # Прерванный ход обязан сопровождаться аварийным G1.
         self.assertIn("G1", transport.commands)
-        self.assertIsNone(jog.status["error"])
 
 
     def test_pause_hold_and_jog_hold_never_run_together(self):
