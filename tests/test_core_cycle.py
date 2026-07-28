@@ -251,7 +251,7 @@ class FakeJog:
             "direction": getattr(self, "_hold_direction", None),
             "mode": self._hold_mode,
             "nudge_hold_busy": self._hold_mode == "nudge" and self._busy,
-            "pause_hold_speed": 20000,
+            "pause_hold_speed": 2000,
             "error": self._error,
             "micro_steps": self.micro_steps,
             "nudge_limit_steps": self.nudge_limit_steps,
@@ -482,7 +482,7 @@ class CoreCycleTests(unittest.TestCase):
         status = cycle._build_status()
         self.assertTrue(status["controls"]["nudge_hold"])
         self.assertFalse(status["pause"]["hold_busy"])
-        self.assertEqual(status["pause"]["hold_speed"], 20000)
+        self.assertEqual(status["pause"]["hold_speed"], 2000)
 
         self.assertTrue(cycle.nudge_hold_start("+"))
         status = cycle._build_status()
