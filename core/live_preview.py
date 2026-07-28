@@ -269,6 +269,13 @@ class LivePreview:
         self._stop_event.set()
 
     def _run_loop(self, interval: float, iteration, source: str):
+        """Цикл чтения: гейт удерживается только на время работы с камерой.
+
+        ``iteration`` возвращает кадры, а публикация в монитор выполняется
+        уже после освобождения гейта. Иначе инспекция ждала бы не доступа
+        к камере, а перекодирования JPEG в UI, и каждый шаг линии получал
+        бы лишнюю задержку.
+        """
         while not self._stop_event.is_set():
             started = time.monotonic()
             try:
@@ -276,7 +283,8 @@ class LivePreview:
                     if not allowed:
                         self._stop_event.wait(_PAUSED_POLL_INTERVAL)
                         continue
-                    iteration()
+                    frames = iteration()
+                self._publish(frames)
             except Exception as exc:
                 self._fail(exc, source)
                 break
@@ -293,7 +301,7 @@ class LivePreview:
             else:
                 frames = {active_role: self._cameras.capture_single(active_role)}
             self._frame_times.append(time.monotonic())
-            self._publish(frames)
+            return frames
 
         self._run_loop(LIVE_FRAME_INTERVAL, iteration, "selected camera loop")
 
@@ -305,16 +313,14 @@ class LivePreview:
                 role for role in available_roles if role != active_role
             ]
             if not auxiliary_roles:
-                return
+                return None
             capture_roles = getattr(self._cameras, "capture_roles", None)
             if callable(capture_roles):
-                frames = capture_roles(auxiliary_roles)
-            else:
-                frames = {
-                    role: frame
-                    for role, frame in self._cameras.capture_all().items()
-                    if role in auxiliary_roles
-                }
-            self._publish(frames)
+                return capture_roles(auxiliary_roles)
+            return {
+                role: frame
+                for role, frame in self._cameras.capture_all().items()
+                if role in auxiliary_roles
+            }
 
         self._run_loop(LIVE_AUX_BATCH_INTERVAL, iteration, "auxiliary loop")

@@ -197,6 +197,29 @@ class LivePreviewTests(unittest.TestCase):
         self.assertGreater(cameras.live_reads, 0)
         self.assertEqual(cameras.inspection_reads, 0)
 
+    def test_auxiliary_loop_reads_all_roles_except_the_selected_one(self):
+        """Вспомогательный цикл берёт остальные шесть камер одним пакетом."""
+
+        class BatchTrackingCameras(TrackingCameras):
+            def __init__(self):
+                super().__init__()
+                self.batches = []
+
+            def capture_roles(self, roles):
+                self.batches.append(tuple(roles))
+                return super().capture_roles(roles)
+
+        cameras = BatchTrackingCameras()
+        preview = LivePreview(cameras, RecordingMonitor(), lambda: "TOP")
+        preview.start()
+        time.sleep(0.3)
+        preview.stop()
+
+        self.assertTrue(cameras.batches)
+        for batch in cameras.batches:
+            self.assertNotIn("TOP", batch)
+            self.assertEqual(set(batch), set(ROLES) - {"TOP"})
+
     def test_paused_context_blocks_live_reads(self):
         cameras = TrackingCameras()
         preview = LivePreview(cameras, RecordingMonitor(), lambda: "TOP")
@@ -209,6 +232,34 @@ class LivePreviewTests(unittest.TestCase):
         time.sleep(0.08)
         preview.stop()
         self.assertGreater(cameras.live_reads, 0)
+
+    def test_pause_waits_only_for_camera_access_not_for_ui_publish(self):
+        """Гейт держится на чтении камеры, а не на публикации в UI.
+
+        Публикация перекодирует JPEG и может быть медленной. Если бы она
+        шла внутри гейта, каждый шаг линии ждал бы её впустую.
+        """
+
+        class SlowMonitor:
+            def update(self, **kwargs):
+                time.sleep(0.12)
+
+        cameras = TrackingCameras()
+        preview = LivePreview(cameras, SlowMonitor(), lambda: "TOP")
+        preview.start()
+        time.sleep(0.15)
+        try:
+            waits = []
+            for _ in range(4):
+                started = time.monotonic()
+                self.assertTrue(preview.pause(timeout=5.0))
+                waits.append(time.monotonic() - started)
+                preview.resume()
+                time.sleep(0.03)
+        finally:
+            preview.stop()
+
+        self.assertLess(max(waits), 0.05)
 
     def test_camera_failure_is_reported_and_stops_preview(self):
         class FailingCameras:

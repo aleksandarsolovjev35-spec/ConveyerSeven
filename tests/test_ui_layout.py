@@ -235,7 +235,7 @@ class UiLayoutTests(unittest.TestCase):
         )
         self.assertIn("LIVE_AUX_BATCH_INTERVAL = 0.20", live_preview)
         self.assertIn("target=self._auxiliary_loop", live_preview)
-        self.assertIn("frames = capture_roles(auxiliary_roles)", live_preview)
+        self.assertIn("capture_roles(auxiliary_roles)", live_preview)
 
     def test_operator_terms_follow_one_unambiguous_naming_standard(self):
         self.assertIn(
