@@ -135,12 +135,3 @@
     line-height: 1.35;
     color: var(--text-dim);
 }
-
-/* Удержание коррекции: активная кнопка подсвечивается как в JOG. */
-.nudge-btn.nudge-active {
-    border-color: var(--warn);
-    color: var(--warn);
-    box-shadow: 0 0 0 2px rgba(255, 176, 32, 0.28) inset;
-}
-
-.nudge-panel.is-holding .nudge-offset { color: var(--warn); }

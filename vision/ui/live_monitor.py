@@ -29,9 +29,6 @@ class LiveMonitor:
         self.pause_callback = None
         self.resume_callback = None
         self.nudge_callback = None
-        self.nudge_hold_start_callback = None
-        self.nudge_hold_heartbeat_callback = None
-        self.nudge_hold_release_callback = None
         self.distributor_diagnostic_callback = None
         self.camera_diagnostic_callback = None
         self.vision_rule_diagnostic_callback = None
@@ -118,21 +115,6 @@ class LiveMonitor:
         self.server.on_nudge = (
             lambda direction: self._invoke_args(
                 self.nudge_callback, direction,
-            )
-        )
-        self.server.on_nudge_hold_start = (
-            lambda direction: self._invoke_args(
-                self.nudge_hold_start_callback, direction,
-            )
-        )
-        self.server.on_nudge_hold_heartbeat = (
-            lambda direction: self._invoke_args(
-                self.nudge_hold_heartbeat_callback, direction,
-            )
-        )
-        self.server.on_nudge_hold_release = (
-            lambda reason: self._invoke_args(
-                self.nudge_hold_release_callback, reason,
             )
         )
         self.server.on_distributor_diagnostic = (

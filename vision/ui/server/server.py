@@ -83,9 +83,6 @@ class UIServer:
         self.on_pause: Optional[callable] = None
         self.on_resume: Optional[callable] = None
         self.on_nudge: Optional[callable] = None
-        self.on_nudge_hold_start: Optional[callable] = None
-        self.on_nudge_hold_heartbeat: Optional[callable] = None
-        self.on_nudge_hold_release: Optional[callable] = None
         self.on_distributor_diagnostic: Optional[callable] = None
         self.on_camera_diagnostic: Optional[callable] = None
         self.on_vision_rule_diagnostic: Optional[callable] = None

@@ -158,54 +158,15 @@ class FakeJog:
         self.nudges = []
         self.resets = 0
         self.nudge_exception = None
-        self.hold_starts = []
-        self.hold_heartbeats = []
-        self.hold_releases = []
-        self._hold_mode = None
-        self.hold_applied = 0
-        self.hold_release_exception = None
 
     def start_hold(self, direction):
         self.starts.append(direction)
         self._busy = True
         return True
 
-    def heartbeat(self, direction, mode="jog"):
-        if mode == "nudge":
-            self.hold_heartbeats.append(direction)
-            return self._hold_mode == "nudge"
+    def heartbeat(self, direction):
         self.heartbeats.append(direction)
         return True
-
-    def start_nudge_hold(self, direction):
-        if direction not in ("+", "-"):
-            raise ValueError("bad direction")
-        remaining = (
-            self.nudge_limit_steps - self._nudge_offset
-            if direction == "+"
-            else self.nudge_limit_steps + self._nudge_offset
-        )
-        if remaining <= 0 or self._busy:
-            return False
-        self.hold_starts.append(direction)
-        self._busy = True
-        self._hold_mode = "nudge"
-        self._hold_direction = direction
-        return True
-
-    def release_nudge_hold(self, reason="released"):
-        self.hold_releases.append(reason)
-        self._busy = False
-        self._hold_mode = None
-        if self.hold_release_exception is not None:
-            raise self.hold_release_exception
-        direction = getattr(self, "_hold_direction", "+")
-        signed = self.hold_applied if direction == "+" else -self.hold_applied
-        self._nudge_offset = max(
-            -self.nudge_limit_steps,
-            min(self.nudge_limit_steps, self._nudge_offset + signed),
-        )
-        return self._nudge_offset
 
     def release(self, reason="released"):
         self.releases.append(reason)
@@ -248,10 +209,7 @@ class FakeJog:
             "hold_steps": 1000000,
             "last_action": "-",
             "busy": self._busy,
-            "direction": getattr(self, "_hold_direction", None),
-            "mode": self._hold_mode,
-            "nudge_hold_busy": self._hold_mode == "nudge" and self._busy,
-            "pause_hold_speed": 2000,
+            "direction": None,
             "error": self._error,
             "micro_steps": self.micro_steps,
             "nudge_limit_steps": self.nudge_limit_steps,
@@ -358,142 +316,6 @@ class CoreCycleTests(unittest.TestCase):
         self.assertTrue(cycle.nudge_belt("+"))
         self.assertEqual(jog.nudge_offset, 1000)
         self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE_LIMIT")
-        cycle._stop_pause_frame_loop()
-
-    # ─── Удержание коррекции в паузе ─────────────────────────────
-
-    def _paused_cycle(self, jog):
-        cycle = self.make_cycle(jog=jog)
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        return cycle
-
-    def test_nudge_hold_requires_paused_state(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        # IDLE: коррекция вне паузы запрещена.
-        self.assertFalse(cycle.nudge_hold_start("+"))
-        self.assertTrue(cycle.request_start())
-        # RUNNING: тоже запрещена.
-        self.assertFalse(cycle.nudge_hold_start("+"))
-        self.assertFalse(cycle.nudge_hold_heartbeat("+"))
-        self.assertFalse(cycle.nudge_hold_release("late release"))
-        self.assertEqual(jog.hold_starts, [])
-        self.assertEqual(jog.hold_releases, [])
-
-    def test_nudge_hold_counts_actual_offset_on_release(self):
-        jog = FakeJog()
-        jog.hold_applied = 700
-        cycle = self._paused_cycle(jog)
-
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        self.assertTrue(cycle.nudge_hold_heartbeat("+"))
-        self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE_HOLD")
-
-        self.assertTrue(cycle.nudge_hold_release("pointerup"))
-        self.assertEqual(jog.nudge_offset, 700)
-        self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE")
-        self.assertEqual(jog.hold_releases, ["pointerup"])
-        cycle._stop_pause_frame_loop()
-
-    def test_nudge_hold_does_not_shift_logical_part_map(self):
-        conveyor = FakeConveyor()
-        jog = FakeJog()
-        jog.hold_applied = 900
-        cycle = self.make_cycle(conveyor, jog=jog)
-        self.assertTrue(cycle.request_start())
-        cycle.current_step = 3
-        cycle.parts.append(Part(1, 0))
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-
-        moves_before = conveyor.moves
-        position_before = cycle._build_status()["line_parts"][0]["position"]
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        self.assertTrue(cycle.nudge_hold_release("pointerup"))
-
-        self.assertEqual(conveyor.moves, moves_before)
-        self.assertEqual(cycle.current_step, 3)
-        self.assertEqual(
-            cycle._build_status()["line_parts"][0]["position"],
-            position_before,
-        )
-        cycle._stop_pause_frame_loop()
-
-    def test_nudge_hold_is_blocked_at_limit_but_reverse_stays_available(self):
-        jog = FakeJog()
-        jog.hold_applied = jog.nudge_limit_steps
-        cycle = self._paused_cycle(jog)
-
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        self.assertTrue(cycle.nudge_hold_release("pointerup"))
-        self.assertEqual(jog.nudge_offset, jog.nudge_limit_steps)
-        self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE_LIMIT")
-
-        # Бюджет вперёд исчерпан, обратное направление обязано работать.
-        self.assertFalse(cycle.nudge_hold_start("+"))
-        self.assertTrue(cycle.nudge_hold_start("-"))
-        cycle.nudge_hold_release("cleanup")
-        cycle._stop_pause_frame_loop()
-
-    def test_nudge_hold_failure_moves_line_to_fault(self):
-        jog = FakeJog()
-        jog.hold_release_exception = RuntimeError("POS отсутствует")
-        cycle = self._paused_cycle(jog)
-
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        # Позиция ленты неизвестна: продолжать цикл нельзя.
-        self.assertFalse(cycle.nudge_hold_release("pointerup"))
-        self.assertEqual(cycle.sm.state, State.FAULT)
-
-    def test_resume_is_blocked_while_belt_is_still_moving(self):
-        jog = FakeJog()
-        cycle = self._paused_cycle(jog)
-
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        # Лента ещё идёт: возобновление рассинхронизировало бы геометрию.
-        self.assertFalse(cycle.request_resume())
-        self.assertEqual(cycle.sm.state, State.PAUSED)
-
-        self.assertTrue(cycle.nudge_hold_release("pointerup"))
-        self.assertTrue(cycle.request_resume())
-        self.assertEqual(cycle.sm.state, State.RUNNING)
-
-    def test_stop_and_exit_abort_active_nudge_hold(self):
-        jog = FakeJog()
-        cycle = self._paused_cycle(jog)
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        cycle.request_stop()
-        # STOP обязан снять удержание, иначе лента продолжит ход в дренаже.
-        self.assertEqual(jog.hold_releases, ["stop requested"])
-        self.assertFalse(jog.busy)
-
-        jog2 = FakeJog()
-        cycle2 = self._paused_cycle(jog2)
-        self.assertTrue(cycle2.nudge_hold_start("+"))
-        cycle2.request_exit()
-        self.assertEqual(jog2.hold_releases, ["exit requested"])
-        self.assertFalse(jog2.busy)
-
-    def test_status_exposes_nudge_hold_controls_and_telemetry(self):
-        jog = FakeJog()
-        cycle = self._paused_cycle(jog)
-        status = cycle._build_status()
-        self.assertTrue(status["controls"]["nudge_hold"])
-        self.assertFalse(status["pause"]["hold_busy"])
-        self.assertEqual(status["pause"]["hold_speed"], 2000)
-
-        self.assertTrue(cycle.nudge_hold_start("+"))
-        status = cycle._build_status()
-        self.assertTrue(status["pause"]["hold_busy"])
-        self.assertEqual(status["pause"]["hold_direction"], "+")
-        # Пока лента движется, STOP и RESUME обязаны быть заблокированы.
-        self.assertFalse(status["controls"]["resume"])
-        self.assertFalse(status["controls"]["stop"])
-        # Кнопки удержания остаются доступны, чтобы дошёл release.
-        self.assertTrue(status["controls"]["nudge_hold"])
-        cycle.nudge_hold_release("cleanup")
         cycle._stop_pause_frame_loop()
 
     def test_pause_resets_nudge_offset_on_every_entry(self):
