@@ -698,6 +698,24 @@ async function main() {
   assert(window.document.getElementById('control-error').classList.contains('is-hidden'), 'control error clears explicitly');
   api.updateLineStatus({});
   assert(start.disabled && exit.disabled, 'malformed status keeps main controls disabled');
+  // Повреждённый ответ backend не должен ронять отрисовку: исключение
+  // в updateLineCells остановило бы и обновление статуса, и привод.
+  for (const broken of [
+    {state: 'RUNNING', line_parts: 'nope', process: {phase: 'X', positions: 'nope', conveyor: {}}},
+    {state: 'RUNNING', line_parts: [{position: 0}, {id: null}, {id: 7}], process: {phase: 'X', conveyor: {}}},
+    {state: 'RUNNING', step: NaN, dist1_position: Infinity, dist1_max: NaN,
+     process: {phase: 'CONVEYOR_MOVING', conveyor: {pos: NaN, tgt: Infinity}}, pause: {nudge_offset: NaN}},
+    {state: 'RUNNING', step: 1, process: {phase: 'CONVEYOR_MOVING', conveyor: {pos: 50, tgt: 0}}},
+  ]) {
+    api.updateLineStatus(broken);
+    for (const variable of ['--belt-phase', '--belt-intra', '--belt-speed', '--drive-turn', '--dist1-turn']) {
+      const value = api.getBeltVar(variable);
+      assert(
+        value !== '' && !/NaN|Infinity|undefined/.test(value),
+        `malformed status keeps ${variable} finite (got "${value}")`,
+      );
+    }
+  }
   assert(diagnostics.every(button => button.disabled), 'malformed status keeps diagnostics disabled');
   assert(jogButtons.every(button => button.disabled), 'malformed status keeps JOG disabled');
 

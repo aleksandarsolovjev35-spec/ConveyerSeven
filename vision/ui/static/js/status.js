@@ -288,10 +288,13 @@ function updateLineCells(lineParts, process = {}) {
     const activeProcessKey = lineProcessKey(process.phase);
     const activeProcessTitle = lineProcessTitle(activeProcessKey);
     const conveyorMotion = conveyorMotionState(cells, process);
+    // Повреждённый или неполный ответ backend не должен ронять отрисовку
+    // пути деталей: пустая линия честнее, чем застывший прошлый кадр.
+    const parts = Array.isArray(lineParts) ? lineParts : [];
 
     for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
-        const part = lineParts.find(p => p.position === i);
+        const part = parts.find(p => p && p.position === i);
         const processActiveHere = activePositions.includes(i);
 
         cell.className = 'line-cell';
