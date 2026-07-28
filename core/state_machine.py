@@ -6,20 +6,25 @@ from collections.abc import Callable
 class State(str, Enum):
     IDLE     = "IDLE"
     RUNNING  = "RUNNING"
+    PAUSED   = "PAUSED"
     STOPPING = "STOPPING"
     STOPPED  = "STOPPED"
     FAULT    = "FAULT"
 
 
 _TRANSITIONS = {
-    (State.IDLE,     "START"): State.RUNNING,
-    (State.STOPPED,  "START"): State.RUNNING,
-    (State.RUNNING,  "STOP"):  State.STOPPING,
-    (State.STOPPING, "EMPTY"): State.STOPPED,
-    (State.IDLE,     "FAULT"): State.FAULT,
-    (State.RUNNING,  "FAULT"): State.FAULT,
-    (State.STOPPING, "FAULT"): State.FAULT,
-    (State.STOPPED,  "FAULT"): State.FAULT,
+    (State.IDLE,     "START"):  State.RUNNING,
+    (State.STOPPED,  "START"):  State.RUNNING,
+    (State.RUNNING,  "STOP"):   State.STOPPING,
+    (State.STOPPING, "EMPTY"):  State.STOPPED,
+    (State.RUNNING,  "PAUSE"):  State.PAUSED,
+    (State.PAUSED,   "RESUME"): State.RUNNING,
+    (State.PAUSED,   "STOP"):   State.STOPPING,
+    (State.IDLE,     "FAULT"):  State.FAULT,
+    (State.RUNNING,  "FAULT"):  State.FAULT,
+    (State.PAUSED,   "FAULT"):  State.FAULT,
+    (State.STOPPING, "FAULT"):  State.FAULT,
+    (State.STOPPED,  "FAULT"):  State.FAULT,
 }
 
 
@@ -65,6 +70,12 @@ class StateMachine:
 
     def request_stop(self) -> bool:
         return self._apply("STOP")
+
+    def request_pause(self) -> bool:
+        return self._apply("PAUSE")
+
+    def request_resume(self) -> bool:
+        return self._apply("RESUME")
 
     def request_exit(self):
         callback_args = None

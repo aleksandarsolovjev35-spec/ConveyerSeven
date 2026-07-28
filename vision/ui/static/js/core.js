@@ -13,7 +13,7 @@ const UPTIME_INTERVAL      = 1000;
 const MAIN_CAM_MIN_GAP     = 16;
 const LIVE_CAM_MIN_GAP     = 1000 / 30;
 
-const JOG_ALLOWED_STATES = ["IDLE", "STOPPED"];
+const JOG_ALLOWED_STATES = ["IDLE", "STOPPED", "PAUSED"];
 
 const JOG_HEARTBEAT_INTERVAL = 100;
 
@@ -32,6 +32,7 @@ const CAMERA_ROLE_LABELS = {
 const LINE_STATE_LABELS = {
     IDLE: 'ГОТОВА К ПУСКУ',
     RUNNING: 'РАБОТАЕТ',
+    PAUSED: 'ПАУЗА · КОРРЕКЦИЯ ЛЕНТЫ',
     STOPPING: 'ОСТАНОВКА ЛИНИИ',
     STOPPED: 'ОСТАНОВЛЕНА',
     FAULT: 'АВАРИЯ',
@@ -213,6 +214,8 @@ const els = {
     jogHwDist2:       $('jog-hw-dist2'),
 
     btnStart:         $('btn-start'),
+    btnPause:         $('btn-pause'),
+    btnResume:        $('btn-resume'),
     btnStop:          $('btn-stop'),
     btnExit:          $('btn-exit'),
 
@@ -483,7 +486,7 @@ function getStatusInterval() {
         || state.distributorDiagnosticPending
         || state.distributorDiagnosticBackendBusy
     ) return STATUS_INTERVAL_MOTION;
-    if (s === 'RUNNING' || s === 'STOPPING') return STATUS_INTERVAL_FAST;
+    if (s === 'RUNNING' || s === 'PAUSED' || s === 'STOPPING') return STATUS_INTERVAL_FAST;
     if (state.serverExitRequested) return STATUS_INTERVAL_FAST;
     if (state.jogActive) return STATUS_INTERVAL_FAST;
     return STATUS_INTERVAL_IDLE;

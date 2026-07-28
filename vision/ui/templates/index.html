@@ -121,21 +121,17 @@
                     </div>
                 </section>
 
-                <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed">
-                    <div class="frame-analysis-header">
-                        <h2 id="frame-analysis-title">АНАЛИЗ 3 КАДРОВ</h2>
-                        <span id="frame-analysis-context">—</span>
+                <div id="defects-section" class="defects-section is-hidden">
+                    <div id="defects-title" class="stats-label">ОСНОВНЫЕ ДЕФЕКТЫ</div>
+                    <ul id="defects-list" class="defects-list"><li class="defects-empty">Нет данных</li></ul>
+                </div>
+
+                <div id="stats-service" class="stats-service ui-collapse">
+                    <div class="stats-service-row">
+                        <span class="stats-service-label">Пустые лотки</span>
+                        <span class="stats-service-value" id="stat-empty">0</span>
                     </div>
-                    <div id="frame-analysis-message" class="frame-analysis-message">—</div>
-                    <div class="frame-analysis-group">
-                        <h3 id="frame-analysis-models-title">МОДЕЛИ</h3>
-                        <div id="frame-analysis-models" class="frame-analysis-list"></div>
-                    </div>
-                    <div class="frame-analysis-group">
-                        <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
-                        <div id="frame-analysis-rules" class="frame-analysis-list"></div>
-                    </div>
-                </section>
+                </div>
 
                 <section id="distributor-diagnostics" class="distributor-panel ui-collapse">
                     <div class="distributor-title">РАСПРЕДЕЛИТЕЛЬ</div>
@@ -199,17 +195,21 @@
                     </div>
                 </section>
 
-                <div id="defects-section" class="defects-section is-hidden">
-                    <div id="defects-title" class="stats-label">ОСНОВНЫЕ ДЕФЕКТЫ</div>
-                    <ul id="defects-list" class="defects-list"><li class="defects-empty">Нет данных</li></ul>
-                </div>
-
-                <div id="stats-service" class="stats-service ui-collapse">
-                    <div class="stats-service-row">
-                        <span class="stats-service-label">Пустые лотки</span>
-                        <span class="stats-service-value" id="stat-empty">0</span>
+                <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed">
+                    <div class="frame-analysis-header">
+                        <h2 id="frame-analysis-title">АНАЛИЗ 3 КАДРОВ</h2>
+                        <span id="frame-analysis-context">—</span>
                     </div>
-                </div>
+                    <div id="frame-analysis-message" class="frame-analysis-message">—</div>
+                    <div class="frame-analysis-group">
+                        <h3 id="frame-analysis-models-title">МОДЕЛИ</h3>
+                        <div id="frame-analysis-models" class="frame-analysis-list"></div>
+                    </div>
+                    <div class="frame-analysis-group">
+                        <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
+                        <div id="frame-analysis-rules" class="frame-analysis-list"></div>
+                    </div>
+                </section>
             </aside>
 
             
@@ -218,10 +218,12 @@
         <footer class="footer">
             <div class="buttons">
                 <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
+                <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
+                <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
                 <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
                 <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
-            <div class="hotkeys">F5 пуск | F6 стоп | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
+            <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
         </footer>
     </div>
 

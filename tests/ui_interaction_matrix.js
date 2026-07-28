@@ -25,6 +25,8 @@ function controls(overrides = {}) {
   return {
     start: false,
     stop: false,
+    pause: false,
+    resume: false,
     exit: true,
     jog_hold: false,
     selected_model_analysis: false,
@@ -705,14 +707,47 @@ async function main() {
   }));
   assert(!start.disabled && diagnostics.every(button => !button.disabled), 'recovery restores backend permissions');
 
-  // 19. Splash startup error has an explicit close action.
+  // 20. PAUSE inside the cycle exposes unrestricted manual JOG before neural networks run.
+  const btnPause = window.document.getElementById('btn-pause');
+  const btnResume = window.document.getElementById('btn-resume');
+  const jogPanel = window.document.getElementById('jog-panel');
+
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true, pause: true}),
+  }));
+  assert(!hidden(btnPause) && !btnPause.disabled, 'RUNNING exposes PAUSE');
+  assert(hidden(btnResume), 'RUNNING hides RESUME');
+  assert(jogPanel.classList.contains('is-collapsed'), 'RUNNING hides JOG panel');
+
+  calls.length = 0;
+  btnPause.click();
+  await sleep(5);
+  assert(calls.some(call => call.url === '/api/pause'), 'PAUSE button calls /api/pause');
+
+  currentStatus = lineStatus('PAUSED', {
+    controls: controls({stop: true, exit: true, resume: true, jog_hold: true}),
+    jog: {active: true, can_enter: true, busy: false, hold_steps: 1000000, last_action: '-', direction: null, error: null},
+  });
+  api.updateLineStatus(currentStatus);
+  assert(window.document.getElementById('state-label').textContent === 'ПАУЗА · КОРРЕКЦИЯ ЛЕНТЫ', 'PAUSED label is explicit');
+  assert(hidden(btnPause) && !hidden(btnResume) && !btnResume.disabled, 'PAUSED swaps PAUSE for RESUME');
+  assert(!hidden(stop) && !stop.disabled, 'PAUSED still allows normal STOP');
+  assert(!jogPanel.classList.contains('is-collapsed'), 'PAUSED reveals JOG panel');
+  assert(jogButtons.every(button => !button.disabled), 'PAUSED enables unrestricted JOG buttons');
+
+  calls.length = 0;
+  btnResume.click();
+  await sleep(5);
+  assert(calls.some(call => call.url === '/api/resume'), 'RESUME button calls /api/resume');
+
+  // 21. Splash startup error has an explicit close action.
   calls.length = 0;
   window.document.getElementById('splash-exit').disabled = false;
   window.document.getElementById('splash-exit').click();
   await sleep(5);
   assert(calls.some(call => call.url === '/api/exit'), 'splash close calls EXIT');
 
-  console.log('UI INTERACTION MATRIX PASS: 20 groups');
+  console.log('UI INTERACTION MATRIX PASS: 21 groups');
   dom.window.close();
 }
 

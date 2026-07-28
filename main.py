@@ -366,9 +366,11 @@ def main():
                     settle_seconds=calib["settle_time"],
                     stage_trace_seconds=calib["stage_trace_time"],
                 )
-                monitor.start_callback = cycle.request_start
-                monitor.stop_callback  = cycle.request_stop
-                monitor.exit_callback  = handle_exit_request
+                monitor.start_callback  = cycle.request_start
+                monitor.stop_callback   = cycle.request_stop
+                monitor.pause_callback  = cycle.request_pause
+                monitor.resume_callback = cycle.request_resume
+                monitor.exit_callback   = handle_exit_request
                 monitor.distributor_diagnostic_callback = (
                     cycle.distributor_diagnostic
                 )

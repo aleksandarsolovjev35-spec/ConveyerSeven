@@ -34,7 +34,7 @@ import time
 from enum import Enum
 
 # Пауза между подтверждённой остановкой ленты и первым кадром инспекции.
-STAGE_SETTLE_SECONDS = 0.15
+STAGE_SETTLE_SECONDS = 0.3
 
 # Предел ожидания освобождения камер live-просмотром перед захватом.
 STAGE_CAPTURE_HANDOVER_TIMEOUT = 5.0
@@ -43,7 +43,7 @@ STAGE_CAPTURE_HANDOVER_TIMEOUT = 5.0
 # значение растягивает шаг, чтобы оператор видел фазы по отдельности при
 # отладке. На физику линии не влияет: пауза берётся тогда, когда лента уже
 # остановлена или ещё не тронулась.
-STAGE_TRACE_SECONDS = 0.0
+STAGE_TRACE_SECONDS = 0.05
 
 
 class StageSequenceError(RuntimeError):

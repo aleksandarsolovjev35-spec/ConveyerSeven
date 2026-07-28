@@ -80,7 +80,7 @@ class StepSequencerOrderTests(unittest.TestCase):
             sequencer.enter_analysis()
 
     def test_settle_waits_before_capture(self):
-        sequencer, _, sleeps = self.make(settle_seconds=0.25)
+        sequencer, _, sleeps = self.make(settle_seconds=0.25, trace_seconds=0.0)
         sequencer.enter_motion()
         sequencer.enter_settle()
         self.assertEqual(sleeps, [0.25])
@@ -140,12 +140,12 @@ class StepSequencerOrderTests(unittest.TestCase):
         # По одной паузе на каждый из пяти переходов.
         self.assertEqual(sleeps, [0.2] * 5)
 
-    def test_trace_delay_is_absent_by_default(self):
+    def test_trace_delay_uses_default(self):
         sequencer, _, sleeps = self.make(settle_seconds=0.0)
         sequencer.enter_motion()
         sequencer.enter_settle()
         sequencer.enter_capture()
-        self.assertEqual(sleeps, [])
+        self.assertEqual(sleeps, [0.05, 0.05, 0.05])
 
     def test_stage_observer_receives_every_transition(self):
         seen = []
@@ -287,7 +287,7 @@ class StepSequencerAgainstLiveTests(unittest.TestCase):
     def test_capture_never_overlaps_running_live_preview(self):
         cameras = SlowCameras()
         preview = LivePreview(cameras, Monitor(), lambda: "TOP")
-        sequencer = StepSequencer(preview, settle_seconds=0.0)
+        sequencer = StepSequencer(preview, settle_seconds=0.0, trace_seconds=0.0)
         preview.start()
         try:
             for _ in range(15):
@@ -307,7 +307,7 @@ class StepSequencerAgainstLiveTests(unittest.TestCase):
 
     def test_gate_is_left_clean_after_many_steps(self):
         preview = LivePreview(SlowCameras(), Monitor(), lambda: "TOP")
-        sequencer = StepSequencer(preview, settle_seconds=0.0)
+        sequencer = StepSequencer(preview, settle_seconds=0.0, trace_seconds=0.0)
         preview.start()
         try:
             for _ in range(30):

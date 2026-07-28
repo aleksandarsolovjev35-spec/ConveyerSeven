@@ -8,6 +8,8 @@
   "dist2_bad_position": 0,
   "dist2_cleanup_position": 340,
   "drop_time": 0.8,
+  "settle_time": 0.5,
+  "stage_trace_time": 0.5,
   "axis_speed": 300,
   "axis_accel": 100
 }
