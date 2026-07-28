@@ -11,9 +11,8 @@ UI uses ordered classic browser modules and does not require a production bundle
 5. `controls.js` — START/STOP/EXIT, errors and state overlay.
 6. `cameras.js` — camera selection, RAW/RULES and frame refresh.
 7. `jog.js` — dead-man hold/heartbeat/release logic.
-8. `pause.js` — in-cycle pause and bounded belt correction.
-9. `history.js` — recent parts, archive gallery and fullscreen.
-10. `bootstrap.js` — hotkeys, initialization and test-only hook.
+8. `history.js` — recent parts, archive gallery and fullscreen.
+9. `bootstrap.js` — hotkeys, initialization and test-only hook.
 
 Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html` without updating the asset-order regression test.
 
@@ -25,7 +24,6 @@ Functions may call functions from later modules only after all scripts have load
 - `history-strip.css` — recent part strip.
 - `stats.css` — statistics, line cells and defect list.
 - `jog.css` — two-button hold JOG.
-- `nudge.css` — bounded belt correction panel shown only while paused.
 - `controls.css` — footer and main control buttons.
 - `gallery.css` — archive modal and fullscreen.
 - `process.css` — process line, distributor, diagnostics and OFFLINE/error additions.

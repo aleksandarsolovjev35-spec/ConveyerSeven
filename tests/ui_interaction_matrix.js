@@ -26,9 +26,6 @@ function controls(overrides = {}) {
     start: false,
     stop: false,
     exit: true,
-    pause: false,
-    resume: false,
-    nudge: false,
     jog_hold: false,
     selected_model_analysis: false,
     selected_model_release: false,
@@ -708,75 +705,14 @@ async function main() {
   }));
   assert(!start.disabled && diagnostics.every(button => !button.disabled), 'recovery restores backend permissions');
 
-  // 19. PAUSE inside the cycle exposes bounded belt correction only.
-  const btnPause = window.document.getElementById('btn-pause');
-  const btnResume = window.document.getElementById('btn-resume');
-  const nudgePanel = window.document.getElementById('nudge-panel');
-  const nudgeForward = window.document.getElementById('nudge-forward');
-  const nudgeBackward = window.document.getElementById('nudge-backward');
-
-  api.updateLineStatus(lineStatus('RUNNING', {
-    controls: controls({stop: true, exit: true, pause: true}),
-  }));
-  assert(!hidden(btnPause) && !btnPause.disabled, 'RUNNING exposes PAUSE');
-  assert(hidden(btnResume), 'RUNNING hides RESUME');
-  assert(nudgePanel.classList.contains('is-collapsed'), 'RUNNING hides belt correction');
-
-  currentStatus = lineStatus('PAUSED', {
-    controls: controls({stop: true, exit: true, resume: true, nudge: true}),
-    pause: {
-      requested: false,
-      active: true,
-      nudge_offset: 0,
-      nudge_limit_steps: 1000,
-      micro_steps: 500,
-      remaining_forward: 1000,
-      remaining_backward: 1000,
-    },
-  });
-  api.updateLineStatus(currentStatus);
-  assert(window.document.getElementById('state-label').textContent === 'ПАУЗА · КОРРЕКЦИЯ ЛЕНТЫ', 'PAUSED label is explicit');
-  assert(hidden(btnPause) && !hidden(btnResume) && !btnResume.disabled, 'PAUSED swaps PAUSE for RESUME');
-  assert(!hidden(stop) && !stop.disabled, 'PAUSED still allows normal STOP');
-  assert(!nudgePanel.classList.contains('is-collapsed'), 'PAUSED reveals belt correction');
-  assert(!nudgeForward.disabled && !nudgeBackward.disabled, 'PAUSED enables both correction directions');
-  assert(jogButtons.every(button => button.disabled), 'PAUSED keeps continuous JOG locked');
-
-  calls.length = 0;
-  nudgeForward.click();
-  await sleep(5);
-  assert(calls.some(call => call.url === '/api/nudge/forward'), 'correction posts bounded nudge');
-
-  // Reaching the accumulated limit must disable that direction only.
-  api.updateLineStatus(lineStatus('PAUSED', {
-    controls: controls({stop: true, exit: true, resume: true, nudge: true}),
-    pause: {
-      requested: false,
-      active: true,
-      nudge_offset: 1000,
-      nudge_limit_steps: 1000,
-      micro_steps: 500,
-      remaining_forward: 0,
-      remaining_backward: 2000,
-    },
-  }));
-  assert(nudgeForward.disabled, 'correction limit disables further forward moves');
-  assert(!nudgeBackward.disabled, 'correction limit still allows returning back');
-  assert(window.document.getElementById('nudge-offset').textContent === '+1000', 'accumulated correction is shown');
-
-  calls.length = 0;
-  btnResume.click();
-  await sleep(5);
-  assert(calls.some(call => call.url === '/api/resume'), 'RESUME returns the line to work');
-
-  // 20. Splash startup error has an explicit close action.
+  // 19. Splash startup error has an explicit close action.
   calls.length = 0;
   window.document.getElementById('splash-exit').disabled = false;
   window.document.getElementById('splash-exit').click();
   await sleep(5);
   assert(calls.some(call => call.url === '/api/exit'), 'splash close calls EXIT');
 
-  console.log('UI INTERACTION MATRIX PASS: 21 groups');
+  console.log('UI INTERACTION MATRIX PASS: 20 groups');
   dom.window.close();
 }
 

@@ -166,8 +166,8 @@ class UiLayoutTests(unittest.TestCase):
             [path.name for path in js],
             [
                 "core.js", "boot.js", "diagnostics.js", "status.js",
-                "controls.js", "cameras.js", "jog.js", "pause.js",
-                "history.js", "bootstrap.js",
+                "controls.js", "cameras.js", "jog.js", "history.js",
+                "bootstrap.js",
             ],
         )
         self.assertGreaterEqual(len(css), 8)

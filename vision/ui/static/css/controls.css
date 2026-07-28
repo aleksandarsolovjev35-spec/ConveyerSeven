@@ -71,22 +71,6 @@
 
 .btn-start:hover:not(:disabled) { color: var(--ok); border-color: var(--ok); }
 
-.btn-pause {
-    --btn-color:     var(--warn);
-    --btn-fill:      var(--warn-bg);
-    border-color: var(--warn);
-}
-
-.btn-pause:hover:not(:disabled) { color: var(--warn); border-color: var(--warn); }
-
-.btn-resume {
-    --btn-color:     var(--ok);
-    --btn-fill:      var(--ok-bg);
-    border-color: var(--ok);
-}
-
-.btn-resume:hover:not(:disabled) { color: var(--ok); border-color: var(--ok); }
-
 .btn-stop {
     --btn-color:     var(--bad);
     --btn-fill:      var(--bad-bg);

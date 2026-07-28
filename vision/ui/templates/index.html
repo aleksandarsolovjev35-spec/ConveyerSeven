@@ -11,7 +11,6 @@
     <link rel="stylesheet" href="/static/css/history-strip.css?v=25">
     <link rel="stylesheet" href="/static/css/stats.css?v=25">
     <link rel="stylesheet" href="/static/css/jog.css?v=25">
-    <link rel="stylesheet" href="/static/css/nudge.css?v=25">
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
     <link rel="stylesheet" href="/static/css/process.css?v=25">
@@ -173,33 +172,6 @@
                     <div class="axis-action">ПОСЛЕДНЯЯ КОМАНДА: <span id="dist-action">—</span></div>
                 </section>
 
-                <section id="nudge-panel" class="nudge-panel ui-collapse is-collapsed">
-                    <div class="nudge-header">
-                        <h2 class="nudge-title">КОРРЕКЦИЯ ЛЕНТЫ</h2>
-                        <span id="nudge-limit" class="nudge-limit">—</span>
-                    </div>
-                    <div class="nudge-dpad">
-                        <button id="nudge-backward" class="nudge-btn" data-direction="backward" disabled
-                                aria-label="Сдвинуть ленту назад" title="Сдвиг назад на один микрошаг">
-                            <svg class="nudge-arrow" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M15 5 L8 12 L15 19"></path>
-                            </svg>
-                        </button>
-                        <div class="nudge-readout">
-                            <span id="nudge-offset" class="nudge-offset">0</span>
-                            <span class="nudge-units">МИКРОШАГОВ</span>
-                        </div>
-                        <button id="nudge-forward" class="nudge-btn" data-direction="forward" disabled
-                                aria-label="Сдвинуть ленту вперёд" title="Сдвиг вперёд на один микрошаг">
-                            <svg class="nudge-arrow" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M9 5 L16 12 L9 19"></path>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="nudge-bar"><div id="nudge-bar-fill" class="nudge-bar-fill"></div></div>
-                    <div class="nudge-hint">Коррекция внутри одной ячейки; позиции деталей сохраняются</div>
-                </section>
-
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse">
                     <div class="jog-header">
                         <h2 class="jog-title">РУЧНОЕ УПРАВЛЕНИЕ ЛЕНТОЙ</h2>
@@ -246,8 +218,6 @@
         <footer class="footer">
             <div class="buttons">
                 <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
-                <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
-                <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
                 <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
                 <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
@@ -288,7 +258,6 @@
     <script src="/static/js/controls.js?v=25"></script>
     <script src="/static/js/cameras.js?v=25"></script>
     <script src="/static/js/jog.js?v=25"></script>
-    <script src="/static/js/pause.js?v=25"></script>
     <script src="/static/js/history.js?v=25"></script>
     <script src="/static/js/bootstrap.js?v=25"></script>
 </body>

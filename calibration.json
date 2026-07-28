@@ -1,6 +1,5 @@
 {
   "micro_steps": 500,
-  "nudge_limit_steps": 1000,
   "jog_hold_steps": 1000000,
   "normal_steps": 19048,
   "conveyor_speed": 20000,

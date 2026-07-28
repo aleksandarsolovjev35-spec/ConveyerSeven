@@ -152,12 +152,6 @@ class FakeJog:
         self.heartbeats = []
         self._busy = False
         self._error = None
-        self.micro_steps = 500
-        self.nudge_limit_steps = 1000
-        self._nudge_offset = 0
-        self.nudges = []
-        self.resets = 0
-        self.nudge_exception = None
 
     def start_hold(self, direction):
         self.starts.append(direction)
@@ -174,32 +168,6 @@ class FakeJog:
         return True
 
     @property
-    def nudge_offset(self):
-        return self._nudge_offset
-
-    def reset_nudge_offset(self):
-        self.resets += 1
-        self._nudge_offset = 0
-
-    def nudge(self, direction, steps=None):
-        if self.nudge_exception is not None:
-            raise self.nudge_exception
-        if direction not in ("+", "-"):
-            raise ValueError("bad direction")
-        requested = self.micro_steps if steps is None else int(steps)
-        if requested > self.nudge_limit_steps:
-            raise ValueError("above single press limit")
-        signed = requested if direction == "+" else -requested
-        clamped = max(
-            -self.nudge_limit_steps,
-            min(self.nudge_limit_steps, self._nudge_offset + signed),
-        )
-        applied = clamped - self._nudge_offset
-        self._nudge_offset = clamped
-        self.nudges.append(applied)
-        return applied
-
-    @property
     def busy(self):
         return self._busy
 
@@ -211,15 +179,6 @@ class FakeJog:
             "busy": self._busy,
             "direction": None,
             "error": self._error,
-            "micro_steps": self.micro_steps,
-            "nudge_limit_steps": self.nudge_limit_steps,
-            "nudge_offset": self._nudge_offset,
-            "nudge_remaining_forward": (
-                self.nudge_limit_steps - self._nudge_offset
-            ),
-            "nudge_remaining_backward": (
-                self.nudge_limit_steps + self._nudge_offset
-            ),
         }
 
 
@@ -243,181 +202,6 @@ class CoreCycleTests(unittest.TestCase):
         self.assertGreaterEqual(cycle.conveyor.stops, 1)
         self.assertGreaterEqual(cycle.distributor.stops, 1)
         self.assertFalse(cycle.request_start())
-
-    # ─── Пауза внутри цикла и коррекция ленты ────────────────────
-
-    def test_pause_is_rejected_outside_running(self):
-        cycle = self.make_cycle(jog=FakeJog())
-        self.assertFalse(cycle.request_pause())
-        self.assertEqual(cycle.sm.state, State.IDLE)
-
-    def test_pause_request_does_not_interrupt_running_state_immediately(self):
-        cycle = self.make_cycle(jog=FakeJog())
-        self.assertTrue(cycle.request_start())
-
-        # Запрос паузы не меняет состояние сразу: шаг обязан завершиться.
-        self.assertTrue(cycle.request_pause())
-        self.assertEqual(cycle.sm.state, State.RUNNING)
-        self.assertEqual(cycle._process["phase"], "PAUSE_REQUESTED")
-        self.assertTrue(cycle._pause_requested.is_set())
-        # Повторный запрос идемпотентен.
-        self.assertTrue(cycle.request_pause())
-
-    def test_nudge_never_moves_conveyor_or_shifts_part_map(self):
-        conveyor = FakeConveyor()
-        cycle = self.make_cycle(conveyor, jog=FakeJog())
-        self.assertTrue(cycle.request_start())
-        # Имитируем деталь, уже стоящую в своей ячейке.
-        cycle.current_step = 3
-        part = Part(1, 0)
-        cycle.parts.append(part)
-
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        self.assertEqual(cycle.sm.state, State.PAUSED)
-
-        moves_before = conveyor.moves
-        position_before = cycle._build_status()["line_parts"][0]["position"]
-        for _ in range(6):
-            cycle.nudge_belt("+")
-
-        # Коррекция не выполняет шаг ленты и не сдвигает логическую карту.
-        self.assertEqual(conveyor.moves, moves_before)
-        self.assertEqual(cycle.current_step, 3)
-        self.assertEqual(
-            cycle._build_status()["line_parts"][0]["position"],
-            position_before,
-        )
-        cycle._stop_pause_frame_loop()
-
-    def test_nudge_requires_paused_state(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        # IDLE
-        self.assertFalse(cycle.nudge_belt("+"))
-        self.assertTrue(cycle.request_start())
-        # RUNNING
-        self.assertFalse(cycle.nudge_belt("+"))
-        self.assertEqual(jog.nudges, [])
-
-    def test_nudge_clamps_accumulated_offset_and_reports_limit(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-
-        self.assertTrue(cycle.nudge_belt("+"))
-        self.assertTrue(cycle.nudge_belt("+"))
-        self.assertEqual(jog.nudge_offset, 1000)
-        self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE")
-
-        # Сверх лимита лента не двигается, оператор получает явный статус.
-        self.assertTrue(cycle.nudge_belt("+"))
-        self.assertEqual(jog.nudge_offset, 1000)
-        self.assertEqual(cycle._process["phase"], "PAUSE_NUDGE_LIMIT")
-        cycle._stop_pause_frame_loop()
-
-    def test_pause_resets_nudge_offset_on_every_entry(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        cycle.nudge_belt("+")
-        self.assertEqual(jog.nudge_offset, 500)
-
-        self.assertTrue(cycle.request_resume())
-        self.assertEqual(cycle.sm.state, State.RUNNING)
-
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        # Новая пауза обязана начинаться с нулевого накопителя.
-        self.assertEqual(jog.nudge_offset, 0)
-        self.assertGreaterEqual(jog.resets, 2)
-        cycle._stop_pause_frame_loop()
-
-    def test_hardware_failure_during_nudge_faults_the_line(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-
-        jog.nudge_exception = RuntimeError("motion rejected")
-        self.assertFalse(cycle.nudge_belt("+"))
-        # Неизвестная позиция ленты обязана останавливать линию.
-        self.assertEqual(cycle.sm.state, State.FAULT)
-        self.assertGreaterEqual(cycle.conveyor.stops, 1)
-
-    def test_invalid_nudge_request_does_not_fault_the_line(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-
-        # Некорректный ввод оператора — не отказ железа.
-        self.assertFalse(cycle.nudge_belt("*"))
-        self.assertEqual(cycle.sm.state, State.PAUSED)
-        cycle._stop_pause_frame_loop()
-
-    def test_stop_from_pause_drains_line_normally(self):
-        cycle = self.make_cycle(jog=FakeJog())
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-
-        self.assertTrue(cycle.request_stop())
-        self.assertEqual(cycle.sm.state, State.STOPPING)
-        self.assertFalse(cycle._pause_requested.is_set())
-        cycle._stop_pause_frame_loop()
-
-    def test_resume_returns_line_to_running(self):
-        cycle = self.make_cycle(jog=FakeJog())
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        self.assertTrue(cycle.request_resume())
-        self.assertEqual(cycle.sm.state, State.RUNNING)
-        self.assertFalse(cycle._pause_frame_active)
-        self.assertFalse(cycle.request_resume())
-
-    def test_status_exposes_pause_budget_and_controls(self):
-        jog = FakeJog()
-        cycle = self.make_cycle(jog=jog)
-        status = cycle._build_status()
-        self.assertFalse(status["pause"]["active"])
-        self.assertFalse(status["controls"]["pause"])
-        self.assertFalse(status["controls"]["nudge"])
-
-        self.assertTrue(cycle.request_start())
-        status = cycle._build_status()
-        self.assertTrue(status["controls"]["pause"])
-        self.assertFalse(status["controls"]["nudge"])
-
-        self.assertTrue(cycle.sm.request_pause())
-        cycle._enter_pause_frame()
-        cycle.nudge_belt("-")
-        status = cycle._build_status()
-        self.assertTrue(status["pause"]["active"])
-        self.assertTrue(status["controls"]["nudge"])
-        self.assertTrue(status["controls"]["resume"])
-        self.assertTrue(status["controls"]["stop"])
-        self.assertEqual(status["pause"]["nudge_offset"], -500)
-        self.assertEqual(status["pause"]["nudge_limit_steps"], 1000)
-        self.assertEqual(status["pause"]["remaining_backward"], 500)
-        self.assertEqual(status["pause"]["remaining_forward"], 1500)
-        cycle._stop_pause_frame_loop()
-
-    def test_fault_clears_pause_request(self):
-        cycle = self.make_cycle(FakeConveyor(fail_move=True), jog=FakeJog())
-        self.assertTrue(cycle.request_start())
-        self.assertTrue(cycle.request_pause())
-        cycle._run_once_safe()
-        self.assertEqual(cycle.sm.state, State.FAULT)
-        self.assertFalse(cycle._pause_requested.is_set())
-        self.assertFalse(cycle._pause_frame_active)
 
     def test_stop_on_empty_line_does_not_move_conveyor(self):
         cycle = self.make_cycle()
