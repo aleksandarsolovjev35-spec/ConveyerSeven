@@ -250,7 +250,7 @@ class CoreCycleTests(unittest.TestCase):
             monitor=monitor,
             jog=jog,
         )
-        with patch("core.production_cycle.JOG_AUX_BATCH_INTERVAL", 0.04):
+        with patch("core.live_preview.LIVE_AUX_BATCH_INTERVAL", 0.04):
             self.assertTrue(cycle.enter_jog())
             time.sleep(0.16)
             self.assertTrue(cycle.exit_jog())

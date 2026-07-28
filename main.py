@@ -363,6 +363,7 @@ def main():
                     monitor=monitor,
                     archive=archive,
                     jog=jog,
+                    settle_seconds=calib["settle_time"],
                 )
                 monitor.start_callback = cycle.request_start
                 monitor.stop_callback  = cycle.request_stop

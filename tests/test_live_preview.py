@@ -397,13 +397,16 @@ class ProductionLivePreviewTests(unittest.TestCase):
         self.assertFalse(running["static"])
 
         # Статическая фаза: поток остановлен, кадры принадлежат правилам.
-        cycle._enter_static_phase()
+        cycle.stages.enter_motion()
+        cycle.stages.enter_settle()
+        cycle.stages.enter_capture()
         try:
             static = cycle._build_status()["live"]
             self.assertTrue(static["static"])
             self.assertFalse(static["streaming"])
+            self.assertEqual(static["stage"], "CAPTURE")
         finally:
-            cycle._leave_static_phase()
+            cycle.stages.reset()
 
         self.assertTrue(cycle._build_status()["live"]["streaming"])
         cycle.request_force_exit()
@@ -428,6 +431,24 @@ class ProductionLivePreviewTests(unittest.TestCase):
 
         cycle.request_force_exit()
         cycle.live.stop()
+
+    def test_failure_inside_capture_releases_cameras_and_resets_stage(self):
+        """Падение на съёмке не должно оставить камеры за инспекцией."""
+
+        class ExplodingCameras(TrackingCameras):
+            def capture_all(self):
+                raise RuntimeError("camera exploded during capture")
+
+        cameras = ExplodingCameras()
+        cycle = self.make_cycle(cameras, RecordingMonitor())
+        self.assertTrue(cycle.request_start())
+
+        cycle._run_once_safe()
+
+        self.assertEqual(cycle.state, "FAULT")
+        self.assertEqual(cycle.stages.stage.value, "IDLE")
+        self.assertFalse(cycle.stages.static)
+        self.assertFalse(cycle.live.gate.paused)
 
     def test_live_preview_stops_after_force_exit(self):
         cameras = TrackingCameras()

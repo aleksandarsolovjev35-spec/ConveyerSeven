@@ -112,6 +112,9 @@ class LivePreview:
         self._get_active_role = get_active_role
         self.gate = gate if gate is not None else LiveCaptureGate()
 
+        # _lifecycle_lock сериализует start/stop целиком; _state_lock
+        # защищает только поля, которые читают рабочие потоки и UI.
+        self._lifecycle_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._threads = []
@@ -146,47 +149,61 @@ class LivePreview:
     # Управление потоками
 
     def start(self) -> bool:
-        with self._state_lock:
-            if self._threads:
-                return False
-            self._stop_event.clear()
-            self._frame_times.clear()
-            self._threads = [
-                threading.Thread(
-                    target=self._selected_loop,
-                    daemon=True,
-                    name="live-selected-camera",
-                ),
-                threading.Thread(
-                    target=self._auxiliary_loop,
-                    daemon=True,
-                    name="live-aux-cameras",
-                ),
-            ]
-            threads = list(self._threads)
-        self.clear_overlays()
-        for thread in threads:
-            thread.start()
-        print("[LIVE] preview started")
-        return True
+        """Запустить потоки просмотра. Повторный вызов ничего не делает.
+
+        ``_lifecycle_lock`` сериализует start и stop целиком: иначе старт
+        мог бы поднять потоки на ещё не снятом стоп-сигнале предыдущей
+        остановки и мгновенно их погасить.
+        """
+        with self._lifecycle_lock:
+            with self._state_lock:
+                if self._threads:
+                    return False
+                self._stop_event.clear()
+                self._frame_times.clear()
+                self._error = None
+                self._threads = [
+                    threading.Thread(
+                        target=self._selected_loop,
+                        daemon=True,
+                        name="live-selected-camera",
+                    ),
+                    threading.Thread(
+                        target=self._auxiliary_loop,
+                        daemon=True,
+                        name="live-aux-cameras",
+                    ),
+                ]
+                threads = list(self._threads)
+            self.clear_overlays()
+            for thread in threads:
+                thread.start()
+            print("[LIVE] preview started")
+            return True
 
     def stop(self):
-        with self._state_lock:
-            threads = list(self._threads)
-            self._threads = []
-        if not threads:
-            return
-        self._stop_event.set()
-        deadline = time.monotonic() + LIVE_THREAD_JOIN_TIMEOUT
-        for thread in threads:
-            if thread.is_alive():
+        """Остановить потоки просмотра и дождаться их завершения."""
+        with self._lifecycle_lock:
+            # Стоп-сигнал выставляется до снятия списка потоков, иначе
+            # параллельный start() увидел бы пустой список и поднял новые
+            # потоки, которые тут же погасил бы наш set().
+            self._stop_event.set()
+            with self._state_lock:
+                threads = list(self._threads)
+                self._threads = []
+            if not threads:
+                self._stop_event.clear()
+                return
+            deadline = time.monotonic() + LIVE_THREAD_JOIN_TIMEOUT
+            for thread in threads:
                 thread.join(max(0.0, deadline - time.monotonic()))
                 if thread.is_alive():
                     print(
                         f"[LIVE] поток {thread.name} не остановился за "
                         f"{LIVE_THREAD_JOIN_TIMEOUT}s"
                     )
-        print("[LIVE] preview stopped")
+            self._stop_event.clear()
+            print("[LIVE] preview stopped")
 
     # Пауза на время статической инспекции
 

@@ -505,6 +505,57 @@ class CameraAndConfigTests(unittest.TestCase):
             finally:
                 manager.release()
 
+    def test_capture_timeout_does_not_race_with_late_worker_writes(self):
+        """Итог захвата не должен зависеть от опоздавших воркеров.
+
+        Раньше таймаут дописывал ошибки в общий словарь без блокировки,
+        пока рабочие потоки продолжали писать туда же.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            manager = CameraManager(
+                mapping_path,
+                capture_factory=lambda camera_id: BlockingAfterWarmupCapture(
+                    bright, block=True,
+                ),
+            )
+            try:
+                with (
+                    patch("vision.camera_manager._CAPTURE_TIMEOUT", 0.05),
+                    self.assertRaisesRegex(RuntimeError, "capture timeout"),
+                ):
+                    manager.capture_all()
+                # Опоздавшие воркеры завершаются уже после исключения и не
+                # должны ничего менять в уже отданном результате.
+                time.sleep(0.4)
+                with self.assertRaisesRegex(RuntimeError, "заблокирован"):
+                    manager.capture_all()
+            finally:
+                manager.release()
+
+    def test_release_does_not_block_on_a_stuck_camera_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            manager = CameraManager(
+                mapping_path,
+                capture_factory=lambda camera_id: BlockingAfterWarmupCapture(
+                    bright, block=True,
+                ),
+            )
+            with (
+                patch("vision.camera_manager._CAPTURE_TIMEOUT", 0.05),
+                self.assertRaises(RuntimeError),
+            ):
+                manager.capture_all()
+
+            started = time.monotonic()
+            manager.release()
+            self.assertLess(time.monotonic() - started, 0.5)
+
     def test_camera_mapping_rejects_duplicates(self):
         with tempfile.TemporaryDirectory() as temp:
             mapping = self.mapping()
@@ -521,6 +572,27 @@ class CameraAndConfigTests(unittest.TestCase):
                 load_calibration(path)
             path.write_text(json.dumps({"conveyor_speed": 1}), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "missing"):
+                load_calibration(path)
+
+    def test_settle_time_is_optional_and_validated(self):
+        """Старые calibration.json без settle_time должны читаться."""
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "calibration.json"
+
+            path.write_text(json.dumps(DEFAULTS), encoding="utf-8")
+            self.assertEqual(load_calibration(path)["settle_time"], 0.15)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "settle_time": 0.4}), encoding="utf-8"
+            )
+            self.assertEqual(load_calibration(path)["settle_time"], 0.4)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "settle_time": 99.0}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "settle_time"):
                 load_calibration(path)
 
 

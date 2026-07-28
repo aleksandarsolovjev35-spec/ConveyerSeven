@@ -3,14 +3,10 @@ import threading
 import traceback
 from collections import deque
 
-from core.live_preview import (
-    LIVE_AUX_BATCH_INTERVAL,
-    LIVE_FRAME_INTERVAL,
-    LIVE_THREAD_JOIN_TIMEOUT,
-    LivePreview,
-)
+from core.live_preview import LivePreview
 from core.rule_report import build_rule_report_row
 from core.state_machine import StateMachine, State
+from core.step_stages import StepSequencer
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
@@ -27,11 +23,6 @@ from domain.part import (
 
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
-
-# Совместимость имён: параметры live-просмотра заданы в core.live_preview.
-JOG_FRAME_INTERVAL = LIVE_FRAME_INTERVAL
-JOG_AUX_BATCH_INTERVAL = LIVE_AUX_BATCH_INTERVAL
-JOG_THREAD_JOIN_TIMEOUT = LIVE_THREAD_JOIN_TIMEOUT
 
 
 class ProductionCycle:
@@ -54,6 +45,7 @@ class ProductionCycle:
         monitor=None,
         archive=None,
         jog=None,
+        settle_seconds=None,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -120,8 +112,12 @@ class ProductionCycle:
             get_active_role=self._get_active_camera_role,
         )
 
-        # True, пока идёт статическая фаза шага и live-чтения запрещены.
-        self._static_phase = False
+        # Фазы шага и передача камер между live-просмотром и инспекцией.
+        self.stages = (
+            StepSequencer(self.live)
+            if settle_seconds is None
+            else StepSequencer(self.live, settle_seconds=settle_seconds)
+        )
 
         # JOG
         self.jog_active: bool = False
@@ -605,7 +601,7 @@ class ProductionCycle:
 
     def request_force_exit(self):
         self._cancel_motion.set()
-        self._static_phase = False
+        self.stages.reset()
         self.live.reset_pause()
         accepted = self.sm.request_force_exit()
         if self.jog_active:
@@ -702,7 +698,7 @@ class ProductionCycle:
         finally:
             self._shutdown = True
             self._cancel_motion.set()
-            self._static_phase = False
+            self.stages.reset()
             self.live.reset_pause()
             self.live.stop()
             try:
@@ -719,7 +715,7 @@ class ProductionCycle:
         self._cancel_motion.set()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
-        self._static_phase = False
+        self.stages.reset()
         self.live.reset_pause()
         self.live.stop()
         self._fault_reason = reason
@@ -781,45 +777,38 @@ class ProductionCycle:
 
     # Статическая фаза шага
 
-    def _enter_static_phase(self):
-        """Запретить live-чтения: дальше кадры принадлежат инспекции.
-
-        Держится до начала следующего движения, поэтому геометрия правил
-        остаётся на экране ровно на тех кадрах, по которым посчитана.
-        """
-        if self._static_phase:
-            return
-        if not self.live.pause():
-            raise RuntimeError(
-                "Live-просмотр не освободил камеры перед инспекцией"
-            )
-        self._static_phase = True
-
-    def _leave_static_phase(self):
-        """Вернуть камеры live-просмотру перед движением ленты."""
-        if not self._static_phase:
-            return
-        self._static_phase = False
-        self.live.resume()
-
     # Core step
 
     def _run_once(self):
+        """Один шаг линии: движение, затухание, съёмка, анализ, публикация.
+
+        Владелец камер меняется только на границах фаз, поэтому кадры для
+        defect rules физически не могут быть сняты во время движения.
+        """
         self._check_motion_cancelled()
         print(f"\nШАГ {self.current_step + 1}")
 
-        # Фиксируем право принять INPUT в начале физического шага. Если STOP
-        # придёт уже во время движения, вошедшая этим шагом деталь всё равно
-        # будет проинспектирована и останется синхронизированной с ячейкой.
+        # Право принять INPUT фиксируется до движения: если STOP придёт уже
+        # во время проезда, вошедшая этим шагом деталь всё равно будет
+        # проинспектирована и останется синхронной со своей ячейкой.
         accept_input_for_this_step = self.sm.accepts_new_parts
 
         self._last_vision_results = {}
         self._last_rule_results = []
 
-        # Шаг начинается с движения: возвращаем камеры live-просмотру и
-        # снимаем разметку прошлого шага — она построена по статичному
-        # кадру и на движущемся изображении указывала бы мимо.
-        self._leave_static_phase()
+        pending_id = self._stage_motion()
+        self._stage_settle(pending_id)
+        frame_runs = self._stage_capture()
+        display_frames = self._stage_analysis(
+            frame_runs, accept_input_for_this_step,
+        )
+        self._stage_publish(display_frames)
+
+    def _stage_motion(self):
+        """MOTION: подготовить маршрут и переместить ленту на шаг."""
+        self.stages.enter_motion()
+        # Разметка прошлого шага построена по статичному кадру и на
+        # движущемся изображении указывала бы мимо детали.
         self.live.clear_overlays()
 
         self._pending_drop = self._find_pending_drop()
@@ -842,8 +831,13 @@ class ProductionCycle:
         self.conveyor.move_step()
         self.conveyor.wait_stop(progress_callback=self._on_conveyor_progress)
         self._check_motion_cancelled()
-        # Commit the logical position only after confirmed physical completion.
+        # Логическая позиция фиксируется только после подтверждения
+        # физического завершения движения.
         self.current_step += 1
+        return pending_id
+
+    def _stage_settle(self, pending_id):
+        """SETTLE: сброс детали и пауза на затухание вибрации."""
         self._set_process(
             "CONVEYOR_CONFIRMED",
             "Позиции деталей подтверждены контроллером",
@@ -861,10 +855,17 @@ class ProductionCycle:
         self._execute_drop()
         self._check_motion_cancelled()
 
-        # Лента уже стоит: входим в статическую фазу. Live-чтения запрещены
-        # до начала следующего движения, поэтому кадры для правил снимаются
-        # с неподвижной детали, а их разметка остаётся на экране.
-        self._enter_static_phase()
+        self._set_process(
+            "SETTLE",
+            "Ожидание затухания вибрации перед съёмкой",
+            positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+        )
+        self.stages.enter_settle()
+        self._check_motion_cancelled()
+
+    def _stage_capture(self):
+        """CAPTURE: три синхронных набора кадров неподвижной детали."""
+        self.stages.enter_capture()
 
         frame_runs = []
         for run_number in range(1, INSPECTION_RUNS + 1):
@@ -876,13 +877,17 @@ class ProductionCycle:
             )
             frame_runs.append(self.cameras.capture_all())
             self._check_motion_cancelled()
+        return frame_runs
+
+    def _stage_analysis(self, frame_runs, accept_input_for_this_step):
+        """ANALYSIS: модели и defect rules по уже снятым кадрам."""
+        self.stages.enter_analysis()
 
         # По умолчанию UI получает самый свежий набор. Для каждой реально
         # выполненной стадии он заменяется evidence-кадрами, выбранными
         # majority-алгоритмом как наиболее согласованными с итогом.
         display_frames = dict(frame_runs[-1])
 
-        # Input inspection: part_presence и каждое defect rule голосуют 2/3.
         if accept_input_for_this_step:
             self._set_process(
                 "INPUT_ANALYSIS",
@@ -903,6 +908,11 @@ class ProductionCycle:
         if spider_result is not None:
             display_frames.update(spider_result.raw_frames)
         self._check_motion_cancelled()
+        return display_frames
+
+    def _stage_publish(self, display_frames):
+        """PUBLISH: маршрут годных деталей и вывод результата на экран."""
+        self.stages.enter_publish()
 
         self._set_process(
             "ROUTE_CHECK",
@@ -1197,7 +1207,7 @@ class ProductionCycle:
         elif new == State.STOPPED:
             # Линия пуста: последние кадры с разметкой остаются на экране,
             # пока оператор не войдёт в JOG или не запустит цикл заново.
-            self._leave_static_phase()
+            self.stages.reset()
             self.live.stop()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
@@ -1384,9 +1394,15 @@ class ProductionCycle:
 
         sm_snap = self.sm.get_snapshot()
 
+        # Статус собирается из потоков UI, пока цикл меняет линию. Снимок
+        # списка и шага берётся один раз, иначе in_line и line_parts могли
+        # бы описывать разные моменты времени.
+        parts_snapshot = list(self.parts)
+        step_snapshot = self.current_step
+
         line_parts = []
-        for part in self.parts:
-            position = self.current_step - part.step_created
+        for part in parts_snapshot:
+            position = step_snapshot - part.step_created
             position = max(0, min(position, self.OFFSET_REJECT))
             line_parts.append({
                 "id": part.id,
@@ -1401,7 +1417,7 @@ class ProductionCycle:
         jog_error = jog_snapshot.get("error") or self.live.error
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
-            and not self.parts
+            and not parts_snapshot
             and not jog_busy
             and not jog_error
             and not operation_busy
@@ -1412,7 +1428,7 @@ class ProductionCycle:
         controls = {
             "start": (
                 state_name in ("IDLE", "STOPPED")
-                and not self.parts
+                and not parts_snapshot
                 and not jog_busy
                 and not jog_error
                 and not operation_busy
@@ -1448,8 +1464,8 @@ class ProductionCycle:
             "state": state_name,
             "exit_requested": sm_snap["exit_requested"],
             "fault_reason": self._fault_reason,
-            "step": self.current_step,
-            "in_line": len(self.parts),
+            "step": step_snapshot,
+            "in_line": len(parts_snapshot),
             "line_parts": line_parts,
             "total": self.part_counter,
             "good": self.good_count,
@@ -1472,8 +1488,9 @@ class ProductionCycle:
             # статических этапах, по которым считаются defect rules.
             "live": {
                 "running": self.live.running,
-                "streaming": self.live.running and not self._static_phase,
-                "static": self._static_phase,
+                "streaming": self.live.running and not self.stages.static,
+                "static": self.stages.static,
+                "stage": self.stages.stage.value,
                 "fps": self._current_live_fps(),
                 "error": self.live.error,
             },

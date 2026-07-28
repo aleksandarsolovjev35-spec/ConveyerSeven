@@ -1,6 +1,8 @@
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import cv2
 import numpy as np
@@ -39,11 +41,36 @@ class CameraManager:
         self._failed_reason = None
         self._config_file = config_file
         self._capture_factory = capture_factory or self._open_capture
+        self._pool = None
         self.load_config()
         self._role_locks = {
             role: threading.Lock() for role in self.mapping
         }
-        self.open_cameras()
+        # Пул живёт всё время работы менеджера: захват набора кадров
+        # происходит несколько раз на каждый шаг линии, и создавать семь
+        # потоков заново на каждый захват незачем.
+        self._pool = ThreadPoolExecutor(
+            max_workers=max(1, len(self.mapping)),
+            thread_name_prefix="camera-read",
+        )
+        try:
+            self.open_cameras()
+        except Exception:
+            self._shutdown_pool()
+            raise
+
+    def _require_pool(self) -> ThreadPoolExecutor:
+        pool = self._pool
+        if pool is None:
+            raise RuntimeError("CameraManager уже закрыт")
+        return pool
+
+    def _shutdown_pool(self):
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            # Не ждём зависшие чтения драйвера: release() не должен
+            # блокироваться на камере, которая перестала отвечать.
+            pool.shutdown(wait=False)
 
     @staticmethod
     def _open_capture(camera_id):
@@ -223,9 +250,14 @@ class CameraManager:
     def capture_roles(self, roles) -> dict:
         """Параллельно прочитать указанные независимые камеры.
 
-        У каждой VideoCapture свой lock. Поэтому LIVE выбранной камеры не
-        блокируется чтением остальных шести камер, а одна и та же камера
-        никогда не читается конкурентно из двух потоков.
+        У каждой VideoCapture свой lock, поэтому одна камера никогда не
+        читается двумя потоками сразу, а чтение выбранной роли не ждёт
+        остальных шести.
+
+        Результаты собираются через futures: истёкший таймаут не бросает
+        исключение поверх ещё работающих воркеров. Зависшая камера
+        латчит менеджер, и следующий вызов сразу получит отказ, вместо
+        того чтобы копить фоновые чтения одного и того же устройства.
         """
         requested = tuple(dict.fromkeys(roles))
         if not requested:
@@ -235,51 +267,36 @@ class CameraManager:
             raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
         self._ensure_usable()
 
+        def _grab(role):
+            with self._role_locks[role]:
+                self._ensure_usable()
+                cap = self.cameras.get(role)
+                if cap is None:
+                    raise RuntimeError(f"Камера {role} не найдена")
+                ok, frame = cap.read()
+            if not ok or frame is None:
+                raise RuntimeError("read returned no frame")
+            error = self._frame_error(frame)
+            if error is not None:
+                raise RuntimeError(error)
+            return frame
+
+        pool = self._require_pool()
+        futures = {role: pool.submit(_grab, role) for role in requested}
+
         errors = {}
         results = {}
-        result_lock = threading.Lock()
-
-        def _grab(role):
-            frame = None
-            error = None
-            try:
-                with self._role_locks[role]:
-                    self._ensure_usable()
-                    cap = self.cameras.get(role)
-                    if cap is None:
-                        raise RuntimeError(f"Камера {role} не найдена")
-                    ok, frame = cap.read()
-                error = (
-                    None
-                    if ok and frame is not None
-                    else "read returned no frame"
-                )
-                if error is None:
-                    error = self._frame_error(frame)
-            except Exception as exc:
-                error = f"{type(exc).__name__}: {exc}"
-            with result_lock:
-                if error is None:
-                    results[role] = frame
-                else:
-                    errors[role] = error
-
-        threads = []
-        for role in requested:
-            thread = threading.Thread(
-                target=_grab,
-                args=(role,),
-                daemon=True,
-                name=f"capture-{role}",
-            )
-            threads.append((role, thread))
-            thread.start()
-
         deadline = time.monotonic() + _CAPTURE_TIMEOUT
-        for role, thread in threads:
-            thread.join(max(0.0, deadline - time.monotonic()))
-            if thread.is_alive():
+        for role, future in futures.items():
+            timeout = max(0.0, deadline - time.monotonic())
+            try:
+                results[role] = future.result(timeout=timeout)
+            except FuturesTimeoutError:
+                # Воркер продолжает удерживать role-lock. Отменить чтение
+                # драйвера нельзя, поэтому менеджер выводится из работы.
                 errors[role] = "capture timeout"
+            except Exception as exc:
+                errors[role] = f"{type(exc).__name__}: {exc}"
 
         if errors:
             details = ", ".join(
@@ -287,13 +304,6 @@ class CameraManager:
             )
             self._latch_failure(details)
             raise RuntimeError(f"Ошибка камер: {details}")
-        if set(results) != set(requested):
-            details = (
-                f"incomplete subset: expected={sorted(requested)}, "
-                f"actual={sorted(results)}"
-            )
-            self._latch_failure(details)
-            raise RuntimeError(f"Неполный набор кадров: {details}")
         return results
 
     def capture_single(self, role: str):
@@ -305,6 +315,7 @@ class CameraManager:
         # здесь не нужен: на headless-сборках он лишь бросает исключение.
         with self._state_lock:
             self._closed = True
+        self._shutdown_pool()
         for cap in list(self.cameras.values()):
             try:
                 cap.release()

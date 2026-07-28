@@ -16,26 +16,37 @@ DEFAULTS = {
     "normal_steps":           19048,
 }
 
-_INTEGER_KEYS = tuple(key for key in DEFAULTS if key != "drop_time")
+# Необязательные поля: старые calibration.json остаются валидными.
+OPTIONAL_DEFAULTS = {
+    # Пауза между подтверждённой остановкой ленты и первым кадром
+    # инспекции: контроллер подтверждает остановку по счётчику шагов,
+    # а механика в этот момент ещё качается.
+    "settle_time": 0.15,
+}
+
+_FLOAT_KEYS = ("drop_time", "settle_time")
+_INTEGER_KEYS = tuple(key for key in DEFAULTS if key not in _FLOAT_KEYS)
 
 
 def _validate(data: dict) -> dict:
     if not isinstance(data, dict):
         raise ValueError("calibration.json должен содержать объект")
     missing = set(DEFAULTS) - set(data)
-    extra = set(data) - set(DEFAULTS)
+    extra = set(data) - set(DEFAULTS) - set(OPTIONAL_DEFAULTS)
     if missing or extra:
         raise ValueError(
             f"Неверные поля calibration: missing={sorted(missing)}, "
             f"extra={sorted(extra)}"
         )
+    data = {**OPTIONAL_DEFAULTS, **data}
     for key in _INTEGER_KEYS:
         if type(data[key]) is not int:
             raise ValueError(f"{key} должен быть int")
-    if type(data["drop_time"]) not in (int, float):
-        raise ValueError("drop_time должен быть числом")
-    if not math.isfinite(float(data["drop_time"])):
-        raise ValueError("drop_time должен быть конечным")
+    for key in _FLOAT_KEYS:
+        if type(data[key]) not in (int, float):
+            raise ValueError(f"{key} должен быть числом")
+        if not math.isfinite(float(data[key])):
+            raise ValueError(f"{key} должен быть конечным")
 
     positive = (
         "conveyor_speed",
@@ -59,6 +70,8 @@ def _validate(data: dict) -> dict:
         raise ValueError("BAD и CLEANUP позиции должны различаться")
     if not 0.05 <= float(data["drop_time"]) <= 30.0:
         raise ValueError("drop_time должен быть в диапазоне 0.05..30 секунд")
+    if not 0.0 <= float(data["settle_time"]) <= 5.0:
+        raise ValueError("settle_time должен быть в диапазоне 0..5 секунд")
     return dict(data)
 
 
