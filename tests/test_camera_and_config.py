@@ -312,6 +312,83 @@ class CameraAndConfigTests(unittest.TestCase):
             self.assertTrue(captures)
             self.assertTrue(all(capture.released for capture in captures))
 
+    def test_cameras_open_in_parallel_instead_of_one_after_another(self):
+        """Семь камер должны открываться одновременно, а не по очереди."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            open_delay = 0.2
+            concurrent = []
+            in_flight = {"count": 0}
+            lock = threading.Lock()
+
+            def factory(camera_id):
+                with lock:
+                    in_flight["count"] += 1
+                    concurrent.append(in_flight["count"])
+                # Инициализация драйвера камеры заметно небыстрая.
+                time.sleep(open_delay)
+                with lock:
+                    in_flight["count"] -= 1
+                return FakeCapture(bright)
+
+            started = time.monotonic()
+            with patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            elapsed = time.monotonic() - started
+            try:
+                self.assertEqual(set(manager.cameras), set(REQUIRED_ROLES))
+                # Последовательное открытие заняло бы 7 * open_delay.
+                self.assertLess(elapsed, open_delay * len(REQUIRED_ROLES) * 0.6)
+                self.assertGreater(max(concurrent), 1)
+            finally:
+                manager.release()
+
+    def test_parallel_open_preserves_mapping_role_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+
+            def factory(camera_id):
+                # Обратный порядок готовности не должен влиять на карту ролей.
+                time.sleep(0.02 * (len(mapping) - camera_id))
+                return FakeCapture(bright)
+
+            with patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                self.assertEqual(list(manager.cameras), list(mapping))
+            finally:
+                manager.release()
+
+    def test_parallel_open_reports_every_failed_camera_and_releases_all(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            broken_ids = {mapping["TOP"], mapping["SPIDER_IN"]}
+            captures = []
+
+            def factory(camera_id):
+                capture = FakeCapture(
+                    bright, opened=camera_id not in broken_ids
+                )
+                captures.append(capture)
+                return capture
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001),
+                self.assertRaises(RuntimeError) as error,
+            ):
+                CameraManager(mapping_path, capture_factory=factory)
+
+            message = str(error.exception)
+            self.assertIn("TOP", message)
+            self.assertIn("SPIDER_IN", message)
+            self.assertTrue(all(capture.released for capture in captures))
+
     def test_camera_preflight_waits_for_delayed_exposure(self):
         with tempfile.TemporaryDirectory() as temp:
             mapping = self.mapping()
@@ -428,6 +505,57 @@ class CameraAndConfigTests(unittest.TestCase):
             finally:
                 manager.release()
 
+    def test_capture_timeout_does_not_race_with_late_worker_writes(self):
+        """Итог захвата не должен зависеть от опоздавших воркеров.
+
+        Раньше таймаут дописывал ошибки в общий словарь без блокировки,
+        пока рабочие потоки продолжали писать туда же.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            manager = CameraManager(
+                mapping_path,
+                capture_factory=lambda camera_id: BlockingAfterWarmupCapture(
+                    bright, block=True,
+                ),
+            )
+            try:
+                with (
+                    patch("vision.camera_manager._CAPTURE_TIMEOUT", 0.05),
+                    self.assertRaisesRegex(RuntimeError, "capture timeout"),
+                ):
+                    manager.capture_all()
+                # Опоздавшие воркеры завершаются уже после исключения и не
+                # должны ничего менять в уже отданном результате.
+                time.sleep(0.4)
+                with self.assertRaisesRegex(RuntimeError, "заблокирован"):
+                    manager.capture_all()
+            finally:
+                manager.release()
+
+    def test_release_does_not_block_on_a_stuck_camera_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            manager = CameraManager(
+                mapping_path,
+                capture_factory=lambda camera_id: BlockingAfterWarmupCapture(
+                    bright, block=True,
+                ),
+            )
+            with (
+                patch("vision.camera_manager._CAPTURE_TIMEOUT", 0.05),
+                self.assertRaises(RuntimeError),
+            ):
+                manager.capture_all()
+
+            started = time.monotonic()
+            manager.release()
+            self.assertLess(time.monotonic() - started, 0.5)
+
     def test_camera_mapping_rejects_duplicates(self):
         with tempfile.TemporaryDirectory() as temp:
             mapping = self.mapping()
@@ -444,6 +572,27 @@ class CameraAndConfigTests(unittest.TestCase):
                 load_calibration(path)
             path.write_text(json.dumps({"conveyor_speed": 1}), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "missing"):
+                load_calibration(path)
+
+    def test_settle_time_is_optional_and_validated(self):
+        """Старые calibration.json без settle_time должны читаться."""
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "calibration.json"
+
+            path.write_text(json.dumps(DEFAULTS), encoding="utf-8")
+            self.assertEqual(load_calibration(path)["settle_time"], 0.15)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "settle_time": 0.4}), encoding="utf-8"
+            )
+            self.assertEqual(load_calibration(path)["settle_time"], 0.4)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "settle_time": 99.0}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "settle_time"):
                 load_calibration(path)
 
 

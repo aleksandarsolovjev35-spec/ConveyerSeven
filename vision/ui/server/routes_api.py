@@ -1,5 +1,3 @@
-# vision/ui/server/routes_api.py
-
 import asyncio
 
 from fastapi import HTTPException
@@ -168,7 +166,7 @@ def setup_api_routes(app, server):
             command,
         )
 
-    # ─── JOG ────────────────────────────────────────────────
+    # JOG
 
     @app.post("/api/jog/enter")
     async def api_jog_enter():
@@ -199,7 +197,7 @@ def setup_api_routes(app, server):
         )
 
     @app.post("/api/jog/hold/release")
-    async def api_jog_hold_release(payload: dict = None):
+    async def api_jog_hold_release(payload: dict | None = None):
         reason = "button released"
         if isinstance(payload, dict) and payload.get("reason"):
             reason = str(payload["reason"])[:100]

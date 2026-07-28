@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_input_window_geometry.py
-
 import math
 
 import cv2
@@ -12,15 +10,15 @@ class InputWindowGeometryRule(BaseRule):
     """Проверка геометрии семи областей flatness в абсолютных пикселях.
 
     Для каждой segmentation mask измеряются:
-      T — верхняя граница mask → нижний край перекладины;
-      B — нижний край перекладины → нижняя граница mask.
+      T — верхняя граница mask -> нижний край перекладины;
+      B — нижний край перекладины -> нижняя граница mask.
 
     T и B независимо сравниваются со своими диапазонами в px. Для
     INPUT_LEFT и INPUT_RIGHT используются отдельные обязательные параметры.
     """
 
     name = "window_geometry"
-    ROLES = ["INPUT_LEFT", "INPUT_RIGHT"]
+    ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     TARGET_CLASS = "flatness"
 
     def check(self, vision_results: dict, **kwargs) -> RuleResult:

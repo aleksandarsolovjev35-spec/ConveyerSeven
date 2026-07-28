@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 dump_project.py — дамп проекта в один TXT файл (дерево + содержимое файлов).
@@ -45,10 +44,7 @@ def is_hidden(path: Path) -> bool:
 
 
 def should_exclude_by_patterns(rel_posix: str, patterns: list[str]) -> bool:
-    for pat in patterns:
-        if fnmatch.fnmatch(rel_posix, pat):
-            return True
-    return False
+    return any(fnmatch.fnmatch(rel_posix, pat) for pat in patterns)
 
 
 def build_tree(root: Path, files: list[Path]) -> str:
@@ -221,8 +217,9 @@ def main():
             try:
                 if p.resolve() == output:
                     continue
-            except Exception:
-                pass
+            except OSError:
+                # Битая ссылка или недоступный путь: файл всё равно пропускаем.
+                continue
 
             if args.no_hidden and is_hidden(p.relative_to(root)):
                 continue

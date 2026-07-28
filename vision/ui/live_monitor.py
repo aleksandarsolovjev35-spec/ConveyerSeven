@@ -1,5 +1,3 @@
-# vision/ui/live_monitor.py
-
 from vision.ui.server.server import UIServer
 
 
@@ -32,7 +30,7 @@ class LiveMonitor:
         self.selected_model_analysis_callback = None
         self.selected_model_release_callback = None
 
-        # ── JOG callbacks ────────────────────────────────────────
+        # JOG callbacks
         self.jog_enter_callback = None
         self.jog_exit_callback = None
         self.jog_hold_start_callback = None
@@ -45,15 +43,15 @@ class LiveMonitor:
         self._webview_window = None
         self._close_requested = False
 
-    # ─── Public API ──────────────────────────────────────────────
+    # Public API
 
     def set_splash_status(self, text: str):
         self.server.set_splash_status(text)
 
-    def boot_step_start(self, key: str, message: str = None):
+    def boot_step_start(self, key: str, message: str | None = None):
         self.server.boot_step_start(key, message)
 
-    def boot_step_done(self, key: str, message: str = None):
+    def boot_step_done(self, key: str, message: str | None = None):
         self.server.boot_step_done(key, message)
 
     def boot_step_error(self, key: str, message: str):
@@ -91,7 +89,7 @@ class LiveMonitor:
             if server_thread.is_alive():
                 print("[UI] Server thread did not stop")
 
-    # ─── Internal ────────────────────────────────────────────────
+    # Internal
 
     def _bind_server_callbacks(self):
         self.server.on_start = (

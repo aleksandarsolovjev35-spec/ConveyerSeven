@@ -374,7 +374,7 @@ class SavedImagesAnalysisTests(unittest.TestCase):
                 "bottom_fail": False,
             }
             for index, (top, bottom) in enumerate(
-                zip(top_values, bottom_values),
+                zip(top_values, bottom_values, strict=True),
                 start=1,
             )
         ]

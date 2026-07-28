@@ -1,5 +1,3 @@
-# vision/overlay/renderers/top_sinks.py
-
 import cv2
 import numpy as np
 
@@ -31,7 +29,7 @@ class TopSinksRenderer:
         if drawing.get("draw_contact_references", True):
             masks = drawing.get("contact_masks") or []
             boxes = drawing.get("contact_bboxes") or []
-            for mask, bbox in zip(masks, boxes):
+            for mask, bbox in zip(masks, boxes, strict=False):
                 points = TopSinksRenderer._points(mask, bbox)
                 cv2.polylines(
                     img, [points], True, COLOR_SKIP, LINE_THIN,

@@ -1,5 +1,3 @@
-# vision/overlay/renderers/platform_overlap.py
-
 import cv2
 import numpy as np
 

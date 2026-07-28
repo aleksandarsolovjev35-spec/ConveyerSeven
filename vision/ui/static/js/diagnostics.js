@@ -165,7 +165,7 @@ async function runPrestartDiagnostic(kind) {
             status: 'RUNNING',
             message: kind === 'CAMERAS'
                 ? 'Проверка семи камер'
-                : 'Камеры → модели → defect rules',
+                : 'Камеры -> модели -> defect rules',
         },
     });
     const endpoint = kind === 'CAMERAS'
@@ -254,8 +254,11 @@ function updateSelectedAnalysisStatus(ls) {
     const wasActive = state.selectedAnalysisActive;
     state.selectedAnalysisActive = selected.active === true;
     state.selectedAnalysisRole = selected.role || null;
-    const liveFps = Number((ls.jog || {}).live_fps || 0);
-    state.liveFps = liveFps;
+    const live = ls.live || {};
+    // fps публикуется и в live-блоке, и в jog для обратной совместимости.
+    state.liveFps = Number(live.fps || (ls.jog || {}).live_fps || 0);
+    state.liveStreaming = live.streaming === true;
+    state.liveStatic = live.static === true;
 
     const controls = ls.controls || {};
     const allowed = state.selectedAnalysisActive

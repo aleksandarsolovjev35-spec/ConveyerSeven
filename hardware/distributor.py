@@ -1,5 +1,3 @@
-# hardware/distributor.py
-
 import time
 from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP
 
@@ -8,7 +6,7 @@ class Distributor:
     """
     Распределитель деталей на линии.
 
-    DIST1 (axis 0) — заслонка сброса: IDLE→OPEN→CLOSED
+    DIST1 (axis 0) — заслонка сброса: IDLE->OPEN->CLOSED
     DIST2 (axis 1) — направляющая: BAD / CLEANUP позиции
     """
 
@@ -50,15 +48,7 @@ class Distributor:
         self.on_state_changed = None
         self.cancel_check = None
 
-    # ─── Properties for UI ───────────────────────────────────────────
-
-    @property
-    def dist1_position(self) -> int:
-        return self.dist1.position
-
-    @property
-    def dist2_position(self) -> int:
-        return self.dist2.position
+    # Properties for UI
 
     @property
     def status(self) -> dict:
@@ -78,7 +68,7 @@ class Distributor:
             "last_distributor_action": self.last_action,
         }
 
-    # ─── Main operations ─────────────────────────────────────────────
+    # Main operations
 
     def initialize(self):
         """Последовательно установить физический ноль обеих осей."""
@@ -136,7 +126,7 @@ class Distributor:
         self._move_dist2(category)
         self._notify()
 
-    def prepare(self, category: str, part_id: int = None):
+    def prepare(self, category: str, part_id: int | None = None):
         """Подготовить распределитель к сбросу."""
         if category not in (CATEGORY_BAD, CATEGORY_CLEANUP):
             raise ValueError(f"Unsupported distributor category: {category}")
@@ -181,7 +171,7 @@ class Distributor:
             self.last_action = "EMERGENCY STOP"
             self._notify()
 
-    # ─── Internal ────────────────────────────────────────────────────
+    # Internal
 
     def _move_dist2(self, category: str):
         if category == CATEGORY_BAD:

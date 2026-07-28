@@ -1,5 +1,3 @@
-# vision/overlay/renderers/construction_error.py
-
 from vision.overlay.renderers.primitives import COLOR_FAIL, DrawPrimitives
 
 

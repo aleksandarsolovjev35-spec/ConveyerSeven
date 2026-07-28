@@ -88,16 +88,23 @@ function showJogPanel(active) {
 function applyLiveBadge(active) {
     if (!els.modeBadge) return;
     els.modeBadge.classList.remove(
-        'is-faded', 'mode-live', 'mode-analysis',
+        'is-faded', 'mode-live', 'mode-analysis', 'mode-static',
     );
     if (state.selectedAnalysisActive) {
         els.modeBadge.textContent = 'АНАЛИЗ';
         els.modeBadge.classList.add('mode-analysis');
         return;
     }
-    if (active) {
+    // Живой поток идёт и в JOG, и во время движения ленты в цикле.
+    if (active || state.liveStreaming) {
         els.modeBadge.textContent = `ПОТОК · ${formatFrameRate(state.liveFps)}`;
         els.modeBadge.classList.add('mode-live');
+        return;
+    }
+    // Лента стоит: на экране статичные кадры, по которым считались правила.
+    if (state.liveStatic) {
+        els.modeBadge.textContent = 'СТОП-КАДР · ПРАВИЛА';
+        els.modeBadge.classList.add('mode-static');
         return;
     }
     els.modeBadge.textContent = '';

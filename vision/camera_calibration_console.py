@@ -40,6 +40,8 @@ ROLE_ORDER = (
     "TOP",
 )
 
+REQUIRED_CAMERA_COUNT = len(ROLE_ORDER)
+
 ROLE_LABELS = {
     "INPUT_LEFT": "ВХОД · СЛЕВА",
     "INPUT_RIGHT": "ВХОД · СПРАВА",
@@ -97,6 +99,16 @@ def _probe_capture(capture, attempts: int = 5):
     return None, error
 
 
+def _safe_release(capture) -> None:
+    """Освободить handle камеры; ошибка закрытия не должна ломать сценарий."""
+    if capture is None:
+        return
+    try:
+        capture.release()
+    except Exception as exc:
+        print(f"[CAMERA CALIBRATION] Ошибка освобождения камеры: {exc}")
+
+
 def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None):
     """Найти Camera ID, которые дают валидный production-кадр."""
 
@@ -115,21 +127,19 @@ def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None)
         except Exception as exc:
             print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
         finally:
-            if capture is not None:
-                try:
-                    capture.release()
-                except Exception:
-                    pass
+            _safe_release(capture)
     return available
 
 
 def _open_camera_pool(
     max_tested=CAMERA_SCAN_LIMIT,
-    required_count=len(ROLE_ORDER),
+    required_count=None,
     capture_factory=None,
 ):
     """Открыть только необходимое число камер и оставить handles живыми."""
 
+    if required_count is None:
+        required_count = REQUIRED_CAMERA_COUNT
     factory = capture_factory or _open_capture
     pool = {}
     for camera_id in range(int(max_tested)):
@@ -149,20 +159,13 @@ def _open_camera_pool(
         except Exception as exc:
             print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
         finally:
-            if capture is not None:
-                try:
-                    capture.release()
-                except Exception:
-                    pass
+            _safe_release(capture)
     return pool
 
 
 def _release_camera_pool(pool):
     for capture in list(pool.values()):
-        try:
-            capture.release()
-        except Exception:
-            pass
+        _safe_release(capture)
     pool.clear()
 
 
@@ -184,8 +187,8 @@ def atomic_write_mapping(path, mapping: dict):
     except Exception:
         try:
             temporary.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except OSError as exc:
+            print(f"[CAMERA CALIBRATION] Не удалён временный файл: {exc}")
         raise
     return ordered
 
@@ -235,7 +238,7 @@ class CameraCalibrationApi:
         try:
             pool = _open_camera_pool(
                 self.scan_limit,
-                required_count=len(ROLE_ORDER),
+                required_count=REQUIRED_CAMERA_COUNT,
                 capture_factory=self.capture_factory,
             )
         except Exception as exc:
@@ -489,12 +492,7 @@ class CameraCalibrationApi:
         self._preview_verified_id = None
 
     def _drop_camera_locked(self, camera_id: int):
-        capture = self._captures.pop(camera_id, None)
-        if capture is not None:
-            try:
-                capture.release()
-            except Exception:
-                pass
+        _safe_release(self._captures.pop(camera_id, None))
         if camera_id in self.available_cameras:
             self.available_cameras.remove(camera_id)
         self._clear_active_camera_locked()

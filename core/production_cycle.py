@@ -1,11 +1,16 @@
-# core/production_cycle.py
-
 import time
 import threading
 import traceback
 from collections import deque
 
+from core.live_preview import LivePreview
+from core.rule_report import build_rule_report_row
 from core.state_machine import StateMachine, State
+from core.step_stages import (
+    STAGE_SETTLE_SECONDS,
+    STAGE_TRACE_SECONDS,
+    StepSequencer,
+)
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
@@ -22,11 +27,6 @@ from domain.part import (
 
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
-
-LIVE_TARGET_FPS          = 30.0
-JOG_FRAME_INTERVAL       = 1.0 / LIVE_TARGET_FPS
-JOG_AUX_BATCH_INTERVAL   = 0.20   # refresh all auxiliary previews as one batch
-JOG_THREAD_JOIN_TIMEOUT  = 6.0
 
 
 class ProductionCycle:
@@ -49,6 +49,8 @@ class ProductionCycle:
         monitor=None,
         archive=None,
         jog=None,
+        settle_seconds=STAGE_SETTLE_SECONDS,
+        stage_trace_seconds=STAGE_TRACE_SECONDS,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -83,7 +85,6 @@ class ProductionCycle:
         self._frame_analysis_updated_at = None
 
         self._drain_start_time: float = 0
-        self._consecutive_errors: int = 0
         self._fault_reason = None
         self._operation_lock = threading.Lock()
         self._cancel_motion = threading.Event()
@@ -109,20 +110,29 @@ class ProductionCycle:
             "updated_at": time.time(),
         }
 
-        # ── JOG ────────────────────────────────────────────────
+        # Живой просмотр: работает и в JOG, и во время движения ленты.
+        self.live = LivePreview(
+            cameras=cameras,
+            monitor=monitor,
+            get_active_role=self._get_active_camera_role,
+        )
+
+        # Фазы шага и передача камер между live-просмотром и инспекцией.
+        self.stages = StepSequencer(
+            self.live,
+            settle_seconds=settle_seconds,
+            trace_seconds=stage_trace_seconds,
+            on_stage=self._on_stage_change,
+        )
+
+        # JOG
         self.jog_active: bool = False
         self._jog_lock = threading.Lock()
-        self._jog_thread = None
-        self._jog_aux_thread = None
-        self._jog_stop_event = threading.Event()
-        self._jog_frame_error = None
-        self._jog_frame_times = deque(maxlen=240)
-        self._live_capture_pause = threading.Event()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
         self._shutdown = False
 
-    # ─── Process telemetry ───────────────────────────────────────
+    # Process telemetry
 
     def _set_process(
         self,
@@ -156,7 +166,7 @@ class ProductionCycle:
             conveyor_status=status,
         )
 
-    # ─── Public API ──────────────────────────────────────────────
+    # Public API
 
     def request_start(self):
         if not self._operation_lock.acquire(blocking=False):
@@ -164,7 +174,7 @@ class ProductionCycle:
         try:
             if self._selected_analysis_active:
                 return False
-            if self._jog_frame_error:
+            if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
@@ -172,7 +182,7 @@ class ProductionCycle:
                 print("[JOG] auto-exit on START")
                 self.exit_jog()
             # The frame thread may fail while START waits for JOG shutdown.
-            if self._jog_frame_error:
+            if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
@@ -191,7 +201,6 @@ class ProductionCycle:
             accepted = self.sm.request_start()
             if accepted:
                 self._drain_start_time = 0
-                self._consecutive_errors = 0
                 self._fault_reason = None
                 self._last_model_health = []
                 self._frame_analysis_rule_results = []
@@ -206,6 +215,9 @@ class ProductionCycle:
                         "rules": [],
                         "updated_at": None,
                     }
+                # Оператор видит поток всё время, пока линия работает;
+                # на статических этапах шага он приостанавливается.
+                self.live.start()
                 self._set_process("READY", "Цикл запущен")
             return accepted
         finally:
@@ -301,7 +313,7 @@ class ProductionCycle:
                 return False
             self._set_diagnostic_running(
                 "VISION_RULES",
-                "Камеры → модели → правила дефектов",
+                "Камеры -> модели -> правила дефектов",
             )
             self._set_process(
                 "VISION_RULE_DIAGNOSTIC",
@@ -402,650 +414,7 @@ class ProductionCycle:
 
     @staticmethod
     def _rule_report_row(result) -> dict:
-        details = getattr(result, "details", {}) or {}
-        detail = details.get("reason") or details.get("status")
-        detail_lines = []
-        skipped = False
-        per_role = details.get("per_role")
-        if isinstance(per_role, dict) and per_role:
-            skipped_rows = [
-                (role, role_details)
-                for role, role_details in per_role.items()
-                if isinstance(role_details, dict) and role_details.get("skipped")
-            ]
-            if len(skipped_rows) == len(per_role):
-                skipped = True
-                reasons = [
-                    f"{role}: {row.get('reason', 'нет измерения')}"
-                    for role, row in skipped_rows
-                ]
-                detail = "Не выполнено: " + "; ".join(reasons)
-            elif skipped_rows:
-                detail = "Частично выполнено: " + "; ".join(
-                    f"{role}: {row.get('reason', 'нет измерения')}"
-                    for role, row in skipped_rows
-                )
-        rule_name = getattr(result, "rule_name", "")
-        if rule_name == "window_geometry" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason:
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/"
-                        f"{int(role_details.get('expected_count') or 0)}"
-                    )
-                    continue
-                top_limits = role_details.get("top_limits_px") or [0, 0]
-                bottom_limits = role_details.get("bottom_limits_px") or [0, 0]
-                detail_lines.append(
-                    f"{role}: T {float(top_limits[0]):g}…"
-                    f"{float(top_limits[1]):g} px; B "
-                    f"{float(bottom_limits[0]):g}…"
-                    f"{float(bottom_limits[1]):g} px"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних detections показано серым: {ignored}"
-                    )
-                for item in role_details.get("items") or []:
-                    index = int(item.get("index") or 0)
-                    if not item.get("valid"):
-                        detail_lines.append(
-                            f"{role} #{index}: нет измерения T/B"
-                        )
-                        continue
-                    suffix = []
-                    if item.get("top_fail"):
-                        suffix.append("T вне допуска")
-                    if item.get("bottom_fail"):
-                        suffix.append("B вне допуска")
-                    text = (
-                        f"{role} #{index}: "
-                        f"T={float(item.get('top_px') or 0):.1f} px; "
-                        f"B={float(item.get('bottom_px') or 0):.1f} px"
-                    )
-                    if suffix:
-                        text += "; " + ", ".join(suffix)
-                    detail_lines.append(text)
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "contacts_long" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/5"
-                    )
-                    continue
-                if reason == "invalid_contact_masks":
-                    indices = ", ".join(
-                        f"#{index}"
-                        for index in role_details.get("invalid_mask_indices", [])
-                    )
-                    detail_lines.append(
-                        f"{role}: нет segmentation mask контакта: {indices}"
-                    )
-                    continue
-                if reason == "no_scale":
-                    detail_lines.append(
-                        f"{role}: невозможно вычислить scale по шагу 1.25 mm"
-                    )
-                    continue
-
-                tolerance = float(role_details.get("line_tolerance_px") or 0)
-                inscribe = role_details.get("inscribe_check") or {}
-                scale = inscribe.get("scale_px_per_mm")
-                detail_lines.append(
-                    f"{role}: допуск линий {tolerance:.1f} px; "
-                    f"rectangle {float(role_details.get('rect_width_mm') or 0):g}x"
-                    f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-                    f"scale {scale if scale is not None else '—'} px/mm"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                omission = role_details.get("omission_tilt_check") or {}
-                if omission.get("status") == "error":
-                    detail_lines.append(
-                        f"{role}: нет valid reference omission-long"
-                    )
-                else:
-                    detail_lines.append(
-                        f"{role}: omission tilt "
-                        f"{float(omission.get('distance_trend_ratio') or 0):.3f}/"
-                        f"предел {float(role_details.get('omission_tilt_ratio_max') or 0):.3f}"
-                    )
-                for item in role_details.get("items") or []:
-                    index = int(item.get("index") or 0)
-                    distance = item.get("omission_distance_px")
-                    distance_text = (
-                        f"{float(distance):.1f} px"
-                        if distance is not None else "—"
-                    )
-                    text = (
-                        f"{role} #{index}: верх "
-                        f"{float(item.get('dev_top_px') or 0):.1f}/{tolerance:.1f} px; "
-                        f"низ {float(item.get('dev_bottom_px') or 0):.1f}/{tolerance:.1f} px; "
-                        f"rect {'OK' if item.get('rect_fits') else 'FAIL'}; "
-                        f"d omission {distance_text}"
-                    )
-                    detail_lines.append(text)
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "contacts_short" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found') or 0)}/2; "
-                        f"area min "
-                        f"{float(role_details.get('area_absolute_min_px2') or 0):g} px²"
-                    )
-                    invalid_indices = role_details.get(
-                        "invalid_mask_indices", []
-                    )
-                    if invalid_indices:
-                        detail_lines.append(
-                            f"{role}: нет segmentation mask контакта: "
-                            + ", ".join(
-                                f"#{index}" for index in invalid_indices
-                            )
-                        )
-                    continue
-                if reason == "invalid_contact_masks":
-                    indices = ", ".join(
-                        f"#{index}"
-                        for index in role_details.get("invalid_mask_indices", [])
-                    )
-                    detail_lines.append(
-                        f"{role}: нет segmentation mask контакта: {indices}"
-                    )
-                    continue
-                tolerance = float(role_details.get("tolerance") or 0)
-                detail_lines.append(
-                    f"{role}: area min "
-                    f"{float(role_details.get('area_absolute_min_px2') or 0):g} px²; "
-                    f"Δtop {float(role_details.get('delta_top') or 0):.1f}/"
-                    f"{tolerance:.1f} px; Δbottom "
-                    f"{float(role_details.get('delta_bottom') or 0):.1f}/"
-                    f"{tolerance:.1f} px; Δheight "
-                    f"{float(role_details.get('delta_height') or 0):.1f}/"
-                    f"{tolerance:.1f} px"
-                )
-                inscribe = role_details.get("inscribe_check") or {}
-                scale = inscribe.get("scale_px_per_mm")
-                detail_lines.append(
-                    f"{role}: rectangle "
-                    f"{float(role_details.get('rect_width_mm') or 0):g}x"
-                    f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-                    f"scale {scale if scale is not None else '—'} px/mm"
-                )
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                omission = role_details.get("omission_tilt_check") or {}
-                if omission.get("status") == "error":
-                    detail_lines.append(
-                        f"{role}: нет valid reference omission-short"
-                    )
-                else:
-                    detail_lines.append(
-                        f"{role}: omission tilt "
-                        f"{float(omission.get('distance_delta_ratio') or 0):.3f}/"
-                        f"предел {float(role_details.get('omission_tilt_ratio_max') or 0):.3f}"
-                    )
-                for item in role_details.get("items") or []:
-                    distance = item.get("omission_distance_px")
-                    distance_text = (
-                        f"{float(distance):.1f} px"
-                        if distance is not None else "—"
-                    )
-                    detail_lines.append(
-                        f"{role} #{int(item.get('index') or 0)}: "
-                        f"top={float(item.get('top_y') or 0):.1f}; "
-                        f"bottom={float(item.get('bottom_y') or 0):.1f}; "
-                        f"height={float(item.get('height_px') or 0):.1f} px; "
-                        f"rect {'OK' if item.get('rect_fits') else 'FAIL'}; "
-                        f"d omission {distance_text}"
-                    )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "top_contacts" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason and str(reason).startswith("wrong_count"):
-                    detail_lines.append(
-                        f"{role}: найдено {int(role_details.get('found_raw') or 0)}/14"
-                    )
-                    continue
-                if reason == "insufficient_valid_contact_masks":
-                    detail_lines.append(
-                        f"{role}: valid contact masks "
-                        f"{int(role_details.get('found') or 0)}/14"
-                    )
-                    indices = role_details.get("invalid_mask_indices", [])
-                    if indices:
-                        detail_lines.append(
-                            f"{role}: нет segmentation mask: "
-                            + ", ".join(f"#{index}" for index in indices)
-                        )
-                    continue
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_bbox":
-                    detail_lines.append(f"{role}: нет valid platform bbox")
-                    continue
-                if reason == "layout_groups_failed":
-                    counts = role_details.get("group_counts") or {}
-                    detail_lines.append(
-                        f"{role}: layout "
-                        + ", ".join(
-                            f"{group}={int(counts.get(group) or 0)}/"
-                            f"{TopContactsRuleCount}"
-                            for group, TopContactsRuleCount in (
-                                ("L", 5), ("R", 5), ("T", 2), ("B", 2)
-                            )
-                        )
-                    )
-                    continue
-                ignored = int(role_details.get("ignored") or 0)
-                if ignored:
-                    detail_lines.append(
-                        f"{role}: лишних contacts показано серым: {ignored}"
-                    )
-                for group in ("L", "R", "T", "B"):
-                    check = (role_details.get("group_checks") or {}).get(group) or {}
-                    detail_lines.append(
-                        f"{role} {group}: distance median "
-                        f"{float(check.get('median_distance_px') or 0):.1f} px; "
-                        f"max deviation "
-                        f"{float(check.get('max_deviation_px') or 0):.1f}/"
-                        f"{float(check.get('allowed_deviation_px') or 0):.1f} px"
-                    )
-                for item in role_details.get("items") or []:
-                    detail_lines.append(
-                        f"{role} #{int(item.get('index') or 0)} {item.get('group')}: "
-                        f"distance {float(item.get('distance_px') or 0):.1f} px; "
-                        f"deviation {float(item.get('deviation_px') or 0):.1f}/"
-                        f"{float(item.get('allowed_deviation_px') or 0):.1f} px; "
-                        f"rect {float(item.get('rect_width_px') or 0):g}x"
-                        f"{float(item.get('rect_height_px') or 0):g} px "
-                        f"{'OK' if item.get('rect_fits') else 'FAIL'}"
-                    )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "top_platform" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_orientation":
-                    detail_lines.append(f"{role}: не построена orientation platform")
-                    continue
-                placement = role_details.get("placement") or "not_fitted"
-                placement_text = {
-                    "centered": "по центру",
-                    "shifted": "сдвинут",
-                    "not_fitted": "не вписался",
-                }.get(placement, str(placement))
-                detail_lines.append(
-                    f"{role}: rectangle "
-                    f"{float(role_details.get('rect_width_px') or 0):g}x"
-                    f"{float(role_details.get('rect_height_px') or 0):g} px; "
-                    f"angle {float(role_details.get('angle_deg') or 0):.1f}°"
-                )
-                detail_lines.append(
-                    f"{role}: {placement_text}; shift "
-                    f"{float(role_details.get('shift_distance_px') or 0):.1f} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if rule_name == "platform_contacts_overlap" and isinstance(per_role, dict):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason == "no_valid_platform":
-                    detail_lines.append(f"{role}: нет valid platform mask")
-                    continue
-                if reason == "invalid_platform_orientation":
-                    detail_lines.append(f"{role}: не построена orientation platform")
-                    continue
-                if reason == "inner_platform_reference_not_fitted":
-                    detail_lines.append(
-                        f"{role}: не построен inner rectangle 260x120 px"
-                    )
-                    continue
-                detail_lines.append(
-                    f"{role}: boundary "
-                    f"{float(role_details.get('boundary_width_px') or 0):g}x"
-                    f"{float(role_details.get('boundary_height_px') or 0):g} px; "
-                    f"component min "
-                    f"{int(role_details.get('excess_component_min_px') or 0)} px"
-                )
-                detail_lines.append(
-                    f"{role}: largest component "
-                    f"{int(role_details.get('largest_component_pixels') or 0)} px; "
-                    f"confirmed "
-                    f"{int(role_details.get('excess_pixels') or 0)} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if (
-            rule_name in ("long_omission", "short_omission")
-            and isinstance(per_role, dict)
-        ):
-            for role, role_details in per_role.items():
-                if not isinstance(role_details, dict):
-                    continue
-                reason = role_details.get("reason")
-                if reason:
-                    detail_lines.append(
-                        f"{role}: нет valid omission reference ({reason})"
-                    )
-                    continue
-                detail_lines.append(
-                    f"{role}: толщина "
-                    f"{float(role_details.get('allowed_thickness_px') or 0):.1f} px; "
-                    f"component min "
-                    f"{int(role_details.get('excess_component_min_px') or 0)} px; "
-                    f"residual "
-                    f"{float(role_details.get('top_line_actual_max_residual_px') or 0):.1f}/"
-                    f"{float(role_details.get('top_line_max_residual_px') or 0):.1f} px"
-                )
-                detail_lines.append(
-                    f"{role}: largest component "
-                    f"{int(role_details.get('largest_component_pixels') or 0)} px; "
-                    f"confirmed "
-                    f"{int(role_details.get('excess_pixels') or 0)} px; "
-                    f"max depth "
-                    f"{float(role_details.get('max_excess_depth_px') or 0):.1f} px"
-                )
-            if detail_lines:
-                detail = "; ".join(detail_lines)
-
-        if (
-            result.triggered
-            and rule_name not in (
-                "window_geometry",
-                "contacts_long",
-                "contacts_short",
-                "top_contacts",
-                "top_platform",
-                "platform_contacts_overlap",
-                "long_omission",
-                "short_omission",
-            )
-            and isinstance(per_role, dict)
-        ):
-            failure_rows = []
-            for role, role_details in per_role.items():
-                if (
-                    not isinstance(role_details, dict)
-                    or not role_details.get("triggered")
-                ):
-                    continue
-                failures = []
-                reason = role_details.get("reason")
-                if reason:
-                    failures.append(str(reason))
-
-                if rule_name == "window_sinks":
-                    failures = []
-                    if reason and str(reason).startswith(
-                        "invalid_window_reference_count"
-                    ):
-                        failures.append(
-                            "нет семи mask окон: "
-                            f"{int(role_details.get('selected_windows') or 0)}/7"
-                        )
-                    elif reason == "invalid_window_masks":
-                        failures.append(
-                            "нет segmentation mask окна: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_window_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "invalid_sink_masks":
-                        failures.append(
-                            "нет segmentation mask раковины: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_sink_indices", []
-                                )
-                            )
-                        )
-                    elif not reason:
-                        threshold = int(
-                            role_details.get("overlap_min_px") or 0
-                        )
-                        for hit in role_details.get("hits") or []:
-                            failures.append(
-                                f"раковина #{hit.get('sink_index')} → "
-                                f"окно #{hit.get('window_index')}: "
-                                f"overlap {hit.get('overlap_px')} px "
-                                f">= {threshold} px"
-                            )
-
-                elif rule_name == "sinks":
-                    failures = []
-                    if reason == "invalid_sink_masks":
-                        failures.append(
-                            "нет segmentation mask shell: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_sink_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "invalid_case_central_reference":
-                        failures.append(
-                            "case_central reference: "
-                            f"{int(role_details.get('case_central_found') or 0)}/1"
-                        )
-                    elif reason == "no_valid_platform":
-                        failures.append("нет valid platform mask")
-                    elif reason == "invalid_platform_bbox":
-                        failures.append("нет valid platform bbox")
-                    elif reason == "insufficient_valid_contacts":
-                        failures.append(
-                            "valid contact masks: "
-                            f"{int(role_details.get('valid_contacts') or 0)}/14"
-                        )
-                    elif reason == "invalid_contact_layout":
-                        counts = role_details.get("contact_group_counts") or {}
-                        failures.append(
-                            "contact layout: "
-                            + ", ".join(
-                                f"{group}={int(counts.get(group) or 0)}/{expected}"
-                                for group, expected in (
-                                    ("L", 5), ("R", 5),
-                                    ("T", 2), ("B", 2),
-                                )
-                            )
-                        )
-                    elif not reason:
-                        for hit in role_details.get("hits") or []:
-                            failures.append(
-                                f"shell #{hit.get('sink_index')}: forbidden "
-                                f"{hit.get('forbidden_pixels')} px; "
-                                f"central {hit.get('central_overlap_px')} px; "
-                                f"platform {hit.get('platform_overlap_px')} px; "
-                                f"contacts {hit.get('contacts_overlap_px')} px"
-                            )
-
-                elif rule_name == "glass":
-                    failures = []
-                    for hit in role_details.get("hits") or []:
-                        failures.append(
-                            f"glass #{hit.get('glass_index')} → ОЧИСТКА: "
-                            f"platform {hit.get('platform_overlap_px')} px; "
-                            f"pin {hit.get('pin_overlap_px')} px; "
-                            f"ring {hit.get('ring_overlap_px')} px; "
-                            f"union {hit.get('cleanup_overlap_px')} px"
-                        )
-
-                elif rule_name == "glass_on_contacts":
-                    failures = []
-                    if reason == "missing_glass_mask":
-                        failures.append(
-                            "нет segmentation mask glass: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_glass_indices", []
-                                )
-                            )
-                        )
-                    elif reason == "no_valid_platform":
-                        failures.append("нет valid platform mask")
-                    elif reason == "invalid_platform_bbox":
-                        failures.append("нет valid platform bbox")
-                    elif reason == "insufficient_valid_contacts":
-                        failures.append(
-                            "valid contact masks: "
-                            f"{int(role_details.get('valid_contacts') or 0)}/14"
-                        )
-                    elif reason == "invalid_contact_layout":
-                        counts = role_details.get("contact_group_counts") or {}
-                        failures.append(
-                            "contact layout: "
-                            + ", ".join(
-                                f"{group}={int(counts.get(group) or 0)}/{expected}"
-                                for group, expected in (
-                                    ("L", 5), ("R", 5),
-                                    ("T", 2), ("B", 2),
-                                )
-                            )
-                        )
-                    elif reason and str(reason).startswith("wrong_pin_count"):
-                        failures.append(
-                            f"pins: {int(role_details.get('pins_found') or 0)}/14"
-                        )
-                    elif reason == "missing_pin_mask":
-                        failures.append(
-                            "нет pin mask: "
-                            + ", ".join(
-                                f"#{index}"
-                                for index in role_details.get(
-                                    "invalid_pin_indices", []
-                                )
-                            )
-                        )
-                    elif reason and str(reason).startswith("invalid_case_count"):
-                        failures.append(
-                            f"case: {int(role_details.get('case_found') or 0)}/1"
-                        )
-                    elif reason and str(reason).startswith(
-                        "invalid_case_central_count"
-                    ):
-                        failures.append(
-                            "case_central: "
-                            f"{int(role_details.get('case_central_found') or 0)}/1"
-                        )
-                    elif reason == "case_central_not_inside_case":
-                        failures.append("invalid case ring")
-                    elif reason == "empty_case_ring":
-                        failures.append("empty case ring")
-                    elif not reason:
-                        for pair in role_details.get("pairs") or []:
-                            failures.append(
-                                f"glass #{pair.get('glass_index')} → "
-                                f"contact #{pair.get('contact_index')}: "
-                                f"overlap {pair.get('overlap_pixels')} px → БРАК"
-                            )
-
-
-                if failures:
-                    failure_rows.append(f"{role}: " + "; ".join(failures))
-            if failure_rows:
-                detail = "; ".join(failure_rows)
-
-        consensus = details.get("consensus")
-        if not isinstance(consensus, dict):
-            consensus = {}
-
-        if rule_name == "part_presence":
-            detail = (
-                "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
-                if details.get("empty_tray")
-                else "Деталь обнаружена"
-            )
-        if not detail:
-            detail = "Сработало" if result.triggered else "Норма"
-
-        status_label = None
-        neutral = False
-        if rule_name == "part_presence" and details.get("empty_tray"):
-            status_label = "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
-            neutral = True
-            if consensus:
-                status_label += (
-                    f" · {int(consensus.get('empty_votes') or 0)}/"
-                    f"{int(consensus.get('runs') or 0)}"
-                )
-        elif rule_name == "part_presence" and consensus:
-            status_label = (
-                "ДЕТАЛЬ ОБНАРУЖЕНА · "
-                f"{int(consensus.get('present_votes') or 0)}/"
-                f"{int(consensus.get('runs') or 0)}"
-            )
-        elif consensus:
-            votes_key = "triggered_votes" if result.triggered else "normal_votes"
-            status_label = (
-                ("СРАБОТАЛО" if result.triggered else "НОРМА")
-                + f" · {int(consensus.get(votes_key) or 0)}/"
-                f"{int(consensus.get('runs') or 0)}"
-            )
-
-        return {
-            "name": result.rule_name,
-            "triggered": bool(result.triggered),
-            "skipped": skipped,
-            "status_label": status_label,
-            "neutral": neutral,
-            "show_detail": rule_name in (
-                "window_geometry",
-                "contacts_long",
-                "contacts_short",
-                "top_contacts",
-                "top_platform",
-                "platform_contacts_overlap",
-                "long_omission",
-                "short_omission",
-            ),
-            "detail": str(detail),
-            "detail_lines": detail_lines,
-            "consensus": dict(consensus),
-        }
+        return build_rule_report_row(result)
 
     def diagnostic_analyze_selected_camera(self, role: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -1061,7 +430,10 @@ class ProductionCycle:
             if role not in available_roles:
                 raise ValueError(f"Неизвестная роль камеры: {role}")
 
-            self._live_capture_pause.set()
+            if not self.live.pause():
+                raise RuntimeError(
+                    "Live-просмотр не освободил камеры для анализа кадров"
+                )
             self._selected_analysis_active = True
             self._selected_analysis_role = role
             self._set_diagnostic_running(
@@ -1194,7 +566,7 @@ class ProductionCycle:
         except Exception as exc:
             self._selected_analysis_active = False
             self._selected_analysis_role = None
-            self._live_capture_pause.clear()
+            self.live.resume()
             self._set_diagnostic_error("SELECTED_MODEL", exc)
             self._handle_fault(f"Ошибка анализа выбранного кадра: {exc}")
             raise
@@ -1224,7 +596,7 @@ class ProductionCycle:
                 "rules": [],
                 "updated_at": None,
             }
-            self._live_capture_pause.clear()
+            self.live.resume()
             self._set_process(
                 "LIVE_SELECTED_CAMERA",
                 f"Поток восстановлен: {role}",
@@ -1235,7 +607,8 @@ class ProductionCycle:
 
     def request_force_exit(self):
         self._cancel_motion.set()
-        self._live_capture_pause.clear()
+        self.stages.reset()
+        self.live.reset_pause()
         accepted = self.sm.request_force_exit()
         if self.jog_active:
             try:
@@ -1245,7 +618,7 @@ class ProductionCycle:
         self._safe_emergency_stop()
         return accepted
 
-    # ─── Properties для UI и main.py ─────────────────────────────
+    # Properties для UI и main.py
 
     @property
     def state(self) -> str:
@@ -1263,7 +636,7 @@ class ProductionCycle:
     def dist1_open_position(self) -> int:
         return self.distributor.dist1_open_position
 
-    # ─── Main loop ───────────────────────────────────────────────
+    # Main loop
 
     def start(self):
         print("Система готова. Ожидание команды START.")
@@ -1280,7 +653,7 @@ class ProductionCycle:
                         self.sm.notify_line_empty()
                         self._refresh_monitor()
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty → exit.")
+                            print("[EXIT] Line empty -> exit.")
                             break
                         continue
 
@@ -1294,16 +667,16 @@ class ProductionCycle:
                         self._refresh_monitor()
 
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty → exit.")
+                            print("[EXIT] Line empty -> exit.")
                             break
                 else:
                     if self.sm.exit_requested:
-                        print("[EXIT] Not active → exit.")
+                        print("[EXIT] Not active -> exit.")
                         break
 
-                    if self._jog_frame_error and self.sm.state != State.FAULT:
+                    if self.live.error and self.sm.state != State.FAULT:
                         self._handle_fault(
-                            f"Ошибка камеры в режиме ручного управления: {self._jog_frame_error}"
+                            f"Ошибка камеры в режиме ручного управления: {self.live.error}"
                         )
                         continue
                     if self.jog is not None:
@@ -1331,7 +704,9 @@ class ProductionCycle:
         finally:
             self._shutdown = True
             self._cancel_motion.set()
-            self._live_capture_pause.clear()
+            self.stages.reset()
+            self.live.reset_pause()
+            self.live.stop()
             try:
                 self.exit_jog()
             except Exception as e:
@@ -1340,13 +715,15 @@ class ProductionCycle:
             self._archive_inflight("runtime_shutdown")
             print("Цикл конвейера завершён.")
 
-    # ─── Fault ───────────────────────────────────────────────────
+    # Fault
 
     def _handle_fault(self, reason: str):
         self._cancel_motion.set()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
-        self._live_capture_pause.clear()
+        self.stages.reset()
+        self.live.reset_pause()
+        self.live.stop()
         self._fault_reason = reason
         print(f"[FAULT] {reason}")
         print(
@@ -1363,7 +740,7 @@ class ProductionCycle:
         self._safe_emergency_stop()
         self._refresh_monitor()
 
-    # ─── Safe run ────────────────────────────────────────────────
+    # Safe run
 
     def _run_once_safe(self):
         if self.sm.state == State.STOPPING and self.parts:
@@ -1378,11 +755,9 @@ class ProductionCycle:
 
         try:
             self._run_once()
-            self._consecutive_errors = 0
         except Exception as e:
-            # Repeating a failed physical step loses part-to-cell alignment.
-            # Fail closed on the first incomplete cycle instead.
-            self._consecutive_errors += 1
+            # Повтор неудачного физического шага теряет соответствие
+            # деталь/ячейка, поэтому падаем в FAULT на первой же ошибке.
             print(f"[CYCLE] Error in _run_once: {e}")
             traceback.print_exc()
             self._handle_fault(f"Ошибка производственного шага: {e}")
@@ -1406,19 +781,41 @@ class ProductionCycle:
         if self._cancel_motion.is_set() or self.sm.force_exit:
             raise RuntimeError("physical operation cancelled")
 
-    # ─── Core step ───────────────────────────────────────────────
+    # Статическая фаза шага
+
+    # Core step
 
     def _run_once(self):
+        """Один шаг линии: движение, затухание, съёмка, анализ, публикация.
+
+        Владелец камер меняется только на границах фаз, поэтому кадры для
+        defect rules физически не могут быть сняты во время движения.
+        """
         self._check_motion_cancelled()
         print(f"\nШАГ {self.current_step + 1}")
 
-        # Фиксируем право принять INPUT в начале физического шага. Если STOP
-        # придёт уже во время движения, вошедшая этим шагом деталь всё равно
-        # будет проинспектирована и останется синхронизированной с ячейкой.
+        # Право принять INPUT фиксируется до движения: если STOP придёт уже
+        # во время проезда, вошедшая этим шагом деталь всё равно будет
+        # проинспектирована и останется синхронной со своей ячейкой.
         accept_input_for_this_step = self.sm.accepts_new_parts
 
         self._last_vision_results = {}
         self._last_rule_results = []
+
+        pending_id = self._stage_motion()
+        self._stage_settle(pending_id)
+        frame_runs = self._stage_capture()
+        display_frames = self._stage_analysis(
+            frame_runs, accept_input_for_this_step,
+        )
+        self._stage_publish(display_frames)
+
+    def _stage_motion(self):
+        """MOTION: подготовить маршрут и переместить ленту на шаг."""
+        self.stages.enter_motion()
+        # Разметка прошлого шага построена по статичному кадру и на
+        # движущемся изображении указывала бы мимо детали.
+        self.live.clear_overlays()
 
         self._pending_drop = self._find_pending_drop()
         pending_id = self._pending_drop.id if self._pending_drop else None
@@ -1440,8 +837,13 @@ class ProductionCycle:
         self.conveyor.move_step()
         self.conveyor.wait_stop(progress_callback=self._on_conveyor_progress)
         self._check_motion_cancelled()
-        # Commit the logical position only after confirmed physical completion.
+        # Логическая позиция фиксируется только после подтверждения
+        # физического завершения движения.
         self.current_step += 1
+        return pending_id
+
+    def _stage_settle(self, pending_id):
+        """SETTLE: сброс детали и пауза на затухание вибрации."""
         self._set_process(
             "CONVEYOR_CONFIRMED",
             "Позиции деталей подтверждены контроллером",
@@ -1459,22 +861,39 @@ class ProductionCycle:
         self._execute_drop()
         self._check_motion_cancelled()
 
+        self._set_process(
+            "SETTLE",
+            "Ожидание затухания вибрации перед съёмкой",
+            positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+        )
+        self.stages.enter_settle()
+        self._check_motion_cancelled()
+
+    def _stage_capture(self):
+        """CAPTURE: три синхронных набора кадров неподвижной детали."""
+        self.stages.enter_capture()
+
         frame_runs = []
         for run_number in range(1, INSPECTION_RUNS + 1):
             self._set_process(
                 "CAMERA_CAPTURE",
-                f"Синхронный захват семи камер: прогон {run_number}/{INSPECTION_RUNS}",
+                f"Синхронный захват семи камер: прогон "
+                f"{run_number}/{INSPECTION_RUNS}",
                 positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
             )
             frame_runs.append(self.cameras.capture_all())
             self._check_motion_cancelled()
+        return frame_runs
+
+    def _stage_analysis(self, frame_runs, accept_input_for_this_step):
+        """ANALYSIS: модели и defect rules по уже снятым кадрам."""
+        self.stages.enter_analysis()
 
         # По умолчанию UI получает самый свежий набор. Для каждой реально
         # выполненной стадии он заменяется evidence-кадрами, выбранными
         # majority-алгоритмом как наиболее согласованными с итогом.
         display_frames = dict(frame_runs[-1])
 
-        # Input inspection: part_presence и каждое defect rule голосуют 2/3.
         if accept_input_for_this_step:
             self._set_process(
                 "INPUT_ANALYSIS",
@@ -1495,6 +914,11 @@ class ProductionCycle:
         if spider_result is not None:
             display_frames.update(spider_result.raw_frames)
         self._check_motion_cancelled()
+        return display_frames
+
+    def _stage_publish(self, display_frames):
+        """PUBLISH: маршрут годных деталей и вывод результата на экран."""
+        self.stages.enter_publish()
 
         self._set_process(
             "ROUTE_CHECK",
@@ -1506,7 +930,7 @@ class ProductionCycle:
         self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
         self._refresh_monitor(display_frames)
 
-    # ─── Input stage ─────────────────────────────────────────────
+    # Input stage
 
     def _process_input_stage(self, frame_runs):
         """Обработать INPUT по трём свежим кадрам и majority 2 из 3."""
@@ -1577,7 +1001,7 @@ class ProductionCycle:
         )
         return result
 
-    # ─── Inspection ──────────────────────────────────────────────
+    # Inspection
 
     def _run_spider_inspection(self, frame_runs):
         for part in self.parts:
@@ -1636,7 +1060,7 @@ class ProductionCycle:
             return result
         return None
 
-    # ─── Distributor flow ────────────────────────────────────────
+    # Distributor flow
 
     def _find_pending_drop(self):
         next_step = self.current_step + 1
@@ -1656,7 +1080,7 @@ class ProductionCycle:
         if category == CATEGORY_UNKNOWN:
             print(
                 f"[WARN] Деталь #{part.id} не прошла полную "
-                f"инспекцию → принудительно BAD"
+                f"инспекцию -> принудительно BAD"
             )
             part.route_category = CATEGORY_BAD
             part.final_decision = "incomplete_inspection"
@@ -1683,13 +1107,13 @@ class ProductionCycle:
         if category == CATEGORY_BAD:
             self.bad_count += 1
             print(
-                f"[REJECT] #{part.id} → BAD "
+                f"[REJECT] #{part.id} -> BAD "
                 f"({self.bad_count})"
             )
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
             print(
-                f"[CLEANUP] #{part.id} → CLEANUP "
+                f"[CLEANUP] #{part.id} -> CLEANUP "
                 f"({self.cleanup_count})"
             )
 
@@ -1717,11 +1141,11 @@ class ProductionCycle:
             self._register_finished(part)
             self._remove_part(part)
             print(
-                f"[PASS] #{part.id} → GOOD "
+                f"[PASS] #{part.id} -> GOOD "
                 f"({self.good_count})"
             )
 
-    # ─── Archive ─────────────────────────────────────────────────
+    # Archive
 
     def _archive_part(self, part, extra=None):
         if not self.archive:
@@ -1758,7 +1182,7 @@ class ProductionCycle:
             self._remove_part(part)
         self._pending_drop = None
 
-    # ─── Helpers ─────────────────────────────────────────────────
+    # Helpers
 
     def _remove_part(self, part):
         if part in self.parts:
@@ -1783,17 +1207,28 @@ class ProductionCycle:
             return
         self._last_model_health = [dict(item) for item in rows]
 
+    def _on_stage_change(self, previous, current, elapsed: float):
+        """Печать границы фаз шага: видно, где именно проводится время."""
+        print(
+            f"[STAGE] {previous.value} -> {current.value} "
+            f"(предыдущая фаза {elapsed:.2f} с)"
+        )
+
     def _on_state_change(self, old, new, action: str):
         if new == State.STOPPING:
             self._set_process("DRAINING", "Завершение деталей на линии")
         elif new == State.STOPPED:
+            # Линия пуста: последние кадры с разметкой остаются на экране,
+            # пока оператор не войдёт в JOG или не запустит цикл заново.
+            self.stages.reset()
+            self.live.stop()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
         else:
             self._refresh_monitor()
 
-    # ─── JOG mode ────────────────────────────────────────────────
+    # JOG mode
 
     def can_enter_jog(self) -> bool:
         if self.jog is None or self._shutdown:
@@ -1802,7 +1237,7 @@ class ProductionCycle:
             self.state in self.JOG_ALLOWED_STATES
             and not self.exit_requested
             and not self._operation_lock.locked()
-            and not self._jog_frame_error
+            and not self.live.error
             and not self.jog.status.get("error")
         )
 
@@ -1819,8 +1254,7 @@ class ProductionCycle:
                 return False
 
             self.jog_active = True
-            self._jog_frame_times.clear()
-            self._start_jog_frame_loop()
+            self.live.start()
             print("[JOG] entered")
 
         self._refresh_monitor()
@@ -1838,7 +1272,8 @@ class ProductionCycle:
                 release_error = exc
             finally:
                 self.jog_active = False
-                self._stop_jog_frame_loop()
+                if not self.sm.is_active:
+                    self.live.stop()
                 print("[JOG] exited")
 
         self._refresh_monitor()
@@ -1896,143 +1331,18 @@ class ProductionCycle:
             self._refresh_monitor()
         return accepted
 
-    # ─── JOG live frame loop ─────────────────────────────────────
-
-    def _start_jog_frame_loop(self):
-        self._jog_stop_event.clear()
-        self._jog_thread = threading.Thread(
-            target=self._jog_frame_loop,
-            daemon=True,
-            name="jog-selected-camera",
-        )
-        self._jog_aux_thread = threading.Thread(
-            target=self._jog_aux_frame_loop,
-            daemon=True,
-            name="jog-aux-cameras",
-        )
-        self._jog_thread.start()
-        self._jog_aux_thread.start()
-
-    def _stop_jog_frame_loop(self):
-        self._jog_stop_event.set()
-        deadline = time.monotonic() + JOG_THREAD_JOIN_TIMEOUT
-        for label, thread in (
-            ("selected", self._jog_thread),
-            ("auxiliary", self._jog_aux_thread),
-        ):
-            if thread and thread.is_alive():
-                thread.join(max(0.0, deadline - time.monotonic()))
-                if thread.is_alive():
-                    print(
-                        f"[JOG] {label} frame thread не остановился за "
-                        f"{JOG_THREAD_JOIN_TIMEOUT}s"
-                    )
-        self._jog_thread = None
-        self._jog_aux_thread = None
+    # Живой просмотр камер
 
     def _get_active_camera_role(self):
-        try:
-            server = getattr(self.monitor, "server", None)
-            if server is None:
-                return None
-            return getattr(server, "active_camera_role", None)
-        except Exception:
+        server = getattr(self.monitor, "server", None)
+        if server is None:
             return None
-
-    def _jog_frame_loop(self):
-        print("[JOG] live frame loop started")
-        while not self._jog_stop_event.is_set():
-            if self._live_capture_pause.is_set():
-                self._jog_stop_event.wait(0.02)
-                continue
-            iteration_started = time.monotonic()
-            try:
-                available_roles = list(getattr(self.cameras, "mapping", {}))
-                active_role = self._get_active_camera_role()
-                if active_role is None:
-                    active_role = available_roles[0] if available_roles else None
-                elif available_roles and active_role not in available_roles:
-                    active_role = available_roles[0]
-
-                if active_role is None:
-                    # Compatibility path for a camera provider without role map.
-                    frames = self.cameras.capture_all()
-                    self._jog_frame_times.append(time.monotonic())
-                    if self.monitor:
-                        self.monitor.update(
-                            frames=frames,
-                            vision_results={},
-                            rule_results=[],
-                        )
-                else:
-                    # Выбранная камера имеет приоритет, но публикация жёстко
-                    # ограничена частотой LIVE_TARGET_FPS.
-                    frame = self.cameras.capture_single(active_role)
-                    self._jog_frame_times.append(time.monotonic())
-                    if self.monitor:
-                        self.monitor.update(
-                            frames={active_role: frame},
-                            vision_results={},
-                            rule_results=[],
-                        )
-            except Exception as e:
-                self._jog_frame_error = f"{type(e).__name__}: {e}"
-                print(f"[JOG] frame loop error: {self._jog_frame_error}")
-                self._jog_stop_event.set()
-                break
-            elapsed = time.monotonic() - iteration_started
-            self._jog_stop_event.wait(max(0.0, JOG_FRAME_INTERVAL - elapsed))
-        print("[JOG] live frame loop stopped")
-
-    def _jog_aux_frame_loop(self):
-        print("[JOG] auxiliary frame loop started")
-        while not self._jog_stop_event.is_set():
-            if self._live_capture_pause.is_set():
-                self._jog_stop_event.wait(0.02)
-                continue
-            iteration_started = time.monotonic()
-            try:
-                available_roles = list(getattr(self.cameras, "mapping", {}))
-                active_role = self._get_active_camera_role()
-                auxiliary_roles = [
-                    role for role in available_roles
-                    if role != active_role
-                ]
-                if auxiliary_roles:
-                    capture_roles = getattr(self.cameras, "capture_roles", None)
-                    if callable(capture_roles):
-                        frames = capture_roles(auxiliary_roles)
-                    else:
-                        frames = {
-                            role: frame
-                            for role, frame in self.cameras.capture_all().items()
-                            if role in auxiliary_roles
-                        }
-                    if self.monitor and frames:
-                        self.monitor.update(frames=frames)
-            except Exception as exc:
-                if self._jog_stop_event.is_set():
-                    break
-                self._jog_frame_error = f"{type(exc).__name__}: {exc}"
-                print(f"[JOG] auxiliary frame loop error: {self._jog_frame_error}")
-                self._jog_stop_event.set()
-                break
-            elapsed = time.monotonic() - iteration_started
-            self._jog_stop_event.wait(
-                max(0.0, JOG_AUX_BATCH_INTERVAL - elapsed)
-            )
-        print("[JOG] auxiliary frame loop stopped")
+        return getattr(server, "active_camera_role", None)
 
     def _current_live_fps(self) -> float:
-        now = time.monotonic()
-        recent = [value for value in list(self._jog_frame_times) if now - value <= 2.0]
-        if len(recent) < 2:
-            return 0.0
-        elapsed = recent[-1] - recent[0]
-        measured = 0.0 if elapsed <= 0 else (len(recent) - 1) / elapsed
-        return min(LIVE_TARGET_FPS, measured)
+        return self.live.fps
 
-    # ─── Monitor ─────────────────────────────────────────────────
+    # Monitor
 
     def _build_frame_analysis(self, state_name: str) -> dict:
         report = self._diagnostics
@@ -2097,9 +1407,15 @@ class ProductionCycle:
 
         sm_snap = self.sm.get_snapshot()
 
+        # Статус собирается из потоков UI, пока цикл меняет линию. Снимок
+        # списка и шага берётся один раз, иначе in_line и line_parts могли
+        # бы описывать разные моменты времени.
+        parts_snapshot = list(self.parts)
+        step_snapshot = self.current_step
+
         line_parts = []
-        for part in self.parts:
-            position = self.current_step - part.step_created
+        for part in parts_snapshot:
+            position = step_snapshot - part.step_created
             position = max(0, min(position, self.OFFSET_REJECT))
             line_parts.append({
                 "id": part.id,
@@ -2111,10 +1427,10 @@ class ProductionCycle:
         operation_busy = self._operation_lock.locked()
         jog_snapshot = self.jog.status if self.jog is not None else {}
         jog_busy = bool(jog_snapshot.get("busy", False))
-        jog_error = jog_snapshot.get("error") or self._jog_frame_error
+        jog_error = jog_snapshot.get("error") or self.live.error
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
-            and not self.parts
+            and not parts_snapshot
             and not jog_busy
             and not jog_error
             and not operation_busy
@@ -2125,7 +1441,7 @@ class ProductionCycle:
         controls = {
             "start": (
                 state_name in ("IDLE", "STOPPED")
-                and not self.parts
+                and not parts_snapshot
                 and not jog_busy
                 and not jog_error
                 and not operation_busy
@@ -2161,8 +1477,8 @@ class ProductionCycle:
             "state": state_name,
             "exit_requested": sm_snap["exit_requested"],
             "fault_reason": self._fault_reason,
-            "step": self.current_step,
-            "in_line": len(self.parts),
+            "step": step_snapshot,
+            "in_line": len(parts_snapshot),
             "line_parts": line_parts,
             "total": self.part_counter,
             "good": self.good_count,
@@ -2180,6 +1496,16 @@ class ProductionCycle:
             "selected_analysis": {
                 "active": self._selected_analysis_active,
                 "role": self._selected_analysis_role,
+            },
+            # Живой просмотр: активен во время движения, приостановлен на
+            # статических этапах, по которым считаются defect rules.
+            "live": {
+                "running": self.live.running,
+                "streaming": self.live.running and not self.stages.static,
+                "static": self.stages.static,
+                "stage": self.stages.stage.value,
+                "fps": self._current_live_fps(),
+                "error": self.live.error,
             },
             "frame_analysis": self._build_frame_analysis(state_name),
             "diagnostics": {
@@ -2218,7 +1544,7 @@ class ProductionCycle:
 
         return status
 
-    def _refresh_monitor(self, frames: dict = None):
+    def _refresh_monitor(self, frames: dict | None = None):
         if not self.monitor:
             return
         status = self._build_status()

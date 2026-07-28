@@ -1,5 +1,3 @@
-# domain/defect_rules/base.py
-
 from __future__ import annotations
 from dataclasses import dataclass, field
 
@@ -41,7 +39,7 @@ class BaseRule:
     def check(self, vision_results: dict, **kwargs) -> RuleResult:
         raise NotImplementedError
 
-    def _get(self, key: str, default=None, role: str = None):
+    def _get(self, key: str, default=None, role: str | None = None):
         """
         Per-role lookup порога с fallback на общий.
 
@@ -61,14 +59,14 @@ class BaseRule:
               0.40,
               role="SPIDER_LEFT",
           )
-          → 0.48  (per-role)
+          -> 0.48  (per-role)
 
           _get(
               "spider_contacts_long_inscribed_rect_width_mm",
               0.40,
               role="SPIDER_RIGHT",
           )
-          → 0.50  (общий, per-role не задан)
+          -> 0.50  (общий, per-role не задан)
         """
         if role:
             role_key = f"{role}.{key}"

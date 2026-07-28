@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_glass_on_contacts.py
-
 import cv2
 import numpy as np
 
@@ -9,7 +7,7 @@ from domain.defect_rules.top_glass_context import build_top_glass_context
 
 
 class TopGlassOnContactsRule(BaseRule):
-    """Glass на selected contacts или invalid общий context → BAD."""
+    """Glass на selected contacts или invalid общий context -> BAD."""
 
     name = "glass_on_contacts"
     ROLES = ("TOP",)

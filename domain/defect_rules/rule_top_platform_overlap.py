@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_platform_overlap.py
-
 import cv2
 import numpy as np
 

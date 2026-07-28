@@ -1,5 +1,3 @@
-# vision/overlay/debug_overlay.py
-
 from vision.overlay.renderers.primitives       import DrawPrimitives
 from vision.overlay.renderers.construction_error import draw_construction_error
 from vision.overlay.renderers.window_geometry  import WindowGeometryRenderer
@@ -50,12 +48,11 @@ class DebugOverlay:
             elif (
                 draw_type == "platform_overlap_platform"
                 and "top_platform_actual" in available_types
-            ):
-                continue
-            elif (
+            ) or (
                 draw_type == "platform_overlap_inner_attempt"
                 and "top_platform_inscribed_rect" in available_types
             ):
+                # Более точная отрисовка уже есть в наборе: дубль пропускаем.
                 continue
             elif draw_type == "window_sink_overlap":
                 drawing = dict(drawing)
@@ -205,13 +202,13 @@ class DebugOverlay:
             elif draw_type == "top_sink_reference_contact":
                 TopSinksRenderer.draw_reference_contact(img, d)
 
-            # --- Top glass (cleanup zones → CLEANUP) ---
+            # --- Top glass (cleanup zones -> CLEANUP) ---
             elif draw_type == "top_glass_cleanup_references":
                 TopGlassRenderer.draw_cleanup_references(img, d)
             elif draw_type == "top_glass_cleanup_region":
                 TopGlassRenderer.draw_cleanup_region(img, d)
 
-            # --- Top glass on contacts (→ BAD) ---
+            # --- Top glass on contacts (-> BAD) ---
             elif draw_type == "top_glass_bad_references":
                 TopGlassRenderer.draw_bad_references(img, d)
             elif draw_type == "top_glass_contact_overlap":

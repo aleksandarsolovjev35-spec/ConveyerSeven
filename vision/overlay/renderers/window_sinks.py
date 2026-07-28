@@ -1,5 +1,3 @@
-# vision/overlay/renderers/window_sinks.py
-
 import cv2
 import numpy as np
 

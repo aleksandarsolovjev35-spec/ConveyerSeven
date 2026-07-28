@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_top_sinks.py
-
 import math
 
 import cv2

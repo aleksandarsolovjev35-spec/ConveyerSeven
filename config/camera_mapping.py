@@ -33,12 +33,12 @@ def validate_camera_mapping(mapping: dict) -> dict:
     return dict(mapping)
 
 
-def load_camera_mapping(path: str = None) -> dict:
+def load_camera_mapping(path: str | None = None) -> dict:
     """Загрузить и проверить маппинг семи камер."""
 
     path = path or CAMERA_MAPPING_FILE
     try:
-        with open(path, "r", encoding="utf-8") as stream:
+        with open(path, encoding="utf-8") as stream:
             mapping = json.load(stream)
     except FileNotFoundError as exc:
         raise RuntimeError(f"[CAMERA_MAPPING] {path} не найден") from exc

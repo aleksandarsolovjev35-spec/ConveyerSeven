@@ -1,5 +1,3 @@
-# inspection/part_archive.py
-
 """
 Архивация результатов инспекции каждой детали.
 
@@ -21,6 +19,7 @@
 и удаляет оригинальную папку.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -43,7 +42,7 @@ class PartArchive:
     def __init__(
         self,
         root_folder: str = "archive",
-        batch_id: str = None,
+        batch_id: str | None = None,
         enabled: bool = True,
     ):
         self.root_folder = root_folder
@@ -67,7 +66,7 @@ class PartArchive:
         if self.enabled:
             os.makedirs(self.root_folder, exist_ok=True)
 
-    # ─── Public API ──────────────────────────────────────────────────
+    # Public API
 
     def store_frames(
         self,
@@ -75,7 +74,7 @@ class PartArchive:
         stage: str,
         raw_frames: dict,
         annotated_frames: dict,
-        raw_overlay_frames: dict = None,
+        raw_overlay_frames: dict | None = None,
     ):
         """
         Сохранить кадры одной стадии инспекции в буфер.
@@ -118,7 +117,7 @@ class PartArchive:
         decision: str,
         defects: list,
         step: int,
-        extra: dict = None,
+        extra: dict | None = None,
     ) -> str | None:
         """
         Финализировать деталь: записать все кадры и метаданные на диск.
@@ -209,15 +208,11 @@ class PartArchive:
         self._finalized_count += 1
 
         print(
-            f"[ARCHIVE] Деталь #{part_id} → {folder_path} "
+            f"[ARCHIVE] Деталь #{part_id} -> {folder_path} "
             f"({len(roles_saved)} ролей)"
         )
 
         return folder_path
-
-    def discard(self, part_id: int):
-        """Удалить буфер детали без сохранения."""
-        self._buffers.pop(part_id, None)
 
     def get_part_info(self, part_id: int) -> dict | None:
         """Получить информацию об архивированной детали."""
@@ -260,10 +255,6 @@ class PartArchive:
 
         return result
 
-    def get_recent_archived(self, limit: int = 50) -> list:
-        """Последние архивированные детали."""
-        return list(self._archived[-limit:])
-
     @property
     def archive_base_path(self) -> str:
         return os.path.join(
@@ -272,7 +263,7 @@ class PartArchive:
             self.batch_id,
         )
 
-    # ─── Compression ─────────────────────────────────────────────────
+    # Compression
 
     def compress(self, delete_original: bool = True) -> str | None:
         """
@@ -310,7 +301,7 @@ class PartArchive:
         temp_zip_path = zip_path + ".tmp"
 
         print(
-            f"[ARCHIVE] Сжатие {batch_folder} → {zip_path} "
+            f"[ARCHIVE] Сжатие {batch_folder} -> {zip_path} "
             f"({self._finalized_count} деталей)..."
         )
 
@@ -332,8 +323,11 @@ class PartArchive:
             if os.path.exists(temp_zip_path):
                 try:
                     os.remove(temp_zip_path)
-                except Exception:
-                    pass
+                except OSError as remove_error:
+                    print(
+                        "[ARCHIVE] Не удалён временный zip "
+                        f"{temp_zip_path}: {remove_error}"
+                    )
             return None
 
         elapsed = time.time() - start_time
@@ -344,7 +338,7 @@ class PartArchive:
 
         print(
             f"[ARCHIVE] Сжатие завершено за {elapsed:.1f}с: "
-            f"{original_size_mb:.1f} MB → {zip_size_mb:.1f} MB "
+            f"{original_size_mb:.1f} MB -> {zip_size_mb:.1f} MB "
             f"({self._compression_ratio(original_size_mb, zip_size_mb)})"
         )
 
@@ -384,10 +378,8 @@ class PartArchive:
         for root, _dirs, files in os.walk(path):
             for f in files:
                 fp = os.path.join(root, f)
-                try:
+                with contextlib.suppress(OSError):
                     total += os.path.getsize(fp)
-                except OSError:
-                    pass
         return total / (1024 * 1024)
 
     @staticmethod
@@ -398,7 +390,7 @@ class PartArchive:
         ratio = (1 - compressed_mb / original_mb) * 100
         return f"-{ratio:.0f}%"
 
-    # ─── Internal ────────────────────────────────────────────────────
+    # Internal
 
     def _encode_image(self, frame) -> bytes:
         try:
@@ -424,10 +416,8 @@ class PartArchive:
             os.replace(temp_path, path)
         except Exception:
             if os.path.exists(temp_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(temp_path)
-                except OSError:
-                    pass
             raise
 
     @staticmethod

@@ -36,7 +36,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 import cv2
 import numpy as np
@@ -1562,11 +1562,12 @@ def write_sample_html(folder: Path, report: dict) -> None:
         rule_rows = '<tr><td colspan="3">Нет применимых правил</td></tr>'
 
     omission_data = collect_omission_calibration([report])
+    def fmt(source, name, decimals=1):
+        value = source.get(name)
+        return "—" if value is None else f"{float(value):.{decimals}f}"
+
     omission_rows_list = []
     for row in omission_data["rows"]:
-        def fmt(name, decimals=1):
-            value = row.get(name)
-            return "—" if value is None else f"{float(value):.{decimals}f}"
         omission_rows_list.append(
             "<tr>"
             f"<td>{esc(row['role'])}</td>"
@@ -1574,11 +1575,11 @@ def write_sample_html(folder: Path, report: dict) -> None:
             f"<td>{esc(row['reason'] or '—')}</td>"
             f"<td>{row['allowed_thickness_px']:.1f}</td>"
             f"<td>{row['excess_component_min_px']}</td>"
-            f"<td>{fmt('top_line_actual_max_residual_px')}/"
-            f"{fmt('top_line_max_residual_px')}</td>"
+            f"<td>{fmt(row, 'top_line_actual_max_residual_px')}/"
+            f"{fmt(row, 'top_line_max_residual_px')}</td>"
             f"<td>{row['largest_component_pixels']}</td>"
-            f"<td>{fmt('excess_pixels', 0)}</td>"
-            f"<td>{fmt('max_excess_depth_px')}</td>"
+            f"<td>{fmt(row, 'excess_pixels', 0)}</td>"
+            f"<td>{fmt(row, 'max_excess_depth_px')}</td>"
             f"<td>{'БРАК' if row['triggered'] else 'НОРМА'}</td>"
             "</tr>"
         )

@@ -1,5 +1,3 @@
-# domain/defect_rules/rule_spider_long_omission.py
-
 from domain.defect_rules.base import BaseRule
 from domain.defect_rules.omission_boundary import OmissionBoundaryMixin
 

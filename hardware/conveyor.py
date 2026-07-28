@@ -1,5 +1,3 @@
-# hardware/conveyor.py
-
 import re
 import time
 
