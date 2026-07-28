@@ -162,12 +162,19 @@ class ProductionCycle:
 
     def _on_conveyor_progress(self, status: dict):
         current = self._process
+        conveyor_info = dict(status or {})
+        # Expose speed for frontend animation timing (higher = faster motion)
+        try:
+            conveyor_info["speed"] = int(getattr(self.conveyor, "speed", 20000))
+            conveyor_info["normal_steps"] = int(getattr(self.conveyor, "steps_per_division", 19048))
+        except Exception:
+            conveyor_info["speed"] = 20000
         self._set_process(
             "CONVEYOR_MOVING",
             "Лента перемещает детали на следующую позицию",
             part_id=current.get("part_id"),
             positions=range(self.OFFSET_REJECT + 1),
-            conveyor_status=status,
+            conveyor_status=conveyor_info,
         )
 
     # Public API

@@ -71,8 +71,8 @@
                     <div class="process-line-head">
                         <span class="process-line-title">ПУТЬ ДЕТАЛЕЙ</span>
                     </div>
-                    <div class="line-cells-wrapper production-line-wrapper">
-                        <div id="line-cells" class="line-cells production-line-cells">
+                    <div class="line-cells-wrapper production-line-wrapper" style="position:relative;">
+                        <div id="line-cells" class="line-cells production-line-cells" style="position:relative; overflow:visible;">
                             <div class="line-cell" data-pos="0"></div>
                             <div class="line-cell" data-pos="1"></div>
                             <div class="line-cell" data-pos="2"></div>
@@ -82,16 +82,17 @@
                             <div class="line-cell" data-pos="6"></div>
                             <div class="line-cell" data-pos="7"></div>
                         </div>
-                        <div class="line-position-labels" aria-label="Позиции линии">
-                            <span class="stage-position">1 · ВХОД</span>
-                            <span>2</span>
-                            <span>3</span>
-                            <span>4</span>
-                            <span class="stage-position">5 · КОНТРОЛЬ</span>
-                            <span>6</span>
-                            <span>7</span>
-                            <span class="stage-position">8 · СОРТИРОВКА</span>
-                        </div>
+                    <div class="line-position-labels" aria-label="Позиции линии">
+                        <span class="stage-position">1 · ВХОД</span>
+                        <span>2</span>
+                        <span>3</span>
+                        <span>4</span>
+                        <span class="stage-position">5 · КОНТРОЛЬ</span>
+                        <span>6</span>
+                        <span>7</span>
+                        <span class="stage-position">8 · СОРТИРОВКА</span>
+                    </div>
+                    <div id="process-phase-label" class="process-phase-label"></div>
                     </div>
                 </section>
                 <div class="history">

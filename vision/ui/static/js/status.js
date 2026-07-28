@@ -213,48 +213,309 @@ function updateLineStatus(ls) {
     handleJogAutoToggle(lineState, ls.jog || null);
 }
 
-// ─── Line cells ──────────────────────────────────────────────
+// ─── Line cells — реалистичная анимация движения деталей по линии ───────────────────────────
+
+let _prevLineParts = [];
 
 function updateLineCells(lineParts, process = {}) {
     const cells = els.lineCells.children;
+    const isConveyorMoving = (process.phase || '').includes('CONVEYOR') ||
+                             (process.phase || '').includes('MOTION') ||
+                             (process.phase || '').includes('ROUTE_PREPARE');
 
+    // Анимация ленты (реальное движение)
+    let belt = els.lineCells.querySelector('.conveyor-belt');
+    if (!belt) {
+        belt = document.createElement('div');
+        belt.className = 'conveyor-belt';
+        els.lineCells.insertBefore(belt, els.lineCells.firstChild);
+    }
+    belt.classList.toggle('moving', !!isConveyorMoving);
+
+    const phaseEl = document.getElementById('process-phase') || (() => {
+        const p = document.createElement('div');
+        p.id = 'process-phase';
+        p.style.cssText = 'position:absolute;right:6px;top:-1px;font:700 8.5px var(--font-mono);color:#8fa3b8;opacity:0.85;pointer-events:none;';
+        els.lineCells.parentElement.appendChild(p);
+        return p;
+    })();
+    if (process.phase) {
+        phaseEl.textContent = (process.label || process.phase).slice(0, 22).toUpperCase();
+        phaseEl.style.opacity = isConveyorMoving ? '0.95' : '0.65';
+    } else {
+        phaseEl.textContent = '';
+    }
+
+    const current = lineParts || [];
+    const prev = _prevLineParts || [];
+    const doAnimate = isConveyorMoving && prev.length > 0;
+
+    // Сброс стилей
+    for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        if (c.classList.contains('conveyor-belt')) continue;
+        c.style.transitionDuration = '';
+        c.style.transform = '';
+        c.style.opacity = '';
+        c.classList.remove('moving-right', 'entering', 'exiting');
+    }
+
+    // Обновляем содержимое
     for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
-        const part = lineParts.find(p => p.position === i);
+        if (cell.classList.contains('conveyor-belt')) continue;
 
+        const part = current.find(p => p.position === i);
         cell.className = 'line-cell';
-        cell.textContent = part ? `№${part.id}` : '';
-
-        const activePositions = Array.isArray(process.positions)
-            ? process.positions
-            : [];
-        if (activePositions.includes(i)) {
-            cell.classList.add('process-active');
-            if ((process.phase || '').includes('CAMERA')
-                || (process.phase || '').includes('ANALYSIS')) {
-                cell.classList.add('process-camera');
-            }
-            if ((process.phase || '').includes('ROUTE')
-                || (process.phase || '').includes('DROP')) {
-                cell.classList.add('process-route');
-            }
-        }
+        cell.dataset.partId = part ? part.id : '';
 
         if (part) {
+            cell.textContent = `№${part.id}`;
             cell.classList.add('occupied');
-
             const cat = (part.category || '').toUpperCase();
-            if (cat === 'BAD') {
-                cell.classList.add('cell-bad');
-            } else if (cat === 'CLEANUP') {
-                cell.classList.add('cell-cleanup');
-            } else if (cat === 'GOOD') {
-                cell.classList.add('cell-good');
-            }
-
+            if (cat === 'BAD') cell.classList.add('cell-bad');
+            else if (cat === 'CLEANUP') cell.classList.add('cell-cleanup');
+            else if (cat === 'GOOD') cell.classList.add('cell-good');
             cell.title = `Деталь №${part.id} · ${categoryLabel(part.category)}`;
         } else {
+            cell.textContent = '';
             cell.title = '';
         }
+
+        const active = Array.isArray(process.positions) ? process.positions : [];
+        if (active.includes(i)) {
+            cell.classList.add('process-active');
+            if ((process.phase || '').includes('CAMERA') || (process.phase || '').includes('ANALYSIS')) cell.classList.add('process-camera');
+            if ((process.phase || '').includes('ROUTE') || (process.phase || '').includes('DROP')) cell.classList.add('process-route');
+        }
     }
+
+    // === РЕАЛИСТИЧНЫЕ АНИМАЦИИ ДВИЖЕНИЯ (только когда лента реально едет) ===
+    // Под реальную механику: 1 шаг = ~410-450мс (move_step + wait_stop)
+    // Используем conveyor.speed для масштабирования (выше скорость — короче анимация)
+    if (doAnimate) {
+        let DURATION = 420;
+        const conv = process.conveyor || {};
+        if (conv.speed) {
+            // 20000 -> 420мс; 30000 -> ~280мс; 15000 -> ~560мс
+            const spd = Number(conv.speed) || 20000;
+            DURATION = Math.max(265, Math.min(620, Math.round(8400000 / spd)));
+        }
+
+        // Apply dynamic duration to container for belt & cells
+        els.lineCells.style.setProperty('--move-duration', `${DURATION}ms`);
+
+        // 1. Реальное перемещение деталей: используем "летающие" overlay-элементы
+        //    + улучшенный реализм (подъём + микро-вибрация)
+        for (let i = 0; i < 7; i++) {
+            const fromCell = cells[i];
+            const had = prev.find(p => p.position === i);
+            const has = current.find(p => p.position === i);
+
+            const movedRight = had && (!has || has.id !== had.id);
+
+            if (movedRight) {
+                const toCell = cells[i + 1];
+                if (!toCell || !fromCell) continue;
+
+                const partId = had.id;
+                const cat = (had.category || '').toUpperCase();
+
+                const flyer = document.createElement('div');
+                flyer.className = 'line-cell flying-part lifting wobbling';
+                flyer.textContent = `№${partId}`;
+                flyer.dataset.partId = partId;
+
+                if (cat === 'BAD') flyer.classList.add('cell-bad');
+                else if (cat === 'CLEANUP') flyer.classList.add('cell-cleanup');
+                else if (cat === 'GOOD') flyer.classList.add('cell-good');
+
+                const parentRect = els.lineCells.getBoundingClientRect();
+                const fromRect = fromCell.getBoundingClientRect();
+                const toRect = toCell.getBoundingClientRect();
+
+                const startLeft = fromRect.left - parentRect.left;
+                const startTop = fromRect.top - parentRect.top;
+
+                flyer.style.position = 'absolute';
+                flyer.style.left = `${startLeft}px`;
+                flyer.style.top = `${startTop}px`;
+                flyer.style.width = `${fromRect.width}px`;
+                flyer.style.height = `${fromRect.height}px`;
+                flyer.style.transition = `transform ${DURATION}ms cubic-bezier(0.18, 0.0, 0.22, 1), opacity ${DURATION}ms ease`;
+                flyer.style.zIndex = '45';
+                flyer.style.boxShadow = '1px 6px 14px rgba(0,0,0,0.42)';
+
+                // Начальное положение с подъёмом
+                flyer.style.transform = 'translateY(-2.5px) scale(1.02)';
+
+                els.lineCells.appendChild(flyer);
+
+                requestAnimationFrame(() => {
+                    const deltaX = toRect.left - fromRect.left;
+
+                    // Финальная позиция: подъём сохраняется, потом в конце будет проседание
+                    flyer.style.transform = `translateX(${deltaX}px) translateY(-2px) scale(1.015)`;
+
+                    // Проседание в конце движения (реалистичный "приземление" на ленте)
+                    setTimeout(() => {
+                        if (flyer && flyer.parentNode) {
+                            flyer.style.transition = `transform ${Math.round(DURATION * 0.28)}ms cubic-bezier(0.4, 0.0, 1, 1)`;
+                            flyer.style.transform = `translateX(${deltaX}px) translateY(0px) scale(0.995)`;
+                        }
+                    }, DURATION * 0.72);
+
+                    setTimeout(() => {
+                        if (flyer && flyer.parentNode) {
+                            flyer.parentNode.removeChild(flyer);
+                        }
+                    }, DURATION + 45);
+                });
+
+                // Очищаем исходную ячейку
+                setTimeout(() => {
+                    if (fromCell && fromCell.parentNode && !current.find(p => p.position === i)) {
+                        fromCell.textContent = '';
+                        fromCell.classList.remove('occupied', 'cell-bad', 'cell-cleanup', 'cell-good');
+                    }
+                }, DURATION * 0.62);
+            }
+        }
+
+        // 2. Появление новой детали на входе (позиция 0) — реалистичный въезд
+        const newIn = current.find(p => p.position === 0);
+        const oldIn = prev.find(p => p.position === 0);
+        const c0 = cells[0];
+
+        if (newIn && (!oldIn || oldIn.id !== newIn.id)) {
+            const cat = (newIn.category || '').toUpperCase();
+            c0.textContent = `№${newIn.id}`;
+            c0.className = 'line-cell occupied entering-with-trail';
+            if (cat === 'BAD') c0.classList.add('cell-bad');
+            else if (cat === 'CLEANUP') c0.classList.add('cell-cleanup');
+            else if (cat === 'GOOD') c0.classList.add('cell-good');
+
+            // Начальное состояние: сильно слева + чуть сжата + почти невидима
+            c0.style.transitionDuration = '0ms';
+            c0.style.transform = 'translateX(-122%) scale(0.82)';
+            c0.style.opacity = '0.04';
+
+            requestAnimationFrame(() => {
+                c0.style.transitionDuration = `${DURATION}ms`;
+                c0.style.transitionTimingFunction = 'cubic-bezier(0.18, 0.0, 0.22, 1)';
+
+                // Въезд + небольшое "распрямление"
+                c0.style.transform = 'translateX(0) scale(1)';
+                c0.style.opacity = '1';
+
+                // Убираем класс следа после въезда
+                setTimeout(() => {
+                    if (c0 && c0.parentNode) {
+                        c0.classList.remove('entering-with-trail');
+                        c0.style.transitionDuration = '';
+                        c0.style.transform = '';
+                        c0.style.opacity = '';
+                    }
+                }, DURATION + 40);
+            });
+        }
+
+        // 3. Уход детали в распределитель (позиция 7) — драматичный вылет + падение
+        const oldOut = prev.find(p => p.position === 7);
+        const newOut = current.find(p => p.position === 7);
+        const c7 = cells[7];
+
+        if (oldOut && (!newOut || newOut.id !== oldOut.id)) {
+            const partId = oldOut.id;
+            const cat = (oldOut.category || '').toUpperCase();
+
+            // Создаём "падающую" копию детали — вылетает вправо и вниз (в распределитель)
+            const exitFlyer = document.createElement('div');
+            exitFlyer.className = 'line-cell flying-part exiting-flyer';
+            exitFlyer.textContent = `№${partId}`;
+            exitFlyer.dataset.partId = partId;
+
+            if (cat === 'BAD') exitFlyer.classList.add('cell-bad');
+            else if (cat === 'CLEANUP') exitFlyer.classList.add('cell-cleanup');
+            else if (cat === 'GOOD') exitFlyer.classList.add('cell-good');
+
+            const parentRect = els.lineCells.getBoundingClientRect();
+            const c7Rect = c7.getBoundingClientRect();
+
+            const startLeft = c7Rect.left - parentRect.left;
+            const startTop = c7Rect.top - parentRect.top;
+
+            exitFlyer.style.position = 'absolute';
+            exitFlyer.style.left = `${startLeft}px`;
+            exitFlyer.style.top = `${startTop}px`;
+            exitFlyer.style.width = `${c7Rect.width}px`;
+            exitFlyer.style.height = `${c7Rect.height}px`;
+            exitFlyer.style.zIndex = '50';
+            exitFlyer.style.transition = `transform ${DURATION}ms cubic-bezier(0.32, 0.02, 0.55, 1), 
+                                          opacity ${DURATION}ms ease`;
+            exitFlyer.style.boxShadow = '2px 8px 18px rgba(0,0,0,0.45)';
+
+            els.lineCells.appendChild(exitFlyer);
+
+            // Прячем оригинальную ячейку сразу
+            c7.style.transitionDuration = '60ms';
+            c7.style.opacity = '0.15';
+
+            requestAnimationFrame(() => {
+                // Драматичный вылет: вправо + вниз + наклон + уменьшение
+                exitFlyer.style.transform = `translateX(138px) translateY(38px) rotate(14deg) scale(0.74)`;
+                exitFlyer.style.opacity = '0';
+
+                // Пульс лопастей распределителя (если есть)
+                pulseDistributorBlades(DURATION);
+            });
+
+            setTimeout(() => {
+                if (exitFlyer && exitFlyer.parentNode) {
+                    exitFlyer.parentNode.removeChild(exitFlyer);
+                }
+                if (c7 && c7.parentNode) {
+                    if (!newOut) {
+                        c7.textContent = '';
+                        c7.classList.remove('occupied', 'cell-bad', 'cell-cleanup', 'cell-good');
+                    }
+                    c7.style.transitionDuration = '';
+                    c7.style.opacity = '';
+                    c7.style.transform = '';
+                }
+            }, DURATION + 60);
+        }
+    }
+
+    _prevLineParts = current.map(p => ({...p}));
+}
+
+// === Вспомогательная функция: пульс лопастей распределителя при вылете детали ===
+function pulseDistributorBlades(duration = 420) {
+    const blades = [
+        document.getElementById('dist1-blade'),
+        document.getElementById('dist2-blade')
+    ].filter(Boolean);
+
+    blades.forEach(blade => {
+        const origTransition = blade.style.transition;
+        blade.style.transition = `box-shadow ${duration * 0.4}ms ease, transform ${duration * 0.35}ms ease`;
+
+        // Яркая вспышка + лёгкий "толчок"
+        blade.style.boxShadow = '0 0 0 4px rgba(255, 200, 80, 0.55)';
+        blade.style.transform = 'translate(-50%, -50%) scale(1.15)';
+
+        setTimeout(() => {
+            if (blade) {
+                blade.style.boxShadow = '';
+                blade.style.transform = 'translate(-50%, -50%)';
+            }
+        }, Math.round(duration * 0.55));
+
+        setTimeout(() => {
+            if (blade) {
+                blade.style.transition = origTransition || 'left 100ms linear';
+            }
+        }, duration + 80);
+    });
 }

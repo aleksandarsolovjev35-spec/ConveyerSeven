@@ -399,6 +399,7 @@ function renderFrameAnalysisRules(rules) {
                 ? 'skipped'
                 : (rule.triggered ? 'triggered' : 'ok'));
         item.className = `frame-analysis-item ${stateClass}`;
+
         const name = document.createElement('span');
         const result = document.createElement('b');
         name.textContent = rule.name || 'Без названия';
@@ -407,17 +408,30 @@ function renderFrameAnalysisRules(rules) {
                 ? 'НЕ ВЫПОЛНЕНО'
                 : (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА')
         );
-        if (rule.detail) item.title = String(rule.detail);
+
         item.append(name, result);
+
+        // === НОВАЯ ПРОСТАЯ ПРИЧИНА (human_cause) ===
+        if (rule.triggered && rule.human_cause) {
+            const cause = document.createElement('div');
+            cause.className = 'frame-analysis-human-cause';
+            cause.textContent = rule.human_cause;
+            item.appendChild(cause);
+            item.classList.add('has-human-cause');
+        }
+
         const detailLines = Array.isArray(rule.detail_lines)
             ? rule.detail_lines.filter(Boolean)
             : [];
         const visibleDetails = detailLines.length
             ? detailLines
             : (rule.detail ? [String(rule.detail)] : []);
+
+        // Показываем технические детали только если нет короткой причины
         if (
             (rule.triggered || rule.skipped || rule.show_detail)
             && visibleDetails.length
+            && !rule.human_cause
         ) {
             item.classList.add('has-detail');
             for (const detailLine of visibleDetails) {
@@ -426,7 +440,16 @@ function renderFrameAnalysisRules(rules) {
                 reason.textContent = String(detailLine);
                 item.appendChild(reason);
             }
+        } else if (rule.detail && !rule.human_cause && !rule.triggered) {
+            // Для нормальных правил показываем коротко
+            if (rule.detail.length < 80) {
+                const short = document.createElement('small');
+                short.className = 'frame-analysis-reason';
+                short.textContent = rule.detail;
+                item.appendChild(short);
+            }
         }
+
         els.frameAnalysisRules.appendChild(item);
     }
 }
