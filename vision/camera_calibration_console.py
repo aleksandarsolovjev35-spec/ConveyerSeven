@@ -29,10 +29,6 @@ JPEG_QUALITY = 78
 PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
 NEAR_BLACK_P99_MAX = 12.0
-CAMERA_SCAN_BATCH_SIZE = 7
-CAMERA_SCAN_BATCH_TIMEOUT = 10.0
-CAMERA_SCAN_POLL_INTERVAL = 0.01
-CAMERA_SCAN_CANCEL_GRACE = 0.25
 
 ROLE_ORDER = (
     "INPUT_LEFT",
@@ -89,49 +85,33 @@ def _frame_error(frame) -> str | None:
     return None
 
 
-def _probe_capture(capture, attempts: int = 5, cancel_event=None):
+def _probe_capture(capture, attempts: int = 5):
     error = "камера не вернула кадр"
     for _ in range(attempts):
-        if cancel_event is not None and cancel_event.is_set():
-            return None, "проверка отменена"
         ok, frame = capture.read()
         if ok and frame is not None:
             error = _frame_error(frame)
             if error is None:
                 return frame, None
-        if cancel_event is None:
-            time.sleep(0.03)
-        elif cancel_event.wait(0.03):
-            return None, "проверка отменена"
+        time.sleep(0.03)
     return None, error
 
 
-def _probe_camera_batch(camera_ids, factory):
-    """Параллельно открыть и проверить одну ограниченную группу Camera ID."""
+def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None):
+    """Найти Camera ID, которые дают валидный production-кадр."""
 
-    cancel = threading.Event()
-    lock = threading.Lock()
-    captures = {}
-    finished = set()
-
-    def _worker(camera_id):
+    factory = capture_factory or _open_capture
+    available = []
+    for camera_id in range(int(max_tested)):
         capture = None
         try:
             capture = factory(camera_id)
             if capture is None or not capture.isOpened():
-                return
+                continue
             _configure_capture(capture)
-            _frame, error = _probe_capture(
-                capture,
-                cancel_event=cancel,
-            )
-            if error is not None:
-                return
-            with lock:
-                if cancel.is_set():
-                    return
-                captures[camera_id] = capture
-                capture = None
+            _frame, error = _probe_capture(capture)
+            if error is None:
+                available.append(camera_id)
         except Exception as exc:
             print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
         finally:
@@ -140,74 +120,7 @@ def _probe_camera_batch(camera_ids, factory):
                     capture.release()
                 except Exception:
                     pass
-            with lock:
-                finished.add(camera_id)
-
-    ids = tuple(int(camera_id) for camera_id in camera_ids)
-    workers = []
-    for camera_id in ids:
-        worker = threading.Thread(
-            target=_worker,
-            args=(camera_id,),
-            daemon=True,
-            name=f"camera-scan-{camera_id}",
-        )
-        workers.append(worker)
-        worker.start()
-
-    deadline = time.monotonic() + CAMERA_SCAN_BATCH_TIMEOUT
-    while time.monotonic() < deadline:
-        with lock:
-            if len(finished) == len(ids):
-                break
-        time.sleep(CAMERA_SCAN_POLL_INTERVAL)
-    else:
-        cancel.set()
-        pending = [
-            str(camera_id)
-            for camera_id, worker in zip(ids, workers)
-            if worker.is_alive()
-        ]
-        if pending:
-            print(
-                "[CAMERA CALIBRATION] Timeout Camera ID: "
-                + ", ".join(pending)
-            )
-
-    if cancel.is_set():
-        cancel_deadline = time.monotonic() + CAMERA_SCAN_CANCEL_GRACE
-        for worker in workers:
-            worker.join(max(0.0, cancel_deadline - time.monotonic()))
-
-    with lock:
-        return {
-            camera_id: captures[camera_id]
-            for camera_id in sorted(captures)
-        }
-
-
-def _camera_id_batches(max_tested):
-    all_ids = range(max(0, int(max_tested)))
-    batch = []
-    for camera_id in all_ids:
-        batch.append(camera_id)
-        if len(batch) >= CAMERA_SCAN_BATCH_SIZE:
-            yield tuple(batch)
-            batch = []
-    if batch:
-        yield tuple(batch)
-
-
-def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None):
-    """Найти Camera ID, которые дают валидный production-кадр."""
-
-    factory = capture_factory or _open_capture
-    available = []
-    for camera_ids in _camera_id_batches(max_tested):
-        batch = _probe_camera_batch(camera_ids, factory)
-        available.extend(batch)
-        _release_camera_pool(batch)
-    return sorted(available)
+    return available
 
 
 def _open_camera_pool(
@@ -215,30 +128,33 @@ def _open_camera_pool(
     required_count=len(ROLE_ORDER),
     capture_factory=None,
 ):
-    """Открыть необходимое число камер и оставить их handles живыми.
-
-    Camera ID проверяются группами: семь физических устройств больше не ждут
-    последовательного запуска DirectShow. Следующая группа открывается только
-    если в предыдущей не набран полный комплект, поэтому лишние камеры не
-    занимают USB и тестовый wizard по-прежнему останавливается на 7/7.
-    """
+    """Открыть только необходимое число камер и оставить handles живыми."""
 
     factory = capture_factory or _open_capture
-    required = max(0, int(required_count))
     pool = {}
-    for camera_ids in _camera_id_batches(max_tested):
-        if len(pool) >= required:
-            break
-        batch = _probe_camera_batch(camera_ids, factory)
-        for camera_id, capture in batch.items():
-            if len(pool) < required:
-                pool[camera_id] = capture
-            else:
+    for camera_id in range(int(max_tested)):
+        capture = None
+        try:
+            capture = factory(camera_id)
+            if capture is None or not capture.isOpened():
+                continue
+            _configure_capture(capture)
+            _frame, error = _probe_capture(capture)
+            if error is not None:
+                continue
+            pool[camera_id] = capture
+            capture = None
+            if len(pool) >= int(required_count):
+                break
+        except Exception as exc:
+            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
+        finally:
+            if capture is not None:
                 try:
                     capture.release()
                 except Exception:
                     pass
-    return {camera_id: pool[camera_id] for camera_id in sorted(pool)}
+    return pool
 
 
 def _release_camera_pool(pool):
