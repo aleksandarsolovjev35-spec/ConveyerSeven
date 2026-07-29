@@ -369,7 +369,7 @@ SPIDER_IN/OUT flatness_short:    width=1.74 mm, height=0.66 mm
 TOP contacts L/R:                width=28 px, height=35 px
 TOP contacts T/B:                width=30 px, height=28 px
 TOP platform, внутренний:        width=260 px, height=120 px
-TOP platform, внешняя граница:   width=305 px, height=140 px
+TOP platform, область заплыва:   строится по контактам (без фиксированного размера)
 ```
 
 TOP больше не использует физический масштаб `px/um`. Размеры задаются непосредственно в пикселях:
@@ -382,9 +382,12 @@ TOP больше не использует физический масштаб `
     "top_contacts_edge_rect_height_px": 28,
     "top_platform_inscribed_rect_width_px": 260,
     "top_platform_inscribed_rect_height_px": 120,
-    "top_platform_overlap_boundary_width_px": 305,
-    "top_platform_overlap_boundary_height_px": 140,
-    "top_platform_overlap_excess_component_min_px": 3
+    "top_platform_overlap_excess_component_min_px": 3,
+    "top_platform_overlap_contact_min_confidence": 0.3,
+    "top_platform_overlap_contact_inner_ratio": 0.5,
+    "top_platform_overlap_margin_px": 0,
+    "top_platform_overlap_expand_x_ratio": 1.0,
+    "top_platform_overlap_expand_y_ratio": 1.0
 }
 ```
 
@@ -398,9 +401,17 @@ Renderer показывает platform bbox, четыре reference-линии, 
 
 Renderer показывает нейтральный contour platform, rectangle, исходный центр bbox и фактический центр rectangle. При смещении центры соединяются линией; при невписываемости красным становится rectangle, а не вся mask. Невозможность построить reference обозначается `NO PLATFORM` или `NO ORIENTATION`. Справа остаются только размер, angle, centered/shifted/not fitted и shift distance; coordinates centers и extras не публикуются.
 
-`top_contacts` остаётся самостоятельным и не изменяет решение по заплыву платформы. Отдельный файл `rule_top_platform_overlap.py` и правило `platform_contacts_overlap` сохранены, но старая проверка фактического пересечения `platform/contact` внутри него удалена. Теперь правило строит внешний прямоугольник с тем же фактическим центром и углом, что и успешно вписанный внутренний прямоугольник `260×120 px`; размер внешней границы независимо задаётся как `305×140 px`. Пиксели platform mask снаружи границы разбиваются на 8-связные компоненты. Компоненты из 1–2 пикселей считаются шумом; связный выход от `3 px` бракует деталь как заплыв платформы. Контакты этому правилу не требуются.
+`top_contacts` остаётся самостоятельным и не изменяет решение по заплыву платформы. Отдельный файл `rule_top_platform_overlap.py` и правило `platform_contacts_overlap` сохранены, но старая проверка фактического пересечения `platform/contact` внутри него удалена.
 
-Renderer показывает нейтральный contour platform и постоянную зелёную пунктирную внешнюю границу; красным заполняются только confirmed outside pixels. Граница не меняет цвет при браке, а надпись `PLATFORM OVERFLOW` удалена. Если inner rectangle не построен, показываются platform contour, красный attempted rectangle и `NO INNER RECT`; также используются `NO PLATFORM` и `NO ORIENTATION`. Справа остаются только boundary size, component min, largest component и confirmed pixels; raw/ignored metrics, anchor center, angle и дополнительные platform detections не публикуются.
+Теперь правило строит прямоугольную область **по контактам**. Контакты TOP с confidence не ниже `top_platform_overlap_contact_min_confidence` группируются по сторонам платформы `L/R/T/B` в системе координат, повёрнутой на угол platform mask.
+
+Платформа всегда считается стоящей вертикально. `minAreaRect` возвращает угол *длинной* оси mask, поэтому у вертикально стоящей детали он равен ~90°, и рабочая система координат легла бы набок: стороны `L/R` и `T/B` поменялись бы местами, а `expand_x/y_ratio` растягивали бы область поперёк ожидаемого направления. Угол нормализуется в диапазон `[-45°, 45°]`, так что ось X рабочей системы всегда совпадает с горизонталью детали (стороны `L/R`), ось Y — с вертикалью (`T/B`). Реальный физический наклон детали при этом сохраняется. Для каждого контакта берётся опорная координата по `top_platform_overlap_contact_inner_ratio`: `0.5` — центр контакта (значение по умолчанию), `0` — кромка, обращённая к платформе, `1` — внешняя кромка. Медиана опорных координат внутри каждой группы задаёт одну сторону прямоугольника; полученная область дополнительно расширяется наружу на `top_platform_overlap_margin_px` и масштабируется коэффициентами `top_platform_overlap_expand_x_ratio` / `expand_y_ratio`. Затем прямоугольник возвращается в исходную систему координат с тем же углом, что и платформа.
+
+Область строится только по контактам — концентрический fallback вокруг вписанного прямоугольника `260×120 px` удалён вместе с параметрами `top_platform_overlap_boundary_width/height_px`. Если контактов не хватает хотя бы по одному на каждую из сторон `L/R/T/B`, построение невозможно: правило бракует деталь с reason `contact_boundary_not_built` и сообщением `NO CONTACT RECT`.
+
+Если платформа пересекает границы построенного прямоугольника, срабатывает правило пересечения. Пиксели platform mask снаружи границы разбиваются на 8-связные компоненты: компоненты из 1–2 пикселей считаются шумом, связный выход от `top_platform_overlap_excess_component_min_px = 3 px` бракует деталь как заплыв платформы.
+
+Renderer показывает нейтральный contour platform и заметную сплошную пурпурную `(255, 0, 255)` рамку области толщиной 3 px, а также пурпурные точки опорных контактов, по которым область построена. Вышедшая за границу область выделяется полупрозрачной красной заливкой с красным контуром. Рамка области не меняет цвет при браке, надпись `PLATFORM OVERFLOW` отсутствует. Используются короткие сообщения `NO PLATFORM`, `NO ORIENTATION`, `NO CONTACT RECT`. Справа остаются boundary size, component min, largest component, confirmed pixels и число контактов области; raw/ignored metrics, anchor center и angle не публикуются.
 
 ### TOP shells внутри case_central
 

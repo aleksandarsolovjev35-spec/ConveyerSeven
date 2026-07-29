@@ -1,3 +1,4 @@
+import math
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,21 @@ def top_contacts():
         rect("contacts", 580, 530, 620, 570),
     ])
     return contacts
+
+
+def _tilted_mask(width, height, angle_deg):
+    """Повёрнутый прямоугольник как detection с одной только mask."""
+    radians = math.radians(angle_deg)
+    cos_a = math.cos(radians)
+    sin_a = math.sin(radians)
+    corners = [
+        (-width / 2.0, -height / 2.0), (width / 2.0, -height / 2.0),
+        (width / 2.0, height / 2.0), (-width / 2.0, height / 2.0),
+    ]
+    return {"mask": [
+        [500.0 + x * cos_a - y * sin_a, 400.0 + x * sin_a + y * cos_a]
+        for x, y in corners
+    ]}
 
 
 def glass_references():
@@ -283,80 +299,107 @@ class TopRuleTests(unittest.TestCase):
         self.assertNotIn("overlap_mask", contacts_source)
         self.assertNotIn("platform_overlap_region", contacts_source)
 
-    def test_platform_overlap_boundary_uses_concentric_boundary_without_contacts(self):
+    def test_platform_overlap_area_is_built_from_contact_centers(self):
         rule = TopPlatformOverlapRule(self.thresholds)
         self.assertEqual(rule.name, "platform_contacts_overlap")
-        clean_platform = rect("platform", 300, 200, 570, 330)
-        clean = rule.check({"TOP": [clean_platform]})
+        contacts = top_contacts()
+        clean = rule.check({"TOP": [top_platform(), *contacts]})
         details = clean.details["per_role"]["TOP"]
         self.assertFalse(clean.triggered)
-        self.assertEqual(details["anchor"], "top_platform_inscribed_rect")
-        self.assertEqual(details["boundary_width_px"], 305.0)
-        self.assertEqual(details["boundary_height_px"], 140.0)
-        self.assertEqual(details["excess_component_min_px"], 3)
-        self.assertTrue(any(
-            drawing.get("type") == "platform_overlap_boundary"
-            for drawing in clean.drawings
-        ))
-        platform_result = TopPlatformRule(self.thresholds).check({
-            "TOP": [clean_platform],
-        })
-        inner_points = next(
-            drawing["points"]
-            for drawing in platform_result.drawings
-            if drawing.get("type") == "top_platform_inscribed_rect"
+        self.assertEqual(details["anchor"], "contacts_rectangle")
+        self.assertEqual(details["contact_inner_ratio"], 0.5)
+        self.assertEqual(details["used_contacts"], 14)
+        self.assertEqual(
+            details["contact_groups"], {"L": 5, "R": 5, "T": 2, "B": 2},
         )
-        inner_center = np.asarray(inner_points, dtype=np.float32).mean(axis=0)
+        # Границы проходят через центры контактов: 250..750 x 150..550.
+        self.assertAlmostEqual(details["boundary_width_px"], 500.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 400.0, places=1)
         np.testing.assert_allclose(
-            details["boundary_center"], inner_center, atol=0.51,
+            details["boundary_center"], [500.0, 350.0], atol=0.51,
         )
+        boundary = next(
+            drawing for drawing in clean.drawings
+            if drawing.get("type") == "platform_overlap_boundary"
+        )
+        self.assertEqual(boundary["anchor"], "contacts_rectangle")
+        self.assertEqual(len(boundary["points"]), 4)
+        anchors = next(
+            drawing for drawing in clean.drawings
+            if drawing.get("type") == "platform_overlap_contact_anchors"
+        )
+        self.assertEqual(len(anchors["points"]), 14)
 
+    def test_platform_crossing_contact_area_triggers_and_marks_excess(self):
+        rule = TopPlatformOverlapRule(self.thresholds)
         overflow_platform = {
             "class": "platform",
             "confidence": 0.99,
-            "bbox": [300, 200, 630, 330],
+            "bbox": [300, 200, 800, 500],
             "mask": [
-                [300, 200], [570, 200], [570, 249], [630, 249],
-                [630, 261], [570, 261], [570, 330], [300, 330],
+                [300, 200], [700, 200], [700, 330], [800, 330],
+                [800, 370], [700, 370], [700, 500], [300, 500],
             ],
         }
-        hit = rule.check({"TOP": [overflow_platform]})
+        hit = rule.check({"TOP": [overflow_platform, *top_contacts()]})
         details = hit.details["per_role"]["TOP"]
         self.assertTrue(hit.triggered)
+        self.assertEqual(details["anchor"], "contacts_rectangle")
         self.assertGreaterEqual(details["largest_component_pixels"], 3)
         self.assertGreaterEqual(details["excess_pixels"], 3)
-        self.assertTrue(any(
-            drawing.get("type") == "platform_overlap_region"
-            for drawing in hit.drawings
-        ))
+        region = next(
+            drawing for drawing in hit.drawings
+            if drawing.get("type") == "platform_overlap_region"
+        )
+        self.assertTrue(region["triggered"])
+        self.assertTrue(region["contours"])
+
         rendered = DebugOverlay.render_frame(
             np.zeros((720, 1280, 3), dtype=np.uint8),
             "TOP",
             [hit],
         )
+        # Вышедшая за границу область закрашена красным.
         self.assertGreater(int(np.count_nonzero(rendered[:, :, 2])), 0)
+        # Сама область выделена заметным пурпурным прямоугольником.
         self.assertGreater(int(np.count_nonzero(np.all(
-            rendered == np.asarray([0, 200, 0], dtype=np.uint8),
+            rendered == np.asarray([255, 0, 255], dtype=np.uint8),
             axis=2,
         ))), 0)
 
-        too_small = rule.check({
-            "TOP": [rect("platform", 0, 0, 100, 40)],
-        })
-        self.assertTrue(too_small.triggered)
-        self.assertEqual(
-            too_small.details["per_role"]["TOP"]["reason"],
-            "inner_platform_reference_not_fitted",
-        )
-        self.assertTrue(any(
-            drawing.get("type") == "platform_overlap_inner_attempt"
-            for drawing in too_small.drawings
-        ))
+    def test_platform_overlap_reports_missing_contacts_and_platform(self):
+        rule = TopPlatformOverlapRule(self.thresholds)
+        no_contacts = rule.check({"TOP": [top_platform()]})
+        details = no_contacts.details["per_role"]["TOP"]
+        self.assertTrue(no_contacts.triggered)
+        self.assertEqual(details["reason"], "contact_boundary_not_built")
+        self.assertEqual(details["used_contacts"], 0)
         self.assertTrue(any(
             drawing.get("type") == "construction_error"
-            and drawing.get("message") == "NO INNER RECT"
-            for drawing in too_small.drawings
+            and drawing.get("message") == "NO CONTACT RECT"
+            for drawing in no_contacts.drawings
         ))
+        self.assertFalse(any(
+            drawing.get("type") == "platform_overlap_boundary"
+            for drawing in no_contacts.drawings
+        ))
+
+        partial = rule.check({
+            "TOP": [
+                top_platform(),
+                rect("contacts", 230, 280, 270, 320),
+                rect("contacts", 730, 280, 770, 320),
+            ],
+        })
+        partial_details = partial.details["per_role"]["TOP"]
+        self.assertTrue(partial.triggered)
+        self.assertEqual(
+            partial_details["reason"], "contact_boundary_not_built",
+        )
+        self.assertEqual(
+            partial_details["contact_groups"],
+            {"L": 1, "R": 1, "T": 0, "B": 0},
+        )
 
         missing = rule.check({"TOP": []})
         self.assertTrue(missing.triggered)
@@ -377,6 +420,82 @@ class TopRuleTests(unittest.TestCase):
         self.assertNotIn("draw_text_with_bg", source)
         self.assertNotIn("cv2.putText", source)
         self.assertNotIn("cv2.fillPoly", source)
+
+    def test_platform_overlap_treats_platform_as_always_vertical(self):
+        """Вертикально стоящая платформа не должна класть область набок."""
+        # Платформа выше, чем шире: minAreaRect отдаёт угол длинной оси 90°.
+        vertical_platform = rect("platform", 500, 200, 800, 600)
+        contacts = []
+        for center_y in (240, 320, 400, 480, 560):
+            contacts.append(
+                rect("contacts", 440, center_y - 15, 480, center_y + 15)
+            )
+            contacts.append(
+                rect("contacts", 820, center_y - 15, 860, center_y + 15)
+            )
+        for center_x in (580, 720):
+            contacts.append(
+                rect("contacts", center_x - 15, 140, center_x + 15, 180)
+            )
+            contacts.append(
+                rect("contacts", center_x - 15, 620, center_x + 15, 660)
+            )
+
+        rule = TopPlatformOverlapRule(self.thresholds)
+        result = rule.check({"TOP": [vertical_platform, *contacts]})
+        details = result.details["per_role"]["TOP"]
+        self.assertFalse(result.triggered)
+        # Угол приведён к вертикали, а не к длинной оси.
+        self.assertEqual(details["angle_deg"], 0.0)
+        # Стороны совпадают с физическим расположением контактов.
+        self.assertEqual(
+            details["contact_groups"], {"L": 5, "R": 5, "T": 2, "B": 2},
+        )
+        # width — поперёк детали, height — вдоль неё.
+        self.assertAlmostEqual(details["boundary_width_px"], 380.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 480.0, places=1)
+
+        # expand_x растягивает область по горизонтали экрана.
+        thresholds = dict(self.thresholds)
+        thresholds["TOP.top_platform_overlap_expand_x_ratio"] = 2.0
+        stretched = TopPlatformOverlapRule(thresholds).check({
+            "TOP": [vertical_platform, *contacts],
+        })
+        points = np.asarray(next(
+            drawing["points"] for drawing in stretched.drawings
+            if drawing.get("type") == "platform_overlap_boundary"
+        ), dtype=float)
+        spans = points.max(axis=0) - points.min(axis=0)
+        self.assertAlmostEqual(spans[0], 760.0, places=1)
+        self.assertAlmostEqual(spans[1], 480.0, places=1)
+
+    def test_platform_overlap_angle_is_normalized_to_upright(self):
+        rule = TopPlatformOverlapRule(self.thresholds)
+        tall = {"mask": [[0, 0], [140, 0], [140, 305], [0, 305]]}
+        wide = {"mask": [[0, 0], [305, 0], [305, 140], [0, 140]]}
+        self.assertEqual(rule._upright_angle(tall), 0.0)
+        self.assertEqual(rule._upright_angle(wide), 0.0)
+        self.assertIsNone(rule._upright_angle({"mask": []}))
+        for angle in (-40.0, -7.5, 0.0, 7.5, 40.0):
+            self.assertAlmostEqual(
+                rule._upright_angle(_tilted_mask(140, 305, angle)),
+                angle,
+                places=2,
+            )
+
+    def test_platform_overlap_area_respects_margin_and_expand(self):
+        thresholds = dict(self.thresholds)
+        thresholds["TOP.top_platform_overlap_margin_px"] = 10
+        thresholds["TOP.top_platform_overlap_expand_x_ratio"] = 1.2
+        thresholds["TOP.top_platform_overlap_expand_y_ratio"] = 0.5
+        result = TopPlatformOverlapRule(thresholds).check({
+            "TOP": [top_platform(), *top_contacts()],
+        })
+        details = result.details["per_role"]["TOP"]
+        # (500 + 2*10) * 1.2 и (400 + 2*10) * 0.5
+        self.assertAlmostEqual(details["boundary_width_px"], 624.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 210.0, places=1)
+        self.assertTrue(result.triggered)
 
     def test_platform_overlap_boundary_ignores_only_one_or_two_connected_pixels(self):
         outside = np.zeros((12, 12), dtype=np.uint8)

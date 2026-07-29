@@ -337,32 +337,25 @@ def _detail_platform_overlap(per_role: dict) -> list:
         if reason == "invalid_platform_orientation":
             detail_lines.append(f"{role}: не построена orientation platform")
             continue
-        if reason == "inner_platform_reference_not_fitted":
+        if reason == "contact_boundary_not_built":
+            groups = role_details.get("contact_groups") or {}
+            group_text = "/".join(
+                f"{side}{int(groups.get(side) or 0)}"
+                for side in ("L", "R", "T", "B")
+            )
             detail_lines.append(
-                f"{role}: не построен inner rectangle 260x120 px"
+                f"{role}: область по контактам не построена "
+                f"({group_text})"
             )
             continue
-        anchor = role_details.get("anchor") or "unknown"
-        if anchor == "contacts_rectangle":
-            detail_lines.append(
-                f"{role}: boundary через контакты "
-                f"{float(role_details.get('boundary_width_px') or 0):g}x"
-                f"{float(role_details.get('boundary_height_px') or 0):g} px; "
-                f"ratio {float(role_details.get('contact_inner_ratio') or 0):g}; "
-                f"margin {float(role_details.get('margin_px') or 0):g}px; "
-                f"expand {float(role_details.get('expand_x_ratio') or 0):g}x"
-                f"{float(role_details.get('expand_y_ratio') or 0):g}; "
-                f"contacts {int(role_details.get('used_contacts') or 0)}"
-            )
-        else:
-            detail_lines.append(
-                f"{role}: boundary "
-                f"{float(role_details.get('boundary_width_px') or 0):g}x"
-                f"{float(role_details.get('boundary_height_px') or 0):g} px; "
-                f"component min "
-                f"{int(role_details.get('excess_component_min_px') or 0)} px; "
-                f"anchor {anchor}"
-            )
+        detail_lines.append(
+            f"{role}: boundary "
+            f"{float(role_details.get('boundary_width_px') or 0):g}x"
+            f"{float(role_details.get('boundary_height_px') or 0):g} px; "
+            f"component min "
+            f"{int(role_details.get('excess_component_min_px') or 0)} px; "
+            f"contacts {int(role_details.get('used_contacts') or 0)}"
+        )
         detail_lines.append(
             f"{role}: largest component "
             f"{int(role_details.get('largest_component_pixels') or 0)} px; "

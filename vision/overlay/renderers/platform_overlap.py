@@ -5,11 +5,13 @@ from vision.overlay.renderers.primitives import (
     COLOR_FAIL,
     LINE_FAIL,
     LINE_THIN,
-    DrawPrimitives,
 )
 
 COLOR_PLATFORM_CONTOUR = (180, 180, 180)
-COLOR_BOUNDARY = (0, 200, 0)
+# Заметная пурпурная область, построенная по контактам.
+COLOR_BOUNDARY = (255, 0, 255)
+LINE_BOUNDARY = 3
+ANCHOR_RADIUS = 3
 
 
 class PlatformOverlapRenderer:
@@ -31,34 +33,20 @@ class PlatformOverlapRenderer:
             PlatformOverlapRenderer._draw_cross(img, points)
 
     @staticmethod
-    def draw_inner_attempt(img, drawing):
-        points = drawing.get("points") or []
-        if len(points) < 4:
-            return
-        cv2.polylines(
-            img,
-            [np.asarray(points, dtype=np.int32)],
-            True,
-            COLOR_FAIL,
-            LINE_FAIL,
-        )
-
-    @staticmethod
     def draw_boundary(img, drawing):
         points = drawing.get("points") or []
         if len(points) < 4:
             return
-        integer_points = [tuple(map(int, point)) for point in points]
-        for index, start in enumerate(integer_points):
-            end = integer_points[(index+1) % len(integer_points)]
-            DrawPrimitives.draw_dashed_line(
-                img,
-                start,
-                end,
-                COLOR_BOUNDARY,
-                LINE_THIN,
-                dash_len=8,
-            )
+        contour = np.asarray(points, dtype=np.int32).reshape(-1, 1, 2)
+        cv2.polylines(img, [contour], True, COLOR_BOUNDARY, LINE_BOUNDARY)
+
+    @staticmethod
+    def draw_contact_anchors(img, drawing):
+        for point in drawing.get("points") or []:
+            if not point or len(point) != 2:
+                continue
+            center = (int(round(point[0])), int(round(point[1])))
+            cv2.circle(img, center, ANCHOR_RADIUS, COLOR_BOUNDARY, -1)
 
     @staticmethod
     def draw_region(img, drawing):
