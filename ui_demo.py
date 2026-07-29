@@ -178,6 +178,8 @@ class UiDemo:
         self.archive = DemoArchive(self.frames)
         self._next_step_at = 0.0
         self._review_until = 0.0
+        self._paused_step_remaining = None
+        self._paused_review_remaining = None
         self.thread = threading.Thread(target=self._loop, daemon=True)
 
     @staticmethod
@@ -338,6 +340,8 @@ class UiDemo:
             # callback from causing an immediate double step.
             self._next_step_at = time.monotonic() + STEP_SECONDS
             self._review_until = 0.0
+            self._paused_step_remaining = None
+            self._paused_review_remaining = None
             if self.diagnostics.get("kind") == "SELECTED_MODEL":
                 self.diagnostics = {
                     "status": "NOT_RUN",
@@ -369,6 +373,14 @@ class UiDemo:
         with self.lock:
             if self.state != "RUNNING":
                 return False
+            now = time.monotonic()
+            self._paused_step_remaining = max(0.0, self._next_step_at - now)
+            self._paused_review_remaining = (
+                max(0.0, self._review_until - now)
+                if self._review_until else None
+            )
+            self._next_step_at = 0.0
+            self._review_until = 0.0
             self.state = "PAUSED"
             self.process = self._process(
                 "PAUSED",
@@ -382,6 +394,16 @@ class UiDemo:
         with self.lock:
             if self.state != "PAUSED":
                 return False
+            now = time.monotonic()
+            if self._paused_review_remaining is not None:
+                self._review_until = now + self._paused_review_remaining
+            else:
+                self._next_step_at = now + max(
+                    STEP_SECONDS,
+                    self._paused_step_remaining or 0.0,
+                )
+            self._paused_step_remaining = None
+            self._paused_review_remaining = None
             self.state = "RUNNING"
             self.process = self._process(
                 "RESUMED",
