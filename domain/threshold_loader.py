@@ -87,6 +87,7 @@ TOP_PARAMETER_NAMES = (
     "top_platform_inscribed_rect_width_px",
     "top_platform_inscribed_rect_height_px",
     "top_platform_overlap_platform_min_confidence",
+    "top_platform_overlap_contacts_min_confidence",
     "top_platform_overlap_boundary_width_px",
     "top_platform_overlap_boundary_height_px",
     "top_platform_overlap_excess_component_min_px",
