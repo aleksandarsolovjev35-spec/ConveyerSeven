@@ -342,13 +342,27 @@ def _detail_platform_overlap(per_role: dict) -> list:
                 f"{role}: не построен inner rectangle 260x120 px"
             )
             continue
-        detail_lines.append(
-            f"{role}: boundary "
-            f"{float(role_details.get('boundary_width_px') or 0):g}x"
-            f"{float(role_details.get('boundary_height_px') or 0):g} px; "
-            f"component min "
-            f"{int(role_details.get('excess_component_min_px') or 0)} px"
-        )
+        anchor = role_details.get("anchor") or "unknown"
+        if anchor == "contacts_rectangle":
+            detail_lines.append(
+                f"{role}: boundary через контакты "
+                f"{float(role_details.get('boundary_width_px') or 0):g}x"
+                f"{float(role_details.get('boundary_height_px') or 0):g} px; "
+                f"ratio {float(role_details.get('contact_inner_ratio') or 0):g}; "
+                f"margin {float(role_details.get('margin_px') or 0):g}px; "
+                f"expand {float(role_details.get('expand_x_ratio') or 0):g}x"
+                f"{float(role_details.get('expand_y_ratio') or 0):g}; "
+                f"contacts {int(role_details.get('used_contacts') or 0)}"
+            )
+        else:
+            detail_lines.append(
+                f"{role}: boundary "
+                f"{float(role_details.get('boundary_width_px') or 0):g}x"
+                f"{float(role_details.get('boundary_height_px') or 0):g} px; "
+                f"component min "
+                f"{int(role_details.get('excess_component_min_px') or 0)} px; "
+                f"anchor {anchor}"
+            )
         detail_lines.append(
             f"{role}: largest component "
             f"{int(role_details.get('largest_component_pixels') or 0)} px; "

@@ -275,6 +275,33 @@ def main():
             )
             _ensure_initialization_active()
 
+            # Camera warmup after idle (fixes near-black after long pause)
+            monitor.boot_step_start(
+                "camera_warmup", "Прогрев камер",
+            )
+            try:
+                warmup_seconds = float(
+                    os.environ.get("CAMERA_WARMUP_SECONDS", "2.5")
+                )
+                # Не менее 0.5с, не более 10с для этапа загрузки
+                warmup_seconds = max(0.5, min(10.0, warmup_seconds))
+                stats = cameras.warmup_all(duration=warmup_seconds)
+                total_reads = sum(
+                    s.get("reads", 0) for s in stats.values()
+                )
+                monitor.boot_step_done(
+                    "camera_warmup",
+                    f"Прогрев камер: {total_reads} кадров",
+                )
+            except Exception as e:
+                monitor.boot_step_error(
+                    "camera_warmup",
+                    f"Ошибка прогрева камер: {e}",
+                )
+                _report_startup_failure()
+                return
+            _ensure_initialization_active()
+
             # Models load
             monitor.boot_step_start(
                 "models_load", "Загрузка моделей",
@@ -401,6 +428,16 @@ def main():
                 return
             monitor.boot_step_done("cycle")
             _ensure_initialization_active()
+
+            # Quick re-warmup before preview (models loading took time)
+            try:
+                quick = float(
+                    os.environ.get("CAMERA_PRE_PREVIEW_WARMUP_SECONDS", "1.0")
+                )
+                if quick > 0.0:
+                    cameras.warmup_all(duration=max(0.2, min(3.0, quick)))
+            except Exception as exc:
+                print(f"[CAMERA] pre-preview warmup failed: {exc}")
 
             # Preview
             monitor.boot_step_start(

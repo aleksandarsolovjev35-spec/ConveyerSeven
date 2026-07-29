@@ -90,6 +90,11 @@ TOP_PARAMETER_NAMES = (
     "top_platform_overlap_boundary_width_px",
     "top_platform_overlap_boundary_height_px",
     "top_platform_overlap_excess_component_min_px",
+    "top_platform_overlap_contact_min_confidence",
+    "top_platform_overlap_contact_inner_ratio",
+    "top_platform_overlap_margin_px",
+    "top_platform_overlap_expand_x_ratio",
+    "top_platform_overlap_expand_y_ratio",
     "top_sinks_min_confidence",
     "top_sinks_platform_min_confidence",
     "top_sinks_case_central_min_confidence",
@@ -247,11 +252,15 @@ class ThresholdLoader:
 
         for key in self.TOP_PARAMETER_KEYS:
             value = data[key]
+            # margin может быть отрицательным (сжатие области)
+            allow_negative = key.endswith("_margin_px")
             if (
                 type(value) not in (int, float)
                 or not math.isfinite(float(value))
-                or float(value) < 0.0
+                or (float(value) < 0.0 and not allow_negative)
             ):
+                if allow_negative:
+                    raise ValueError(f"{key} должен быть конечным числом")
                 raise ValueError(f"{key} должен быть конечным числом >= 0")
             if key.endswith("_min_confidence") and float(value) > 1.0:
                 raise ValueError(f"{key} должен быть числом 0..1")
@@ -282,6 +291,19 @@ class ThresholdLoader:
             raise ValueError(
                 "TOP.top_platform_overlap_boundary_height_px не может быть "
                 "меньше top_platform_inscribed_rect_height_px"
+            )
+
+        # Новые пороги для построения области через контакты
+        contact_inner = data["TOP.top_platform_overlap_contact_inner_ratio"]
+        if not 0.0 <= float(contact_inner) <= 1.0:
+            raise ValueError(
+                "TOP.top_platform_overlap_contact_inner_ratio должен быть 0..1"
+            )
+        expand_x = data["TOP.top_platform_overlap_expand_x_ratio"]
+        expand_y = data["TOP.top_platform_overlap_expand_y_ratio"]
+        if float(expand_x) <= 0.0 or float(expand_y) <= 0.0:
+            raise ValueError(
+                "TOP.top_platform_overlap_expand_*_ratio должны быть > 0"
             )
 
         disabled = data.get("disabled_rules", [])

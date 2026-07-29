@@ -108,8 +108,8 @@ html, body {
 }
 
 .splash-inner {
-    width: 420px;
-    max-width: 90vw;
+    width: 560px;
+    max-width: 92vw;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -124,6 +124,10 @@ html, body {
     color: var(--accent);
     letter-spacing: 6px;
     text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 
 .splash-status {
@@ -132,6 +136,21 @@ html, body {
     font-size: 13px;
     letter-spacing: 0.5px;
     text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    width: 100%;
+    display: block;
+}
+
+#splash-message {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    max-width: 500px;
+    vertical-align: bottom;
 }
 
 .splash-progress-bar {
@@ -177,6 +196,7 @@ html, body {
     border: 1px solid rgba(248, 113, 113, 0.3);
     border-radius: var(--radius-sm);
     text-align: center;
+    overflow: hidden;
 }
 
 .splash-error-title {
@@ -185,14 +205,21 @@ html, body {
     font-size: 12px;
     letter-spacing: 1.5px;
     margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .splash-error-message {
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 11px;
-    word-break: break-word;
     line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    display: block;
 }
 
 /* ─── Main layout ─────────────────────────────────────────────────── */

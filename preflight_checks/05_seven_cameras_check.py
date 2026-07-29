@@ -10,6 +10,11 @@ def main() -> int:
     print_header("05 — SEVEN CAMERAS CHECK (NO MODELS, NO COM, NO MOTION)")
     manager = CameraManager(config_file=ROOT / "camera_mapping.json")
     try:
+        # Прогрев после простоя, чтобы не ловить near-black на первом кадре
+        try:
+            manager.warmup_all(duration=2.0)
+        except Exception as exc:
+            print(f"[WARN] warmup failed: {exc}")
         frames = manager.capture_all()
         require(len(frames) == 7, f"Expected 7 frames, got {len(frames)}")
         for role, frame in frames.items():
