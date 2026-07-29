@@ -640,14 +640,23 @@ class UiDemo:
                         "category": "UNKNOWN", "target_category": target,
                     })
                     self.next_part += 1
-                if self.state == "STOPPING" and not self.parts:
+                drained = self.state == "STOPPING" and not self.parts
+                if drained:
+                    # Do not leave a completed drain behind a fake review
+                    # phase. The final status must visibly be STOPPED.
                     self.state = "STOPPED"
-                self._review_until = now + REVIEW_SECONDS
-                # STEP_COMPLETE is a stable state, not an active camera or
-                # motion phase. Highlighting all cells here made the whole
-                # line look permanently selected and hid where the part
-                # actually was.
-                self.process = self._process("STEP_COMPLETE", "Демонстрационный шаг завершён")
+                    self._review_until = 0.0
+                    self.process = self._process(
+                        "STOPPED", "Демонстрационная линия остановлена"
+                    )
+                else:
+                    self._review_until = now + REVIEW_SECONDS
+                    # STEP_COMPLETE is a stable state, not an active camera
+                    # or motion phase. Highlighting all cells here made the
+                    # whole line look permanently selected.
+                    self.process = self._process(
+                        "STEP_COMPLETE", "Демонстрационный шаг завершён"
+                    )
                 self.publish(frames=True)
 
 
