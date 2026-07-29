@@ -30,9 +30,9 @@
     margin-top: 6px;
 }
 .line-conveyor-track {
-    /* The gates are fixed-width flex siblings.  Without an explicit flex
-       basis the grid has only its min-content width and all eight cells
-       collapse into a narrow accordion at normal window sizes. */
+    /* The gates are fixed-width grid columns.  Without an explicit middle
+       track the eight cells collapse to their min-content width and the
+       line turns into a narrow accordion at normal window sizes. */
     display: grid;
     grid-template-columns: 58px minmax(0, 1fr) 58px;
     align-items: center;

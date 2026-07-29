@@ -337,7 +337,7 @@ function _updateDistributorColorCoding(ls) {
     // В исходном (канал БРАК, pos=0) и при перемещении — не горит.
     if (!d2Moving && d2Pos > 0) {
         if (d2Pos >= d2Max) d2Card.classList.add('dist-cleanup');
-        else d1Card.classList.add('dist-reject');
+        else d2Card.classList.add('dist-reject');
     }
 }
 

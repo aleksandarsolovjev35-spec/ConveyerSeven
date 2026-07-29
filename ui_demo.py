@@ -575,7 +575,11 @@ class UiDemo:
                 if self.state == "STOPPING" and not self.parts:
                     self.state = "STOPPED"
                 self._review_until = now + REVIEW_SECONDS
-                self.process = self._process("STEP_COMPLETE", "Демонстрационный шаг завершён", range(8))
+                # STEP_COMPLETE is a stable state, not an active camera or
+                # motion phase. Highlighting all cells here made the whole
+                # line look permanently selected and hid where the part
+                # actually was.
+                self.process = self._process("STEP_COMPLETE", "Демонстрационный шаг завершён")
                 self.publish(frames=True)
 
 
