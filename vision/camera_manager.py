@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 
-def _env_int(name: str, default: int, minimum: int = 1) -> int:
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
     raw = os.environ.get(name)
     if raw is None:
         return default
@@ -22,7 +22,7 @@ def _env_int(name: str, default: int, minimum: int = 1) -> int:
         return default
 
 
-def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
     raw = os.environ.get(name)
     if raw is None:
         return default
@@ -50,23 +50,34 @@ _REQUESTED_FPS = 30.0
 # затем резервирует полосу шины и только после этого отдаёт первый кадр.
 # Трёх секунд последней в очереди камере не хватало, и старт падал на
 # "read returned no frame" даже на исправном железе.
-_PREFLIGHT_TIMEOUT = _env_float("CAMERA_PREFLIGHT_TIMEOUT", 5.0)
+_PREFLIGHT_TIMEOUT = _env_float("CAMERA_PREFLIGHT_TIMEOUT", 5.0, minimum=0.5)
 # Каждая попытка — это полное пересоздание VideoCapture. Разовая
 # неудача резервирования полосы на USB-хабе лечится именно повтором, а
 # не увеличением таймаута.
-_OPEN_ATTEMPTS = _env_int("CAMERA_OPEN_ATTEMPTS", 2)
+_OPEN_ATTEMPTS = _env_int("CAMERA_OPEN_ATTEMPTS", 2, minimum=1)
 _OPEN_RETRY_DELAY = _env_float("CAMERA_OPEN_RETRY_DELAY", 0.4, minimum=0.0)
 # Одновременный старт всех семи камер перегружает и DirectShow, и
 # USB-контроллер: устройства наперегонки запрашивают полосу, и часть из
 # них остаётся без изохронных слотов. Открываем волнами.
-_OPEN_CONCURRENCY = _env_int("CAMERA_OPEN_CONCURRENCY", 3)
+_OPEN_CONCURRENCY = _env_int("CAMERA_OPEN_CONCURRENCY", 3, minimum=1)
 # Общий предел на открытие набора: preflight каждой попытки уже ограничен
 # _PREFLIGHT_TIMEOUT, здесь запас на инициализацию драйвера и повторы.
-_OPEN_TIMEOUT = _env_float("CAMERA_OPEN_TIMEOUT", 120.0)
+_OPEN_TIMEOUT = _env_float("CAMERA_OPEN_TIMEOUT", 120.0, minimum=5.0)
 _PREFLIGHT_VALID_FRAMES = 5
 _PREFLIGHT_READ_INTERVAL = 0.05
 _NEAR_BLACK_MEAN_MAX = 5.0
 _NEAR_BLACK_P99_MAX = 12.0
+# Прогрев камер после простоя: первые кадры могут быть тёмными из-за
+# не успевшего выставить экспозицию AGC. Отбрасываем их.
+# Короткая фаза в preflight (0.5с) + длинный прогрев в main (2.5с).
+_WARMUP_SECONDS = _env_float("CAMERA_WARMUP_SECONDS", 0.5, minimum=0.0)
+_WARMUP_READ_INTERVAL = _env_float(
+    "CAMERA_WARMUP_READ_INTERVAL", 0.05, minimum=0.01
+)
+_DARK_RETRY_ATTEMPTS = _env_int("CAMERA_DARK_RETRY_ATTEMPTS", 15, minimum=0)
+_DARK_RETRY_INTERVAL = _env_float(
+    "CAMERA_DARK_RETRY_INTERVAL", 0.08, minimum=0.01
+)
 
 _BACKEND_ALIASES = {
     "dshow": "CAP_DSHOW",
@@ -390,6 +401,87 @@ class CameraManager:
             f"MJPG @ {_REQUESTED_FPS:.0f} FPS"
         )
 
+    def warmup_all(self, duration: float | None = None) -> dict:
+        """Прогреть все открытые камеры после простоя.
+
+        После долгого простоя AGC камер уходит в минимум и первые кадры
+        оказываются почти чёрными, что приводило к ``near-black frame``
+        ошибке на этапе preview. Метод читает камеры в течение
+        ``duration`` секунд, позволяя автоэкспозиции стабилизироваться,
+        и возвращает статистику по каждой роли.
+
+        Отдельный шаг используется в ``main.py`` после открытия камер и
+        перед первым ``capture_all``.
+        """
+        actual_duration = (
+            float(duration) if duration is not None else float(_WARMUP_SECONDS)
+        )
+        if actual_duration <= 0.0:
+            return {}
+        if not self.cameras:
+            return {}
+        self._ensure_usable()
+        stats = {}
+        stats_lock = threading.Lock()
+
+        def _warm(role: str):
+            cap = self.cameras.get(role)
+            if cap is None:
+                return
+            lock = self._role_locks.get(role)
+            reads = 0
+            darkest = 255.0
+            brightest = 0.0
+            deadline = time.monotonic() + actual_duration
+            while time.monotonic() < deadline:
+                try:
+                    if lock is not None:
+                        with lock:
+                            ok, frame = cap.read()
+                    else:
+                        ok, frame = cap.read()
+                except Exception:
+                    ok = False
+                    frame = None
+                if ok and frame is not None:
+                    reads += 1
+                    try:
+                        # Быстрая оценка яркости по разреженной выборке
+                        sample = np.asarray(frame)[::24, ::24]
+                        mean = float(sample.mean())
+                        darkest = min(darkest, mean)
+                        brightest = max(brightest, mean)
+                    except Exception:
+                        pass
+                time.sleep(_WARMUP_READ_INTERVAL)
+            with stats_lock:
+                stats[role] = {
+                    "reads": reads,
+                    "darkest": darkest,
+                    "brightest": brightest,
+                }
+            if reads:
+                print(
+                    f"[CAMERA] Прогрев {role}: {reads} кадров, "
+                    f"luminance {darkest:.1f} -> {brightest:.1f} за {actual_duration:.1f}с"
+                )
+            else:
+                print(
+                    f"[CAMERA] Прогрев {role}: нет кадров за {actual_duration:.1f}с"
+                )
+
+        threads = []
+        for role in list(self.cameras.keys()):
+            thread = threading.Thread(
+                target=_warm, args=(role,), daemon=True,
+                name=f"warmup-{role}"
+            )
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
+        return stats
+
     @staticmethod
     def _safe_release(role, capture):
         try:
@@ -434,8 +526,40 @@ class CameraManager:
         return f"{codec} {width}x{height}@{fps:.0f}"
 
     @classmethod
+    def _warmup_phase(cls, capture, seconds: float) -> int:
+        """Прогреть камеру после открытия, дать AGC разогнаться.
+
+        После простоя первые кадры могут быть затемнёнными — это не
+        признак закрытой крышки, а переходный процесс сенсора. Читаем и
+        отбрасываем кадры без проверки _frame_error.
+        """
+        if seconds <= 0.0:
+            return 0
+        deadline = time.monotonic() + seconds
+        reads = 0
+        while time.monotonic() < deadline:
+            try:
+                ok, _ = capture.read()
+                if ok:
+                    reads += 1
+            except Exception:
+                pass
+            time.sleep(_WARMUP_READ_INTERVAL)
+        return reads
+
+    @classmethod
     def _wait_for_stable_preflight(cls, capture) -> str | None:
-        """Дождаться серии валидных кадров после запуска экспозиции камеры."""
+        """Дождаться серии валидных кадров после запуска экспозиции камеры.
+
+        Сначала выполняется фаза прогрева ``_WARMUP_SECONDS`` для
+        исключения ложной ошибки ``near-black`` сразу после простоя.
+        После прогрева требуется ``_PREFLIGHT_VALID_FRAMES`` подряд
+        валидных кадров.
+        """
+
+        warmup_reads = 0
+        if _WARMUP_SECONDS > 0.0:
+            warmup_reads = cls._warmup_phase(capture, _WARMUP_SECONDS)
 
         deadline = time.monotonic() + _PREFLIGHT_TIMEOUT
         consecutive_valid = 0
@@ -468,7 +592,8 @@ class CameraManager:
         return (
             f"{last_error}; stable_valid={consecutive_valid}/"
             f"{_PREFLIGHT_VALID_FRAMES}; empty_reads={empty_reads}/"
-            f"{total_reads}; negotiated={cls._negotiated_format(capture)}; "
+            f"{total_reads}; warmup_reads={warmup_reads}; "
+            f"negotiated={cls._negotiated_format(capture)}; "
             f"timeout={_PREFLIGHT_TIMEOUT:.1f}s"
         )
 
@@ -493,6 +618,10 @@ class CameraManager:
         исключение поверх ещё работающих воркеров. Зависшая камера
         латчит менеджер, и следующий вызов сразу получит отказ, вместо
         того чтобы копить фоновые чтения одного и того же устройства.
+
+        Добавлен повтор при ``near-black``: автоэкспозиция после простоя
+        может выдать несколько тёмных кадров подряд, и однократная
+        попытка приводила к падению production-цикла.
         """
         requested = tuple(dict.fromkeys(roles))
         if not requested:
@@ -503,18 +632,32 @@ class CameraManager:
         self._ensure_usable()
 
         def _grab(role):
-            with self._role_locks[role]:
-                self._ensure_usable()
-                cap = self.cameras.get(role)
-                if cap is None:
-                    raise RuntimeError(f"Камера {role} не найдена")
-                ok, frame = cap.read()
-            if not ok or frame is None:
-                raise RuntimeError("read returned no frame")
-            error = self._frame_error(frame)
-            if error is not None:
-                raise RuntimeError(error)
-            return frame
+            cap = self.cameras.get(role)
+            if cap is None:
+                raise RuntimeError(f"Камера {role} не найдена")
+            last_error = None
+            for attempt in range(max(1, _DARK_RETRY_ATTEMPTS + 1)):
+                with self._role_locks[role]:
+                    self._ensure_usable()
+                    ok, frame = cap.read()
+                if not ok or frame is None:
+                    last_error = RuntimeError("read returned no frame")
+                    if attempt < _DARK_RETRY_ATTEMPTS:
+                        time.sleep(_DARK_RETRY_INTERVAL)
+                        continue
+                    raise last_error
+                err = self._frame_error(frame)
+                if err is None:
+                    return frame
+                # near-black → попробовать ещё раз, это может быть AGC
+                if "near-black" in err and attempt < _DARK_RETRY_ATTEMPTS:
+                    last_error = RuntimeError(err)
+                    time.sleep(_DARK_RETRY_INTERVAL)
+                    continue
+                raise RuntimeError(err)
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("read returned no frame")
 
         pool = self._require_pool()
         futures = {role: pool.submit(_grab, role) for role in requested}

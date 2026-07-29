@@ -28,6 +28,14 @@ from domain.threshold_loader import (
 from vision.camera_manager import CameraManager
 from vision.model_config import MODEL_GROUPS
 
+# Отключаем прогрев в юнит-тестах для скорости — реальный прогрев
+# тестируется отдельно в интеграционных проверках.
+import vision.camera_manager as _cm
+_cm._WARMUP_SECONDS = 0.0
+_cm._WARMUP_READ_INTERVAL = 0.001
+_cm._DARK_RETRY_ATTEMPTS = 0
+_cm._DARK_RETRY_INTERVAL = 0.001
+
 
 class FakeCapture:
     def __init__(self, frame, opened=True):
@@ -274,11 +282,18 @@ class CameraAndConfigTests(unittest.TestCase):
             "TOP.top_platform_overlap_boundary_width_px": 305,
             "TOP.top_platform_overlap_boundary_height_px": 140,
             "TOP.top_platform_overlap_excess_component_min_px": 3,
+            "TOP.top_platform_overlap_contact_min_confidence": 0.3,
+            "TOP.top_platform_overlap_contact_inner_ratio": 0.33,
+            "TOP.top_platform_overlap_margin_px": 0,
+            "TOP.top_platform_overlap_expand_x_ratio": 1.0,
+            "TOP.top_platform_overlap_expand_y_ratio": 1.0,
         }
         for key, value in expected.items():
             self.assertAlmostEqual(thresholds[key], value)
-        self.assertNotIn(
-            "TOP.top_platform_overlap_contacts_min_confidence", thresholds,
+        # Старый ключ без префикса больше не используется, но новый
+        # contact-based набор должен присутствовать.
+        self.assertIn(
+            "TOP.top_platform_overlap_contact_min_confidence", thresholds,
         )
         self.assertNotIn("TOP.top_platform_overlap_min_px", thresholds)
         self.assertGreaterEqual(
