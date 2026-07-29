@@ -124,6 +124,8 @@ class DebugOverlay:
                 ContactsLongRenderer.draw_ignored(img, d)
             elif draw_type == "contacts_long_fit_line":
                 ContactsLongRenderer.draw_fit_line(img, d)
+            elif draw_type == "contacts_long_level_center":
+                ContactsLongRenderer.draw_level_center(img, d)
             elif draw_type == "contacts_long_omission_line":
                 ContactsLongRenderer.draw_omission_line(img, d)
             elif draw_type == "contacts_long_omission_distance":
@@ -144,6 +146,8 @@ class DebugOverlay:
                 ContactsShortRenderer.draw_ignored(img, d)
             elif draw_type == "contacts_short_level_line":
                 ContactsShortRenderer.draw_level_line(img, d)
+            elif draw_type == "contacts_short_level_center":
+                ContactsShortRenderer.draw_level_center(img, d)
             elif draw_type == "contacts_short_height_segment":
                 ContactsShortRenderer.draw_height_segment(img, d)
             elif draw_type == "contacts_short_omission_line":

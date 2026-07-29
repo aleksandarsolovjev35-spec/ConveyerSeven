@@ -462,7 +462,9 @@ def rule_report_row(result, required_roles=()) -> dict:
             inscribe = role_details.get("inscribe_check") or {}
             scale = inscribe.get("scale_px_per_mm")
             long_rows.append(
-                f"{role}: допуск линий {tolerance:.1f}px; "
+                f"{role}: допуск центров {tolerance:.1f}px; "
+                f"наклон {float(role_details.get('level_slope') or 0):.3f}/"
+                f"limit {float(role_details.get('max_level_slope') or 0):.3f}; "
                 f"rect {float(role_details.get('rect_width_mm') or 0):g}x"
                 f"{float(role_details.get('rect_height_mm') or 0):g}mm; "
                 f"scale={scale if scale is not None else '—'}px/mm"
@@ -488,7 +490,8 @@ def rule_report_row(result, required_roles=()) -> dict:
                 )
                 long_rows.append(
                     f"{role} #{int(item.get('index') or 0)}: "
-                    f"top {float(item.get('dev_top_px') or 0):.1f}/{tolerance:.1f}px; "
+                    f"center dev {float(item.get('dev_top_px') or 0):.1f}/{tolerance:.1f}px; "
+                    f"level {'FAIL' if item.get('top_fail') else 'OK'}; "
                     f"bottom {float(item.get('dev_bottom_px') or 0):.1f}/{tolerance:.1f}px; "
                     f"rect {'OK' if item.get('rect_fits') else 'FAIL'}; "
                     f"d={distance_text}"
@@ -530,6 +533,8 @@ def rule_report_row(result, required_roles=()) -> dict:
             short_rows.append(
                 f"{role}: area min "
                 f"{float(role_details.get('area_absolute_min_px2') or 0):g}px²; "
+                f"center dY {float(role_details.get('rect_center_delta_y') or 0):.1f}/"
+                f"{float(role_details.get('rect_center_level_tolerance') or 0):.1f}px; "
                 f"dTop {float(role_details.get('delta_top') or 0):.1f}/"
                 f"{tolerance:.1f}px; dBottom "
                 f"{float(role_details.get('delta_bottom') or 0):.1f}/"

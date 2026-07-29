@@ -34,6 +34,7 @@ LONG_CONTACT_PARAMETER_NAMES = (
     "spider_contacts_long_min_confidence",
     "spider_contacts_long_expected_count",
     "spider_contacts_long_line_deviation_ratio",
+    "spider_contacts_long_max_level_slope",
     "spider_contacts_long_omission_tilt_ratio_max",
     "spider_contacts_long_inscribed_rect_width_mm",
     "spider_contacts_long_inscribed_rect_height_mm",
