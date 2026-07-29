@@ -98,6 +98,29 @@ class RuleReportSummaryTests(unittest.TestCase):
         self.assertEqual(row["summary_lines"], [])
         self.assertFalse(row["decisive"])
 
+    def test_glass_on_contacts_uses_pairs_when_hits_is_a_count(self):
+        """The rule's ``hits`` field is numeric; overlap details are pairs."""
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="glass_on_contacts",
+            triggered=True,
+            details={"per_role": {"TOP": {
+                "triggered": True,
+                "reason": None,
+                "glasses_total": 1,
+                "hits": 1,
+                "pairs": [{
+                    "glass_index": 1,
+                    "contact_index": 4,
+                    "overlap_pixels": 9,
+                }],
+            }}},
+        ))
+        self.assertIn("contact #4", row["detail"])
+        self.assertEqual(
+            row["summary_cards"][0]["metrics"][0]["value"], "1",
+        )
+        self.assertEqual(row["human_cause"], "СТЕКЛО НА КОНТАКТАХ")
+
     def test_ui_renders_only_decisive_rules(self):
         js = (ROOT / "vision/ui/static/js/diagnostics.js").read_text(
             encoding="utf-8"

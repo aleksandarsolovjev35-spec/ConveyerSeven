@@ -681,7 +681,13 @@ def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | Non
                 reasons.append(str(r))
             # для некоторых правил берём первую проблему
             if rule_name in ("window_sinks", "sinks", "glass_on_contacts"):
-                for hit in (rd.get("hits") or rd.get("pairs") or []):
+                # ``glass_on_contacts.hits`` is a count, while its overlap
+                # rows live in ``pairs``.  Prefer the rows and only iterate
+                # values that actually follow the collection contract.
+                entries = rd.get("pairs") or rd.get("hits") or []
+                if not isinstance(entries, (list, tuple)):
+                    entries = []
+                for hit in entries:
                     if hit:
                         reasons.append("пересечение")
                         break
