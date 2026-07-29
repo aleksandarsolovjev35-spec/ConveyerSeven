@@ -35,6 +35,9 @@ class SpiderContactsLongRule(BaseRule):
             min_conf = self._get("spider_contacts_long_min_confidence", 0.3, role=role)
             expected = self._get("spider_contacts_long_expected_count", 5, role=role)
             line_dev = self._get("spider_contacts_long_line_deviation_ratio", 0.35, role=role)
+            max_level_slope = self._get(
+                "spider_contacts_long_max_level_slope", 0.10, role=role,
+            )
             rect_width_mm = self._get(
                 "spider_contacts_long_inscribed_rect_width_mm", 0.48, role=role,
             )
@@ -63,7 +66,7 @@ class SpiderContactsLongRule(BaseRule):
             role_result = self._check_role(
                 role, candidates, omissions, expected, line_dev,
                 rect_width_mm, rect_height_mm, y_filter,
-                omission_tilt_ratio_max, drawings,
+                omission_tilt_ratio_max, max_level_slope, drawings,
             )
 
             if role_result["triggered"]:
@@ -78,7 +81,8 @@ class SpiderContactsLongRule(BaseRule):
 
     def _check_role(self, role, candidates, omissions, expected_count,
                     line_dev_ratio, rect_width_mm, rect_height_mm,
-                    y_filter_ratio, omission_tilt_ratio_max, drawings):
+                    y_filter_ratio, omission_tilt_ratio_max,
+                    max_level_slope, drawings):
         found_raw = len(candidates)
 
         selected, ignored, filter_note, scale = self._select_contacts(
@@ -217,8 +221,24 @@ class SpiderContactsLongRule(BaseRule):
             sorted_dets, scale, rect_width_mm, rect_height_mm,
         )
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
-        role_triggered = line_fail or omission_fail or inscribe_fail
 
+        # После подтверждения формы уровень оценивается по центрам
+        # вписанных эталонных прямоугольников, а не по краям mask.
+        rect_centers = [res.get("center") for res in inscribe_results]
+        if all(center is not None for center in rect_centers):
+            center_xs = np.array([center[0] for center in rect_centers], dtype=np.float64)
+            center_ys = np.array([center[1] for center in rect_centers], dtype=np.float64)
+            line_center = self._fit_line(center_xs, center_ys)
+            center_devs = np.abs(center_ys - self._eval_line(line_center, center_xs))
+            center_slope = float(line_center[0])
+            slope_fail = abs(center_slope) > max_level_slope
+            line_fail = bool(np.max(center_devs) > line_tol or slope_fail)
+        else:
+            center_xs = center_ys = center_devs = None
+            line_center = None
+            center_slope = None
+            slope_fail = False
+        role_triggered = line_fail or omission_fail or inscribe_fail
         omission_distances = {
             int(contact["index"]): float(contact["distance_px"])
             for contact in omission_tilt_check.get("contacts", [])
@@ -229,8 +249,11 @@ class SpiderContactsLongRule(BaseRule):
             start=1,
         ):
             array_index = i - 1
-            top_failed = bool(devs_top[array_index] > line_tol)
-            bottom_failed = bool(devs_bot[array_index] > line_tol)
+            top_failed = bool(
+                (center_devs[array_index] if center_devs is not None else devs_top[array_index])
+                > line_tol
+            )
+            bottom_failed = False
             rect_fits = bool(
                 inscribe_results
                 and inscribe_results[array_index]["fits"]
@@ -256,6 +279,13 @@ class SpiderContactsLongRule(BaseRule):
                 inscribe_results
                 and inscribe_results[array_index].get("points") is not None
             ):
+                if inscribe_results[array_index].get("center") is not None:
+                    drawings.append({
+                        "type": "contacts_long_level_center",
+                        "role": role,
+                        "center": inscribe_results[array_index]["center"],
+                        "triggered": bool(line_fail),
+                    })
                 drawings.append({
                     "type": "contacts_long_inscribed_rect", "role": role,
                     "points": inscribe_results[array_index]["points"],
@@ -264,8 +294,11 @@ class SpiderContactsLongRule(BaseRule):
                 })
             items.append({
                 "index": i,
-                "dev_top_px": round(float(devs_top[array_index]), 3),
-                "dev_bottom_px": round(float(devs_bot[array_index]), 3),
+                "dev_top_px": round(float(
+                    center_devs[array_index]
+                    if center_devs is not None else devs_top[array_index]
+                ), 3),
+                "dev_bottom_px": 0.0,
                 "top_fail": top_failed,
                 "bottom_fail": bottom_failed,
                 "rect_fits": rect_fits,
@@ -279,17 +312,20 @@ class SpiderContactsLongRule(BaseRule):
         x_left = float(np.min(xs)) - 40
         x_right = float(np.max(xs)) + 40
 
-        for line, label, is_fail in [
-            (line_top, "top", max_dev_top > line_tol),
-            (line_bot, "bottom", max_dev_bot > line_tol),
-        ]:
+        # Визуализируем ровно ту же линию, которая участвует в решении:
+        # линию центров вписанных прямоугольников. Старые линии по верхнему
+        # и нижнему краям segmentation mask больше не показываем.
+        if line_center is not None:
             drawings.append({
                 "type": "contacts_long_fit_line", "role": role,
-                "x_start": int(x_left), "x_end": int(x_right),
-                "y_start": int(self._eval_line(line, np.array([x_left]))[0]),
-                "y_end": int(self._eval_line(line, np.array([x_right]))[0]),
-                "tolerance": int(line_tol), "label": label,
-                "triggered": is_fail,
+                "x_start": int(np.min(center_xs) - 40),
+                "x_end": int(np.max(center_xs) + 40),
+                "y_start": int(self._eval_line(line_center, np.array([np.min(center_xs) - 40]))[0]),
+                "y_end": int(self._eval_line(line_center, np.array([np.max(center_xs) + 40]))[0]),
+                "tolerance": int(line_tol), "label": "center",
+                "triggered": line_fail,
+                "slope": center_slope,
+                "max_slope": max_level_slope,
             })
 
         if omission_tilt_check["status"] != "error":
@@ -336,6 +372,12 @@ class SpiderContactsLongRule(BaseRule):
             "filter_note": filter_note,
             "median_contact_height_px": round(median_h, 3),
             "line_tolerance_px": round(line_tol, 3),
+            "level_slope": (
+                round(float(center_slope), 6)
+                if center_slope is not None else None
+            ),
+            "max_level_slope": round(float(max_level_slope), 6),
+            "slope_fail": slope_fail,
             "max_dev_top": round(max_dev_top, 3),
             "max_dev_bottom": round(max_dev_bot, 3),
             "line_fail": line_fail,
@@ -448,7 +490,12 @@ class SpiderContactsLongRule(BaseRule):
             res = self._try_inscribe(
                 det, expected_height_px, expected_width_px, 0.0,
             )
-            results.append({"index": i, "fits": res["fits"], "points": res.get("points")})
+            results.append({
+                "index": i,
+                "fits": res["fits"],
+                "points": res.get("points"),
+                "center": res.get("center"),
+            })
             if not res["fits"]:
                 fail_indices.append(i)
 
@@ -603,7 +650,10 @@ class SpiderContactsLongRule(BaseRule):
         return {
             "fits": fits,
             "points": cl.astype(np.int32).tolist(),
-            "center": (float(cx), float(cy)),
+            "center": (
+                float(np.mean(cl[:, 0])),
+                float(np.mean(cl[:, 1])),
+            ),
         }
 
     @staticmethod

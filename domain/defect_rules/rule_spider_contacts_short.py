@@ -239,7 +239,7 @@ class SpiderContactsShortRule(BaseRule):
                 res = self._try_inscribe_in_contact(
                     det, expected_height_px, expected_width_px, 0.0,
                 )
-                inscribe_results.append({"index": i, "fits": res["fits"], "points": res.get("points")})
+                inscribe_results.append({"index": i, "fits": res["fits"], "points": res.get("points"), "center": res.get("center")})
                 if not res["fits"]:
                     inscribe_fail_indices.append(i)
 
@@ -256,6 +256,20 @@ class SpiderContactsShortRule(BaseRule):
             inscribe_check = {"status": "error", "reason": "no_scale"}
 
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
+
+        # Уровень определяется центрами вписанных эталонных прямоугольников,
+        # а не границами исходной segmentation mask. Размер/форма контакта
+        # остаются отдельной проверкой inscribe_fail.
+        rect_centers = [res.get("center") for res in inscribe_results]
+        if all(center is not None for center in rect_centers):
+            rect_center_delta_y = abs(
+                float(rect_centers[0][1]) - float(rect_centers[1][1])
+            )
+            level_tolerance = tolerance
+            level_fail = rect_center_delta_y > level_tolerance
+        else:
+            rect_center_delta_y = None
+            level_tolerance = tolerance
         role_triggered = level_fail or omission_fail or inscribe_fail
 
         # Отрисовка
@@ -299,6 +313,13 @@ class SpiderContactsShortRule(BaseRule):
                 inscribe_results
                 and inscribe_results[array_index].get("points") is not None
             ):
+                if inscribe_results[array_index].get("center") is not None:
+                    drawings.append({
+                        "type": "contacts_short_level_center",
+                        "role": role,
+                        "center": inscribe_results[array_index]["center"],
+                        "triggered": bool(level_fail),
+                    })
                 drawings.append({
                     "type": "contacts_short_inscribed_rect",
                     "role": role,
@@ -323,16 +344,22 @@ class SpiderContactsShortRule(BaseRule):
         x_left = min(p_a["bbox_x1"], p_b["bbox_x1"]) - 40
         x_right = max(p_a["bbox_x2"], p_b["bbox_x2"]) + 40
 
-        for label, y_a, y_b, delta, fail in [
-            ("T", p_a["top_y"], p_b["top_y"], delta_top, top_fail),
-            ("B", p_a["bottom_y"], p_b["bottom_y"], delta_bottom, bottom_fail),
-        ]:
-            drawings.append({"type": "contacts_short_level_line", "role": role,
+        # Показываем ту же геометрию, по которой принимается решение:
+        # линию между центрами вписанных прямоугольников.
+        if all(center is not None for center in rect_centers):
+            center_a, center_b = rect_centers
+            drawings.append({
+                "type": "contacts_short_level_line", "role": role,
                 "x_start": int(x_left), "x_end": int(x_right),
-                "y_a": int(y_a), "y_b": int(y_b),
-                "x_a": int(p_a["center_x"]), "x_b": int(p_b["center_x"]),
-                "label": label, "delta": round(delta, 1),
-                "tolerance": round(tolerance, 1), "triggered": fail})
+                "y_a": int(round(center_a[1])),
+                "y_b": int(round(center_b[1])),
+                "x_a": int(round(center_a[0])),
+                "x_b": int(round(center_b[0])),
+                "label": "C",
+                "delta": round(float(rect_center_delta_y or 0), 1),
+                "tolerance": round(float(level_tolerance), 1),
+                "triggered": level_fail,
+            })
 
         # Опорная линия omission и расстояния контактов
         if omission_tilt_check["status"] != "error":
@@ -398,6 +425,11 @@ class SpiderContactsShortRule(BaseRule):
             "tolerance": round(tolerance, 3),
             "top_fail": top_fail, "bottom_fail": bottom_fail,
             "height_fail": height_fail, "level_fail": level_fail,
+            "rect_center_delta_y": (
+                round(float(rect_center_delta_y), 3)
+                if rect_center_delta_y is not None else None
+            ),
+            "rect_center_level_tolerance": round(float(level_tolerance), 3),
             "omission_fail": omission_fail,
             "omission_reference_fail": omission_reference_fail,
             "omission_tilt_fail": omission_tilt_fail,
@@ -545,7 +577,16 @@ class SpiderContactsShortRule(BaseRule):
             cl = cr
         cl[:,0] -= cs/2; cl[:,1] -= cs/2; cl[:,0] += cx; cl[:,1] += cy
 
-        return {"fits": fits, "points": cl.astype(np.int32).tolist(), "center": (float(cx), float(cy))}
+        return {
+            "fits": fits,
+            "points": cl.astype(np.int32).tolist(),
+            # Центр фактически вписанного прямоугольника, включая возможный
+            # сдвиг, найденный через erosion.
+            "center": (
+                float(np.mean(cl[:, 0])),
+                float(np.mean(cl[:, 1])),
+            ),
+        }
 
     # Отбор пары
 

@@ -67,6 +67,10 @@ class ContactsShortRenderer:
                 )
 
     @staticmethod
+    def draw_level_center(img, drawing):
+        ContactsLongRenderer.draw_level_center(img, drawing)
+
+    @staticmethod
     def draw_height_segment(img, drawing):
         x = int(drawing.get("x", 0))
         y_top = int(drawing.get("y_top", 0))

@@ -68,7 +68,7 @@ class ContactsLongRenderer:
         label = drawing.get("label")
         color = (
             COLOR_TOP_LINE
-            if label == "top"
+            if label in ("top", "center")
             else COLOR_BOTTOM_LINE
         )
         if drawing.get("triggered"):
@@ -91,6 +91,14 @@ class ContactsLongRenderer:
                     LINE_THIN,
                     dash_len=4,
                 )
+
+    @staticmethod
+    def draw_level_center(img, drawing):
+        center = drawing.get("center") or [0, 0]
+        point = (int(round(center[0])), int(round(center[1])))
+        color = COLOR_FAIL if drawing.get("triggered") else COLOR_REFERENCE_RECT
+        cv2.circle(img, point, 4, color, -1)
+        cv2.circle(img, point, 6, color, LINE_THIN)
 
     @staticmethod
     def draw_omission_line(img, drawing):
