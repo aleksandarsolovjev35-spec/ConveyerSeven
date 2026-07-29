@@ -162,6 +162,7 @@ class UiDemo:
         self.dist2_state = "IDLE"
         self.dist_target = "BAD"
         self.dist_action = "ДЕМО-РЕЖИМ"
+        self.diagnostic_busy = False
         self.jog_active = False
         self.jog_busy = False
         self.jog_direction = None
@@ -202,7 +203,13 @@ class UiDemo:
         return frames
 
     def controls(self):
-        prestart = self.state in {"IDLE", "STOPPED"} and not self.parts and not self.jog_busy and not self.selected_analysis
+        prestart = (
+            self.state in {"IDLE", "STOPPED"}
+            and not self.parts
+            and not self.jog_busy
+            and not self.selected_analysis
+            and not self.diagnostic_busy
+        )
         return {
             "start": prestart,
             "stop": self.state in {"RUNNING", "PAUSED"},
@@ -296,7 +303,7 @@ class UiDemo:
             "distributor_state": self.dist1_state,
             "process": dict(self.process),
             "diagnostic_allowed": prestart,
-            "diagnostic_busy": False,
+            "diagnostic_busy": self.diagnostic_busy,
             "controls": self.controls(),
             "selected_analysis": {
                 "active": self.selected_analysis,
@@ -463,10 +470,15 @@ class UiDemo:
             "DIST1_HOME": ("dist1", 0), "DIST1_OPEN": ("dist1", 340),
             "DIST2_BAD": ("dist2", 0), "DIST2_CLEANUP": ("dist2", 340),
         }
-        if command not in targets or not self.controls()["distributor_diagnostic"]:
-            return False
-        name, target = targets[command]
         with self.lock:
+            if (
+                command not in targets
+                or not self.controls()["distributor_diagnostic"]
+                or self.diagnostic_busy
+            ):
+                return False
+            self.diagnostic_busy = True
+            name, target = targets[command]
             # A second diagnostic command must start from the position that
             # was actually reached by the previous command.
             start_position = self.dist1 if name == "dist1" else self.dist2
@@ -474,22 +486,28 @@ class UiDemo:
                 self.dist_target = "BAD"
             elif command == "DIST2_CLEANUP":
                 self.dist_target = "CLEANUP"
-        for value in range(0, 11):
-            # Interpolate from a stable origin.  The old code used the
-            # current position for every iteration, so it only travelled
-            # ~65% of the route and visibly stopped short of the marker.
-            position = round(start_position + (target - start_position) * value / 10)
+            self.publish()
+        try:
+            for value in range(0, 11):
+                # Interpolate from a stable origin.  The old code used the
+                # current position for every iteration, so it only travelled
+                # ~65% of the route and visibly stopped short of the marker.
+                position = round(start_position + (target - start_position) * value / 10)
+                with self.lock:
+                    if name == "dist1":
+                        self.dist1 = position
+                        self.dist1_state = "MOVING" if value < 10 else "IDLE"
+                    else:
+                        self.dist2 = position
+                        self.dist2_state = "MOVING" if value < 10 else "IDLE"
+                    self.dist_action = f"ДЕМО {command}"
+                    self.publish()
+                if value < 10:
+                    time.sleep(0.03)
+        finally:
             with self.lock:
-                if name == "dist1":
-                    self.dist1 = position
-                    self.dist1_state = "MOVING" if value < 10 else "IDLE"
-                else:
-                    self.dist2 = position
-                    self.dist2_state = "MOVING" if value < 10 else "IDLE"
-                self.dist_action = f"ДЕМО {command}"
+                self.diagnostic_busy = False
                 self.publish()
-            if value < 10:
-                time.sleep(0.03)
         return True
 
     def check_cameras(self):
