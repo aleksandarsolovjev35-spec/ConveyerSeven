@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import threading
 from types import SimpleNamespace
 import time
@@ -468,11 +469,65 @@ class UiDemo:
                     self.step += 1
                     for part in self.parts:
                         part["position"] += 1
+                    # Обновление категории после SPIDER-контроля (позиция ≥ 4)
+                    for part in self.parts:
+                        if part["position"] >= 4 and part["category"] == "UNKNOWN":
+                            part["category"] = part.get("target_category", "GOOD")
+                    # Подсчёт сошедших деталей по категории
                     finished = [part for part in self.parts if part["position"] > 7]
                     self.parts = [part for part in self.parts if part["position"] <= 7]
-                    self.good += len(finished)
+                    for part in finished:
+                        cat = part.get("target_category", "GOOD")
+                        if cat == "GOOD":
+                            self.good += 1
+                        elif cat == "BAD":
+                            self.bad += 1
+                        else:
+                            self.cleanup += 1
+                    # Симуляция распределителей: подсветка при сортировке
+                    parts_at_reject = [p for p in self.parts if p["position"] == 7]
+                    if parts_at_reject:
+                        part = parts_at_reject[0]
+                        if part["category"] == "BAD":
+                            self.dist1 = 340
+                            self.dist1_state = "IDLE"
+                            self.dist2 = 0
+                            self.dist2_state = "IDLE"
+                            self.dist_target = "BAD"
+                            self.dist_action = f"СБРОС #{part['id']} → БРАК"
+                        elif part["category"] == "CLEANUP":
+                            self.dist1 = 340
+                            self.dist1_state = "IDLE"
+                            self.dist2 = 340
+                            self.dist2_state = "IDLE"
+                            self.dist_target = "CLEANUP"
+                            self.dist_action = f"СБРОС #{part['id']} → ОЧИСТКА"
+                        else:
+                            self.dist1 = 0
+                            self.dist1_state = "IDLE"
+                            self.dist2 = 0
+                            self.dist2_state = "IDLE"
+                            self.dist_target = "BAD"
+                            self.dist_action = f"ПРОХОД #{part['id']}"
+                    else:
+                        # Нет деталей на сбросе — распределители в исходном
+                        self.dist1 = 0
+                        self.dist1_state = "IDLE"
+                        self.dist2 = 0
+                        self.dist2_state = "IDLE"
+                        self.dist_target = "BAD"
+                        self.dist_action = "—"
                     if self.state == "RUNNING" and self.step % 2 == 1:
-                        self.parts.append({"id": self.next_part, "position": 0, "category": "UNKNOWN"})
+                        target = random.choices(
+                            ["GOOD", "BAD", "CLEANUP"],
+                            weights=[40, 35, 25],
+                        )[0]
+                        self.parts.append({
+                            "id": self.next_part,
+                            "position": 0,
+                            "category": "UNKNOWN",
+                            "target_category": target,
+                        })
                         self.next_part += 1
                     if self.state == "STOPPING" and not self.parts:
                         self.state = "STOPPED"

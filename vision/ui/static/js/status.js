@@ -313,28 +313,31 @@ function _updateDistributorColorCoding(ls) {
     const d2Card = document.getElementById('dist2-card');
     if (!d1Card || !d2Card) return;
 
-    d1Card.classList.remove('dist-pass', 'dist-reject', 'dist-cleanup');
-    d2Card.classList.remove('dist-pass', 'dist-reject', 'dist-cleanup');
+    d1Card.classList.remove('dist-reject', 'dist-cleanup');
+    d2Card.classList.remove('dist-reject', 'dist-cleanup');
 
     const d1Pos = Math.max(0, Number(ls.dist1_position || 0));
     const d1Max = Math.max(1, Number(ls.dist1_max || 340));
     const d1Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
         String(ls.dist1_state || '').toUpperCase(),
     );
-    if (!d1Moving) {
-        if (d1Pos <= 0) d1Card.classList.add('dist-pass');
-        else if (d1Pos >= d1Max) d1Card.classList.add('dist-reject');
+    // DIST1: подсветка только когда вышел из исходного (pos > 0).
+    // В исходном (ПРОХОД, pos=0) и при перемещении — не горит.
+    if (!d1Moving && d1Pos > 0) {
+        if (d1Pos >= d1Max) d1Card.classList.add('dist-reject');
         else d1Card.classList.add('dist-cleanup');
     }
 
-    const d2Target = String(ls.dist2_target || '').toUpperCase();
+    const d2Pos = Math.max(0, Number(ls.dist2_position || 0));
+    const d2Max = Math.max(1, Number(ls.dist2_max || 340));
     const d2Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
         String(ls.dist2_state || '').toUpperCase(),
     );
-    if (!d2Moving) {
-        if (d2Target === 'BAD') d2Card.classList.add('dist-reject');
-        else if (d2Target === 'CLEANUP') d2Card.classList.add('dist-cleanup');
-        else d2Card.classList.add('dist-pass');
+    // DIST2: подсветка только когда вышел из исходного (pos > 0).
+    // В исходном (канал БРАК, pos=0) и при перемещении — не горит.
+    if (!d2Moving && d2Pos > 0) {
+        if (d2Pos >= d2Max) d2Card.classList.add('dist-cleanup');
+        else d1Card.classList.add('dist-reject');
     }
 }
 
