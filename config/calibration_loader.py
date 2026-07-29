@@ -26,9 +26,12 @@ OPTIONAL_DEFAULTS = {
     # ненулевое значение растягивает шаг для отладки и на физику линии
     # не влияет.
     "stage_trace_time": 0.5,
+    # Пауза после обработки кадров нейросетями: оператор успевает
+    # отсмотреть результат анализа до начала следующего шага.
+    "review_time": 5.0,
 }
 
-_FLOAT_KEYS = ("drop_time", "settle_time", "stage_trace_time")
+_FLOAT_KEYS = ("drop_time", "settle_time", "stage_trace_time", "review_time")
 _INTEGER_KEYS = tuple(key for key in DEFAULTS if key not in _FLOAT_KEYS)
 
 
@@ -80,6 +83,8 @@ def _validate(data: dict) -> dict:
         raise ValueError(
             "stage_trace_time должен быть в диапазоне 0..5 секунд"
         )
+    if not 0.0 <= float(data["review_time"]) <= 30.0:
+        raise ValueError("review_time должен быть в диапазоне 0..30 секунд")
     return dict(data)
 
 

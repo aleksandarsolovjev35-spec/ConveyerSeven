@@ -770,6 +770,28 @@ class CameraAndConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "settle_time"):
                 load_calibration(path)
 
+    def test_review_time_is_optional_and_validated(self):
+        """Старые calibration.json без review_time читаются с 5 с паузой."""
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "calibration.json"
+
+            path.write_text(json.dumps(DEFAULTS), encoding="utf-8")
+            # По умолчанию пауза просмотра результатов — не меньше 5 с.
+            self.assertGreaterEqual(load_calibration(path)["review_time"], 5.0)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "review_time": 2.5}), encoding="utf-8"
+            )
+            self.assertEqual(load_calibration(path)["review_time"], 2.5)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "review_time": 99.0}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "review_time"):
+                load_calibration(path)
+
 
 if __name__ == "__main__":
     unittest.main()

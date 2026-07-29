@@ -94,42 +94,13 @@
 }
 
 /* ─── Движение производственной линии ─────────────────────────────── */
-/* Анимации ленты и деталей вынесены сюда: модули панелей остаются
-   статичными по требованиям строгой темы. */
-
-.conveyor-belt.moving .conveyor-belt-track {
-    animation: conveyorScroll var(--move-duration, 420ms) linear infinite;
-}
-
-@keyframes conveyorScroll {
-    from { transform: translateX(0); }
-    to   { transform: translateX(-24px); }
-}
-
-.flying-part.wobbling {
-    animation: partWobble var(--move-duration, 420ms) ease-in-out infinite;
-}
-
-@keyframes partWobble {
-    0%, 100% { translate: 0 -1.6px; }
-    25%      { translate: 0 -2.4px; }
-    50%      { translate: 0 -0.9px; }
-    75%      { translate: 0 -2.2px; }
-}
-
-.line-cell.entering-with-trail::after {
-    animation: beltTrailEnter 380ms var(--ease) forwards;
-}
-
-@keyframes beltTrailEnter {
-    from { opacity: 0.85; width: 8px; }
-    to   { opacity: 0; width: 32px; }
-}
+/* Движение линии реализовано без ключевых кадров: маркеры деталей
+   (.line-token, status.js) скользят по ячейкам через CSS-переход left,
+   а лента лишь слегка светлеет во время шага. Циклических анимаций
+   (прокрутка насечек, покачивание деталей) больше нет — строгая тема. */
 
 @media (prefers-reduced-motion: reduce) {
-    .conveyor-belt.moving .conveyor-belt-track,
-    .flying-part.wobbling,
-    .line-cell.entering-with-trail::after {
-        animation: none !important;
+    .line-token {
+        transition-duration: 1ms !important;
     }
 }

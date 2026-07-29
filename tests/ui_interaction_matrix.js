@@ -419,11 +419,47 @@ async function main() {
       positions: [4], conveyor: {pos: 100, tgt: 100, mov: 0, wait: 0},
     },
   });
+  const lineCellsEl = window.document.getElementById('line-cells');
+  const cells = [...lineCellsEl.querySelectorAll('.line-cell')];
+  // jsdom не делает раскладку: подставляем геометрию ячеек, чтобы
+  // маркеры деталей (.line-token) получили реальные координаты.
+  const stubRect = (el, rect) => {
+    el.getBoundingClientRect = () => ({x: rect.left, y: rect.top, toJSON() { return {}; }, ...rect});
+  };
+  stubRect(lineCellsEl, {left: 0, top: 0, width: 832, height: 34, right: 832, bottom: 34});
+  cells.forEach((cell, index) => {
+    stubRect(cell, {
+      left: index * 104, top: 0, width: 100, height: 30,
+      right: index * 104 + 100, bottom: 30,
+    });
+  });
   api.updateLineStatus(line);
-  const cells = [...window.document.querySelectorAll('#line-cells .line-cell')];
-  assert(cells[0].textContent === '№1', 'INPUT part ID rendered');
-  assert(cells[4].textContent === '№2' && cells[4].classList.contains('process-camera'), 'SPIDER part highlighted');
-  assert(cells[7].textContent === '№3' && cells[7].classList.contains('cell-cleanup'), 'ROUTE cleanup rendered');
+  const tokens = [...lineCellsEl.querySelectorAll('.line-token')];
+  const tokenById = id => tokens.find(token => token.dataset.partId === String(id));
+  assert(tokens.length === 3, 'по одному маркеру на каждую деталь линии');
+  assert(cells.every(cell => cell.textContent === ''), 'ячейки не содержат своего текста');
+  assert(tokenById(1).textContent === '№1' && tokenById(1).style.left === '0px', 'INPUT part ID rendered at first cell');
+  assert(tokenById(2).textContent === '№2' && tokenById(2).style.left === '416px' && tokenById(2).classList.contains('cell-bad'), 'SPIDER token carries its category');
+  assert(tokenById(3).textContent === '№3' && tokenById(3).classList.contains('cell-cleanup'), 'ROUTE cleanup rendered');
+  assert(cells[4].classList.contains('process-camera'), 'SPIDER cell highlighted');
+
+  // Шаг линии: маркеры сдвигаются ровно на одну ячейку вправо, как лента.
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    line_parts: [
+      {id: 1, position: 1, category: 'UNKNOWN'},
+      {id: 2, position: 5, category: 'BAD'},
+    ],
+    process: {
+      phase: 'CONVEYOR_MOVING', label: 'belt moves', part_id: null,
+      positions: [], conveyor: {speed: 20000, pos: 50, tgt: 100, mov: 1, wait: 0, lasterr: 0},
+    },
+  }));
+  assert(tokenById(1).style.left === '104px', 'маркер детали сдвинулся на одну ячейку вместе с лентой');
+  assert(tokenById(2).style.left === '520px', 'маркер №2 повторяет движение конвейера');
+  assert(lineCellsEl.querySelector('.conveyor-belt').classList.contains('moving'), 'лента подсвечена во время проезда');
+  await sleep(620);
+  assert(!lineCellsEl.querySelector('.line-token[data-part-id="3"]'), 'сошедшая с линии деталь удалена после проезда');
   api.updateRecentParts([{id: 2, category: 'BAD', decision: 'contacts'}]);
   assert(window.document.getElementById('defects-title').textContent === 'ОСНОВНЫЕ ДЕФЕКТЫ', 'top defects shown while running');
   assert(!window.document.getElementById('defects-section').classList.contains('is-hidden'), 'working defects section visible');

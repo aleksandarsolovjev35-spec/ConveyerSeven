@@ -331,9 +331,14 @@ function updateFrameAnalysisStatus(ls) {
 
     const models = Array.isArray(report.models) ? report.models : [];
     const rules = Array.isArray(report.rules) ? report.rules : [];
-    const context = report.role
-        ? cameraRoleLabel(report.role)
-        : (report.part_id ? `ДЕТАЛЬ №${report.part_id}` : 'ТЕКУЩИЙ ЦИКЛ');
+    // Контекст панели: этап линии, выбранная оператором камера и деталь.
+    const contextBits = [];
+    if (report.stage) contextBits.push(String(report.stage));
+    if (report.role) contextBits.push(cameraRoleLabel(report.role));
+    if (report.part_id) contextBits.push(`ДЕТАЛЬ №${report.part_id}`);
+    const context = contextBits.length
+        ? contextBits.join(' · ')
+        : 'ТЕКУЩИЙ ЦИКЛ';
     setIfChanged(els.frameAnalysisTitle, report.title || 'АНАЛИЗ 3 КАДРОВ');
     setIfChanged(els.frameAnalysisContext, context);
     setIfChanged(

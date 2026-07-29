@@ -1,3 +1,4 @@
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -179,6 +180,87 @@ class FakeArchive:
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_part_under_cameras_at_start_is_counted_before_first_move(self):
+        events = []
+        inspector = ScriptedInspector([[]], [[]])
+        cycle = ProductionCycle(
+            FakeConveyor(events),
+            FakeCameras(),
+            inspector,
+            FakeDistributor(events),
+            archive=FakeArchive(),
+            review_seconds=0,
+        )
+        phases = []
+        original_set_process = cycle._set_process
+
+        def record_process(phase, label, **kwargs):
+            phases.append(phase)
+            return original_set_process(phase, label, **kwargs)
+
+        cycle._set_process = record_process
+        self.assertTrue(cycle.request_start())
+
+        # Первый шаг обязан пройти без движения ленты: деталь, которая
+        # уже стоит под входными камерами, попадает в учёт на шаге 0.
+        cycle._run_once()
+        self.assertNotIn("move", events)
+        self.assertEqual(cycle.current_step, 0)
+        self.assertEqual(len(cycle.parts), 1)
+        self.assertEqual(cycle.parts[0].step_created, 0)
+        self.assertTrue(cycle.parts[0].input_inspected)
+        self.assertEqual(inspector.input_calls, [(1, 0)])
+        self.assertIn("INITIAL_INSPECTION", phases)
+        line_parts = cycle._build_status()["line_parts"]
+        self.assertEqual(line_parts, [{
+            "id": 1, "position": 0, "category": "UNKNOWN",
+        }])
+
+        # Со второго шага лента едет обычным графиком.
+        cycle._run_once()
+        self.assertEqual(events.count("move"), 1)
+        self.assertEqual(cycle.current_step, 1)
+
+    def test_review_pause_holds_step_after_analysis(self):
+        events = []
+        inspector = ScriptedInspector([[]], [[]])
+        cycle = ProductionCycle(
+            FakeConveyor(events),
+            FakeCameras(),
+            inspector,
+            FakeDistributor(events),
+            archive=FakeArchive(),
+            review_seconds=0.3,
+        )
+        phases = []
+        original_set_process = cycle._set_process
+
+        def record_process(phase, label, **kwargs):
+            phases.append(phase)
+            return original_set_process(phase, label, **kwargs)
+
+        cycle._set_process = record_process
+        self.assertTrue(cycle.request_start())
+        started = time.monotonic()
+        cycle._run_once()
+        elapsed = time.monotonic() - started
+        self.assertIn("ANALYSIS_REVIEW", phases)
+        # Пауза просмотра реально удерживает шаг: оператор успевает
+        # отсмотреть результат нейросетей до следующего движения.
+        self.assertGreaterEqual(elapsed, 0.25)
+        # После паузы шаг публикуется штатно.
+        self.assertIn("STEP_COMPLETE", phases)
+
+    def test_default_review_pause_is_at_least_five_seconds(self):
+        cycle = ProductionCycle(
+            FakeConveyor([]),
+            FakeCameras(),
+            ScriptedInspector([[]], [[]]),
+            FakeDistributor([]),
+            archive=FakeArchive(),
+        )
+        self.assertGreaterEqual(cycle.review_seconds, 5.0)
+
     def run_one_part(self, input_defects, spider_defects):
         events = []
         inspector = ScriptedInspector([input_defects], [spider_defects])
@@ -189,6 +271,9 @@ class LifecycleTests(unittest.TestCase):
             inspector,
             FakeDistributor(events),
             archive=archive,
+            # Паузу на просмотр результатов в тестах не держим: шаги
+            # прогоняются синхронно, без ожидания в реальном времени.
+            review_seconds=0,
         )
         phases = []
         original_set_process = cycle._set_process
@@ -214,13 +299,26 @@ class LifecycleTests(unittest.TestCase):
             ScriptedInspector([[]], [[]]),
             FakeDistributor(events),
             archive=FakeArchive(),
+            review_seconds=0,
         )
         conveyor.cycle = cycle
         self.assertTrue(cycle.request_start())
+        # Первый шаг — контроль уже стоящей под камерами детали: лента
+        # не двигается, принудительный выход из move_step пока не случается.
+        cycle._run_once_safe()
+        self.assertEqual(events.count("move"), 0)
+        self.assertEqual(cameras.captures, 3)
+        self.assertEqual(len(cycle.parts), 1)
+        self.assertEqual(cycle.parts[0].step_created, 0)
+        self.assertEqual(cycle.state, "RUNNING")
+
+        # Второй шаг двигает ленту; FORCE EXIT внутри move_step обязан
+        # прервать шаг до съёмки и публикации.
         cycle._run_once_safe()
         self.assertEqual(cycle.current_step, 0)
-        self.assertEqual(cameras.captures, 0)
-        self.assertEqual(cycle.parts, [])
+        self.assertEqual(cameras.captures, 3)
+        self.assertEqual(len(cycle.parts), 1)
+        self.assertEqual(cycle.parts[0].step_created, 0)
         self.assertEqual(cycle.state, "FAULT")
 
     def test_stop_during_started_step_still_tracks_entering_input_part(self):
@@ -233,24 +331,39 @@ class LifecycleTests(unittest.TestCase):
             inspector,
             FakeDistributor(events),
             archive=FakeArchive(),
+            review_seconds=0,
         )
         conveyor.cycle = cycle
         self.assertTrue(cycle.request_start())
+        # Первый шаг — контроль без движения: STOP внутри move_step пока
+        # не вызывается, деталь под камерами инспектируется на шаге 0.
+        cycle._run_once()
+        self.assertEqual(events.count("move"), 0)
+        self.assertEqual(cycle.state, "RUNNING")
+        self.assertEqual(len(cycle.parts), 1)
+        self.assertEqual(cycle.parts[0].step_created, 0)
+        self.assertTrue(cycle.parts[0].input_inspected)
+
+        # Второй шаг: STOP приходит во время проезда — вошедшая этим
+        # шагом позиция всё равно инспектируется (пустой лоток).
         cycle._run_once()
         self.assertEqual(cycle.state, "STOPPING")
         self.assertEqual(len(cycle.parts), 1)
-        self.assertEqual(cycle.parts[0].step_created, 1)
         self.assertTrue(cycle.parts[0].input_inspected)
 
     def test_good_part_uses_exact_input_plus4_plus7_lifecycle(self):
         cycle, inspector, archive, events = self.run_one_part([], [])
-        self.assertEqual(inspector.input_calls[0], (1, 1))
-        self.assertEqual(inspector.spider_calls, [(1, 5)])
-        self.assertEqual(cycle.current_step, 8)
+        # Деталь под камерами в момент пуска инспектируется на шаге 0 без
+        # движения ленты, поэтому дальнейшие позиции на 1 меньше старого
+        # графика: вход 0, контроль +4, сортировка +7.
+        self.assertEqual(inspector.input_calls[0], (1, 0))
+        self.assertEqual(inspector.spider_calls, [(1, 4)])
+        self.assertEqual(cycle.current_step, 7)
         self.assertEqual(cycle.good_count, 1)
         self.assertEqual(cycle.bad_count, 0)
         self.assertEqual(cycle.cameras.captures, 8 * 3)
         for phase in (
+            "INITIAL_INSPECTION",
             "ROUTE_PREPARE",
             "CONVEYOR_COMMAND",
             "CONVEYOR_MOVING",
@@ -304,15 +417,18 @@ class LifecycleTests(unittest.TestCase):
             inspector,
             FakeDistributor(events),
             archive=archive,
+            review_seconds=0,
         )
         self.assertTrue(cycle.request_start())
         for _ in range(10):
             cycle._run_once()
 
-        self.assertEqual(inspector.input_calls[:3], [(1, 1), (2, 2), (3, 3)])
+        # Стартовый контроль без движения сдвигает весь график на шаг:
+        # первая деталь проходит вход уже на шаге 0.
+        self.assertEqual(inspector.input_calls[:3], [(1, 0), (2, 1), (3, 2)])
         self.assertEqual(
             inspector.spider_calls,
-            [(1, 5), (2, 6), (3, 7)],
+            [(1, 4), (2, 5), (3, 6)],
         )
         self.assertEqual(cycle.parts, [])
         self.assertEqual(cycle.part_counter, 3)

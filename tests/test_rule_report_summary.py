@@ -143,21 +143,41 @@ class LineMotionAnimationTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-    def test_belt_scroll_is_synchronized_with_part_movement(self):
+    def test_tokens_slide_in_sync_with_conveyor_step_duration(self):
+        # Одна длительность шага линии управляет и подсветкой ленты, и
+        # скольжением маркеров деталей: визуал повторяет движение конвейера.
         self.assertIn("function lineMoveDuration(", self.js)
         self.assertIn("--move-duration", self.js)
-        self.assertIn("conveyor-belt-track", self.js)
-        self.assertIn("@keyframes conveyorScroll", self.motion)
-        self.assertIn(
-            "animation: conveyorScroll var(--move-duration", self.motion
-        )
+        self.assertIn("conveyor-belt", self.js)
+        self.assertIn(".line-token", self.process)
+        self.assertIn("left var(--move-duration", self.process)
 
-    def test_enter_move_and_exit_animations_exist(self):
-        self.assertIn("entering-with-trail", self.js)
-        self.assertIn("flying-part", self.js)
-        self.assertIn("exiting-flyer", self.js)
-        self.assertIn("@keyframes beltTrailEnter", self.motion)
-        self.assertIn("@keyframes partWobble", self.motion)
+    def test_parts_are_absolute_tokens_moving_between_cells(self):
+        self.assertIn("line-token", self.js)
+        self.assertIn("_lineTokens", self.js)
+        self.assertIn("els.lineCells.appendChild(el)", self.js)
+        self.assertIn("rects[meta.position]", self.js)
+        # Ушедшая с линии деталь съезжает за последнюю ячейку и исчезает.
+        self.assertIn("token.el.style.opacity = '0'", self.js)
+        self.assertIn("setTimeout(", self.js)
+
+    def test_cells_show_only_part_number_no_strange_animations(self):
+        # В маркере только номер детали вида «№1»; старые «летящие»
+        # элементы и циклические keyframes удалены как визуальный баг.
+        self.assertIn("`№${id}`", self.js)
+        self.assertNotIn("flying-part", self.js)
+        self.assertNotIn("entering-with-trail", self.js)
+        self.assertNotIn("exiting-flyer", self.js)
+        self.assertNotIn("conveyor-belt-track", self.js)
+        self.assertNotIn("conveyor-notch", self.js)
+        self.assertNotIn("wobbling", self.js)
+        self.assertNotIn("@keyframes conveyorScroll", self.motion)
+        self.assertNotIn("@keyframes partWobble", self.motion)
+        self.assertNotIn("@keyframes beltTrailEnter", self.motion)
+        self.assertNotIn("flying-part", self.process)
+        self.assertNotIn("moving-right", self.process)
+        self.assertNotIn("entering-with-trail", self.process)
+        self.assertNotIn("exiting-flyer", self.process)
 
     def test_strict_modules_stay_free_of_animations_and_gradients(self):
         self.assertNotIn("animation:", self.process)
