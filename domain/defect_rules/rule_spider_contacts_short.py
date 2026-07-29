@@ -9,8 +9,6 @@ from domain.defect_rules.omission_reference import (
 )
 
 
-CONTACTS_SHORT_STEP_MM = 5.5
-
 TOP_PERCENTILE = 10.0
 BOTTOM_PERCENTILE = 90.0
 
@@ -38,11 +36,11 @@ class SpiderContactsShortRule(BaseRule):
             min_conf = self._get("spider_contacts_short_min_confidence", 0.3, role=role)
             expected_count = self._get("spider_contacts_short_expected_count", 2, role=role)
             level_dev_ratio = self._get("spider_contacts_short_level_deviation_ratio", 0.20, role=role)
-            rect_width_mm = self._get(
-                "spider_contacts_short_inscribed_rect_width_mm", 1.74, role=role,
+            rect_width_px = self._get(
+                "spider_contacts_short_inscribed_rect_width_px", 25.2, role=role,
             )
-            rect_height_mm = self._get(
-                "spider_contacts_short_inscribed_rect_height_mm", 0.66, role=role,
+            rect_height_px = self._get(
+                "spider_contacts_short_inscribed_rect_height_px", 9.6, role=role,
             )
             area_absolute_min = self._get("spider_contacts_short_area_absolute_min", 400, role=role)
             y_filter_ratio = self._get("spider_contacts_short_y_filter_ratio", 3.0, role=role)
@@ -67,7 +65,7 @@ class SpiderContactsShortRule(BaseRule):
             role_result = self._check_role(
                 role=role, candidates=candidates, omissions=omissions,
                 expected_count=expected_count, level_dev_ratio=level_dev_ratio,
-                rect_width_mm=rect_width_mm, rect_height_mm=rect_height_mm,
+                rect_width_px=rect_width_px, rect_height_px=rect_height_px,
                 area_absolute_min=area_absolute_min,
                 y_filter_ratio=y_filter_ratio,
                 omission_tilt_ratio_max=omission_tilt_ratio_max,
@@ -82,7 +80,7 @@ class SpiderContactsShortRule(BaseRule):
             details={"per_role": details_per_role}, drawings=drawings)
 
     def _check_role(self, role, candidates, omissions, expected_count,
-                    level_dev_ratio, rect_width_mm, rect_height_mm,
+                    level_dev_ratio, rect_width_px, rect_height_px,
                     area_absolute_min, y_filter_ratio,
                     omission_tilt_ratio_max, drawings):
         found_raw = len(candidates)
@@ -221,41 +219,29 @@ class SpiderContactsShortRule(BaseRule):
         omission_tilt_fail = omission_tilt_check["status"] == "fail"
         omission_fail = omission_reference_fail or omission_tilt_fail
 
-        # Проверка 3: вписываемость
-        dx = p_b["center_x"] - p_a["center_x"]
-        dy = p_b["center_y"] - p_a["center_y"]
-        step_px = float(np.hypot(dx, dy))
-
-        inscribe_check = None
+        # Проверка 3: вписываемость эталонного прямоугольника,
+        # размер задан непосредственно в пикселях.
+        expected_height_px = float(rect_height_px)
+        expected_width_px = float(rect_width_px)
         inscribe_fail_indices = []
         inscribe_results = []
 
-        if step_px > 0:
-            scale = step_px / CONTACTS_SHORT_STEP_MM
-            expected_height_px = rect_height_mm * scale
-            expected_width_px = rect_width_mm * scale
+        for i, det in enumerate(candidates_sorted):
+            res = self._try_inscribe_in_contact(
+                det, expected_height_px, expected_width_px, 0.0,
+            )
+            inscribe_results.append({"index": i, "fits": res["fits"], "points": res.get("points"), "center": res.get("center")})
+            if not res["fits"]:
+                inscribe_fail_indices.append(i)
 
-            for i, det in enumerate(candidates_sorted):
-                res = self._try_inscribe_in_contact(
-                    det, expected_height_px, expected_width_px, 0.0,
-                )
-                inscribe_results.append({"index": i, "fits": res["fits"], "points": res.get("points"), "center": res.get("center")})
-                if not res["fits"]:
-                    inscribe_fail_indices.append(i)
+        inscribe_check = {
+            "status": "ok" if not inscribe_fail_indices else "fail",
+            "rect_width_px": round(expected_width_px, 1),
+            "rect_height_px": round(expected_height_px, 1),
+            "fails": len(inscribe_fail_indices),
+        }
 
-            inscribe_check = {
-                "status": "ok" if not inscribe_fail_indices else "fail",
-                "scale_px_per_mm": round(scale, 3),
-                "rect_width_mm": round(rect_width_mm, 4),
-                "rect_height_mm": round(rect_height_mm, 4),
-                "expected_width_px": round(expected_width_px, 1),
-                "expected_height_px": round(expected_height_px, 1),
-                "fails": len(inscribe_fail_indices),
-            }
-        else:
-            inscribe_check = {"status": "error", "reason": "no_scale"}
-
-        inscribe_fail = inscribe_check["status"] in ("fail", "error")
+        inscribe_fail = inscribe_check["status"] == "fail"
 
         # Уровень определяется центрами вписанных эталонных прямоугольников,
         # а не границами исходной segmentation mask. Размер/форма контакта
@@ -400,16 +386,6 @@ class SpiderContactsShortRule(BaseRule):
                 "triggered": True,
             })
 
-        if inscribe_check.get("status") == "error":
-            drawings.append({
-                "type": "construction_error",
-                "role": role,
-                "bbox": self._combined_bbox(candidates_sorted),
-                "message": "NO SCALE",
-                "slot": 1 if omission_reference_fail else 0,
-                "triggered": True,
-            })
-
         return {
             "triggered": role_triggered,
             "reason": None,
@@ -437,8 +413,8 @@ class SpiderContactsShortRule(BaseRule):
             "omission_tilt_check": omission_tilt_check,
             "inscribe_fail": inscribe_fail,
             "inscribe_check": inscribe_check,
-            "rect_width_mm": rect_width_mm,
-            "rect_height_mm": rect_height_mm,
+            "rect_width_px": rect_width_px,
+            "rect_height_px": rect_height_px,
             "items": items,
         }
 

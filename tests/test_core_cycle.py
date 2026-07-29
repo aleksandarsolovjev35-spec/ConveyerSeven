@@ -384,8 +384,8 @@ class CoreCycleTests(unittest.TestCase):
                 "delta_top": 0.0,
                 "delta_bottom": 0.0,
                 "delta_height": 0.0,
-                "rect_width_mm": 1.74,
-                "rect_height_mm": 0.66,
+                "rect_width_px": 25.2,
+                "rect_height_px": 9.6,
                 "omission_tilt_ratio_max": 0.2,
                 "omission_tilt_check": {
                     "status": "error",
@@ -393,7 +393,6 @@ class CoreCycleTests(unittest.TestCase):
                 },
                 "inscribe_check": {
                     "status": "ok",
-                    "scale_px_per_mm": 14.5,
                 },
                 "items": [
                     {
@@ -512,8 +511,8 @@ class CoreCycleTests(unittest.TestCase):
                 "reason": None,
                 "ignored": 0,
                 "line_tolerance_px": 7.0,
-                "rect_width_mm": 0.48,
-                "rect_height_mm": 0.36,
+                "rect_width_px": 11.5,
+                "rect_height_px": 8.6,
                 "omission_tilt_ratio_max": 0.2,
                 "omission_tilt_check": {
                     "status": "fail",
@@ -521,7 +520,6 @@ class CoreCycleTests(unittest.TestCase):
                 },
                 "inscribe_check": {
                     "status": "fail",
-                    "scale_px_per_mm": 24.0,
                 },
                 "items": items,
             }}},

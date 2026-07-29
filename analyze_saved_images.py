@@ -453,21 +453,13 @@ def rule_report_row(result, required_roles=()) -> dict:
                     f"{role}: нет segmentation mask контакта: {indices}"
                 )
                 continue
-            if reason == "no_scale":
-                long_rows.append(
-                    f"{role}: невозможно вычислить scale по шагу 1.25mm"
-                )
-                continue
             tolerance = float(role_details.get("line_tolerance_px") or 0)
-            inscribe = role_details.get("inscribe_check") or {}
-            scale = inscribe.get("scale_px_per_mm")
             long_rows.append(
                 f"{role}: допуск центров {tolerance:.1f}px; "
                 f"наклон {float(role_details.get('level_slope') or 0):.3f}/"
                 f"limit {float(role_details.get('max_level_slope') or 0):.3f}; "
-                f"rect {float(role_details.get('rect_width_mm') or 0):g}x"
-                f"{float(role_details.get('rect_height_mm') or 0):g}mm; "
-                f"scale={scale if scale is not None else '—'}px/mm"
+                f"rect {float(role_details.get('rect_width_px') or 0):g}x"
+                f"{float(role_details.get('rect_height_px') or 0):g}px"
             )
             ignored = int(role_details.get("ignored") or 0)
             if ignored:
@@ -542,13 +534,10 @@ def rule_report_row(result, required_roles=()) -> dict:
                 f"{float(role_details.get('delta_height') or 0):.1f}/"
                 f"{tolerance:.1f}px"
             )
-            inscribe = role_details.get("inscribe_check") or {}
-            scale = inscribe.get("scale_px_per_mm")
             short_rows.append(
                 f"{role}: rect "
-                f"{float(role_details.get('rect_width_mm') or 0):g}x"
-                f"{float(role_details.get('rect_height_mm') or 0):g}mm; "
-                f"scale={scale if scale is not None else '—'}px/mm"
+                f"{float(role_details.get('rect_width_px') or 0):g}x"
+                f"{float(role_details.get('rect_height_px') or 0):g}px"
             )
             ignored = int(role_details.get("ignored") or 0)
             if ignored:
@@ -628,30 +617,15 @@ def rule_report_row(result, required_roles=()) -> dict:
                     f"{role}: прямоугольник не проверен ({check.get('reason', '—')})"
                 )
                 continue
-            if "rect_width_px" in check:
-                width = check.get("rect_width_px")
-                height = check.get("rect_height_px")
-                unit = "px"
-            elif "rect_width_mm" in check:
-                width = check.get("rect_width_mm")
-                height = check.get("rect_height_mm")
-                unit = "mm"
-            else:
-                width = check.get("rect_width_um")
-                height = check.get("rect_height_um")
-                unit = "um"
-            width_px = check.get("expected_width_px")
-            height_px = check.get("expected_height_px")
+            width = check.get("rect_width_px")
+            height = check.get("rect_height_px")
             fails = int(check.get("fails") or (not check.get("fits", True)))
             if width is None or height is None:
                 continue
-            text = f"{role}: rect W={float(width):.4g} H={float(height):.4g} {unit}"
-            if unit != "px":
-                text += (
-                    f"; W={float(width_px or 0):.1f} "
-                    f"H={float(height_px or 0):.1f}px"
-                )
-            text += f"; не влезло: {fails}"
+            text = (
+                f"{role}: rect W={float(width):.4g} H={float(height):.4g} px"
+                f"; не влезло: {fails}"
+            )
             rectangle_rows.append(text)
         if rectangle_rows:
             detail = "; ".join(rectangle_rows)

@@ -7,7 +7,6 @@ from domain.defect_rules.omission_reference import (
     signed_distance_and_projection,
 )
 
-CONTACTS_LONG_STEP_MM = 1.25
 TOP_PERCENTILE = 10.0
 BOTTOM_PERCENTILE = 90.0
 
@@ -38,11 +37,11 @@ class SpiderContactsLongRule(BaseRule):
             max_level_slope = self._get(
                 "spider_contacts_long_max_level_slope", 0.10, role=role,
             )
-            rect_width_mm = self._get(
-                "spider_contacts_long_inscribed_rect_width_mm", 0.48, role=role,
+            rect_width_px = self._get(
+                "spider_contacts_long_inscribed_rect_width_px", 11.5, role=role,
             )
-            rect_height_mm = self._get(
-                "spider_contacts_long_inscribed_rect_height_mm", 0.36, role=role,
+            rect_height_px = self._get(
+                "spider_contacts_long_inscribed_rect_height_px", 8.6, role=role,
             )
             y_filter = self._get("spider_contacts_long_y_filter_ratio", 3.0, role=role)
             omission_min_conf = self._get(
@@ -65,7 +64,7 @@ class SpiderContactsLongRule(BaseRule):
 
             role_result = self._check_role(
                 role, candidates, omissions, expected, line_dev,
-                rect_width_mm, rect_height_mm, y_filter,
+                rect_width_px, rect_height_px, y_filter,
                 omission_tilt_ratio_max, max_level_slope, drawings,
             )
 
@@ -80,12 +79,12 @@ class SpiderContactsLongRule(BaseRule):
         )
 
     def _check_role(self, role, candidates, omissions, expected_count,
-                    line_dev_ratio, rect_width_mm, rect_height_mm,
+                    line_dev_ratio, rect_width_px, rect_height_px,
                     y_filter_ratio, omission_tilt_ratio_max,
                     max_level_slope, drawings):
         found_raw = len(candidates)
 
-        selected, ignored, filter_note, scale = self._select_contacts(
+        selected, ignored, filter_note = self._select_contacts(
             candidates, expected_count, y_filter_ratio,
         )
         found = len(selected)
@@ -158,34 +157,6 @@ class SpiderContactsLongRule(BaseRule):
                 "items": [],
             }
 
-        if scale is None or scale <= 0:
-            for index, detection in enumerate(sorted_dets, start=1):
-                drawings.append({
-                    "type": "contacts_long_item",
-                    "role": role,
-                    "bbox": detection["bbox"],
-                    "mask": detection.get("mask"),
-                    "index": index,
-                    "failures": [],
-                    "triggered": False,
-                })
-            drawings.append({
-                "type": "construction_error",
-                "role": role,
-                "bbox": self._combined_bbox(sorted_dets),
-                "message": "NO SCALE",
-                "triggered": True,
-            })
-            return {
-                "triggered": True,
-                "reason": "no_scale",
-                "found": found,
-                "found_raw": found_raw,
-                "ignored": len(ignored),
-                "filter_note": filter_note,
-                "items": [],
-            }
-
         params = [self._extract_params(d) for d in sorted_dets]
 
         xs = np.array([p["center_x"] for p in params], dtype=np.float64)
@@ -218,7 +189,7 @@ class SpiderContactsLongRule(BaseRule):
         omission_fail = omission_reference_fail or omission_tilt_fail
 
         inscribe_check, inscribe_results, _fail_indices = self._run_inscribe(
-            sorted_dets, scale, rect_width_mm, rect_height_mm,
+            sorted_dets, rect_width_px, rect_height_px,
         )
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
 
@@ -388,8 +359,8 @@ class SpiderContactsLongRule(BaseRule):
             "omission_tilt_check": omission_tilt_check,
             "inscribe_fail": inscribe_fail,
             "inscribe_check": inscribe_check,
-            "rect_width_mm": rect_width_mm,
-            "rect_height_mm": rect_height_mm,
+            "rect_width_px": rect_width_px,
+            "rect_height_px": rect_height_px,
             "items": items,
         }
 
@@ -477,12 +448,9 @@ class SpiderContactsLongRule(BaseRule):
             "ratio_max": round(float(ratio_max), 6),
         }
 
-    def _run_inscribe(self, sorted_dets, scale, width_mm, height_mm):
-        if scale is None or scale <= 0:
-            return {"status": "error", "reason": "no_scale"}, [], []
-
-        expected_height_px = height_mm * scale
-        expected_width_px = width_mm * scale
+    def _run_inscribe(self, sorted_dets, width_px, height_px):
+        expected_height_px = float(height_px)
+        expected_width_px = float(width_px)
         results = []
         fail_indices = []
 
@@ -501,11 +469,8 @@ class SpiderContactsLongRule(BaseRule):
 
         check = {
             "status": "ok" if not fail_indices else "fail",
-            "scale_px_per_mm": round(scale, 3),
-            "rect_width_mm": round(width_mm, 4),
-            "rect_height_mm": round(height_mm, 4),
-            "expected_width_px": round(expected_width_px, 1),
-            "expected_height_px": round(expected_height_px, 1),
+            "rect_width_px": round(expected_width_px, 1),
+            "rect_height_px": round(expected_height_px, 1),
             "fails": len(fail_indices),
         }
         return check, results, fail_indices
@@ -514,9 +479,9 @@ class SpiderContactsLongRule(BaseRule):
     def _select_contacts(cls, candidates, expected, y_filter_ratio):
         n = len(candidates)
         if n == 0:
-            return [], [], "no detections", None
+            return [], [], "no detections"
         if n <= expected:
-            return list(candidates), [], "no filtering needed", cls._compute_scale(list(candidates))
+            return list(candidates), [], "no filtering needed"
 
         params = [cls._extract_params_basic(d) for d in candidates]
         center_ys = np.array([p["center_y"] for p in params])
@@ -530,11 +495,11 @@ class SpiderContactsLongRule(BaseRule):
         if len(y_kept) < expected:
             s = [candidates[i] for i in y_kept]
             g = [candidates[i] for i in y_drop]
-            return s, g, f"y-filter left only {len(y_kept)}", cls._compute_scale(s)
+            return s, g, f"y-filter left only {len(y_kept)}"
         if len(y_kept) == expected:
             s = [candidates[i] for i in y_kept]
             g = [candidates[i] for i in y_drop]
-            return s, g, f"y-filter dropped {len(y_drop)}", cls._compute_scale(s)
+            return s, g, f"y-filter dropped {len(y_drop)}"
 
         kept_sorted = sorted(y_kept, key=lambda i: params[i]["center_x"])
         best_window, best_score = None, float("inf")
@@ -554,23 +519,12 @@ class SpiderContactsLongRule(BaseRule):
         if best_window is None:
             s = [candidates[i] for i in kept_sorted[:expected]]
             g = [c for i, c in enumerate(candidates) if i not in kept_sorted[:expected]]
-            return s, g, "fallback: first N", cls._compute_scale(s)
+            return s, g, "fallback: first N"
 
         s = [candidates[i] for i in best_window]
         g = [c for i, c in enumerate(candidates) if i not in best_window]
         note = f"y-drop={len(y_drop)} x-drop={len(kept_sorted) - expected} score={best_score:.2f}"
-        return s, g, note, cls._compute_scale(s)
-
-    @classmethod
-    def _compute_scale(cls, selected):
-        if len(selected) < 2:
-            return None
-        xs = sorted(cls._bbox_center_x(d["bbox"]) for d in selected)
-        sp = np.diff(xs)
-        if len(sp) < 1:
-            return None
-        med = float(np.median(sp))
-        return med / CONTACTS_LONG_STEP_MM if med > 0 else None
+        return s, g, note
 
     @staticmethod
     def _try_inscribe(det, expected_short_px, expected_long_px, common_angle):

@@ -92,20 +92,11 @@ def _detail_contacts_long(per_role: dict) -> list:
                 f"{role}: нет segmentation mask контакта: {indices}"
             )
             continue
-        if reason == "no_scale":
-            detail_lines.append(
-                f"{role}: невозможно вычислить scale по шагу 1.25 mm"
-            )
-            continue
-
         tolerance = float(role_details.get("line_tolerance_px") or 0)
-        inscribe = role_details.get("inscribe_check") or {}
-        scale = inscribe.get("scale_px_per_mm")
         detail_lines.append(
             f"{role}: допуск линий {tolerance:.1f} px; "
-            f"rectangle {float(role_details.get('rect_width_mm') or 0):g}x"
-            f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-            f"scale {scale if scale is not None else '—'} px/mm"
+            f"rectangle {float(role_details.get('rect_width_px') or 0):g}x"
+            f"{float(role_details.get('rect_height_px') or 0):g} px"
         )
         ignored = int(role_details.get("ignored") or 0)
         if ignored:
@@ -184,13 +175,10 @@ def _detail_contacts_short(per_role: dict) -> list:
             f"{float(role_details.get('delta_height') or 0):.1f}/"
             f"{tolerance:.1f} px"
         )
-        inscribe = role_details.get("inscribe_check") or {}
-        scale = inscribe.get("scale_px_per_mm")
         detail_lines.append(
             f"{role}: rectangle "
-            f"{float(role_details.get('rect_width_mm') or 0):g}x"
-            f"{float(role_details.get('rect_height_mm') or 0):g} mm; "
-            f"scale {scale if scale is not None else '—'} px/mm"
+            f"{float(role_details.get('rect_width_px') or 0):g}x"
+            f"{float(role_details.get('rect_height_px') or 0):g} px"
         )
         ignored = int(role_details.get("ignored") or 0)
         if ignored:

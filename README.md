@@ -257,11 +257,11 @@ short_omission → собственные area/profile проверки omission
 
 `contacts_short` на `SPIDER_IN/SPIDER_OUT` сначала применяет минимальную площадь `400 px²` ко всем detections, включая случай исходного количества ровно два. Затем выбирается лучшая пара valid segmentation masks; лишние detections показываются серым пунктиром. BBox fallback запрещён.
 
-Для пары проверяются `Δtop`, `Δbottom` и `Δheight`. Допуск равен `median_contact_height × level_deviation_ratio`: для `SPIDER_IN` установлен коэффициент `0.45`, для `SPIDER_OUT` — `0.35`. Масштаб вычисляется по расстоянию между центрами и физическому шагу `5.5 mm`; в каждую mask вписывается rectangle `1.74×0.66 mm`. Отсутствующий scale вызывает fail closed и короткую подпись `NO SCALE`.
+Для пары проверяются `Δtop`, `Δbottom` и `Δheight`. Допуск равен `median_contact_height × level_deviation_ratio`: для `SPIDER_IN` установлен коэффициент `0.45`, для `SPIDER_OUT` — `0.35`. В каждую mask вписывается rectangle `25.2×9.6 px`; размер задаётся непосредственно в пикселях порогами `spider_contacts_short_inscribed_rect_width_px` / `spider_contacts_short_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
 
-Renderer показывает без чисел и текстовых пояснений: два contact contours, два rectangles, верхнюю и нижнюю соединяющие линии с коридорами допуска, два вертикальных height-сегмента, линию `omission-short` и два перпендикуляра. Sample points, чёрные подложки и подписи расстояний удалены. Невозможное построение использует единые короткие сообщения `CONTACTS N/2`, `NO CONTACT MASK`, `NO SCALE`, `NO OMISSION`.
+Renderer показывает без чисел и текстовых пояснений: два contact contours, два rectangles, верхнюю и нижнюю соединяющие линии с коридорами допуска, два вертикальных height-сегмента, линию `omission-short` и два перпендикуляра. Sample points, чёрные подложки и подписи расстояний удалены. Невозможное построение использует единые короткие сообщения `CONTACTS N/2`, `NO CONTACT MASK`, `NO OMISSION`.
 
-Справа выводятся общие дельты и допуск, scale/rectangle, omission tilt, а также top/bottom/height, rectangle result и distance до omission для каждого из двух контактов.
+Справа выводятся общие дельты и допуск, rectangle, omission tilt, а также top/bottom/height, rectangle result и distance до omission для каждого из двух контактов.
 
 ### Наклон коротких контактов относительно omission
 
@@ -294,11 +294,11 @@ tilt_ratio > spider_contacts_short_omission_tilt_ratio_max
 
 `contacts_long` на `SPIDER_LEFT/SPIDER_RIGHT` выбирает наиболее ровный ряд из пяти `contacts-long`; лишние detections показываются серым пунктиром и не участвуют в решении. Для всех пяти обязательны valid segmentation masks. Неверное количество или отсутствующая mask вызывают fail closed без bbox fallback.
 
-По верхним и нижним границам пяти mask строятся две линии. Допустимое отклонение каждой границы равно `median_contact_height × 0.35`. Масштаб вычисляется по физическому шагу центров `1.25 mm`, после чего в каждую mask вписывается прямоугольник `0.48×0.36 mm` алгоритмом «центр → ближайшее допустимое положение».
+По верхним и нижним границам пяти mask строятся две линии. Допустимое отклонение каждой границы равно `median_contact_height × 0.35`. В каждую mask вписывается прямоугольник `11.5×8.6 px` алгоритмом «центр → ближайшее допустимое положение»; размер задаётся непосредственно в пикселях порогами `spider_contacts_long_inscribed_rect_width_px` / `spider_contacts_long_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
 
 Renderer не содержит заливок, индексов, чисел и текстовых сообщений. Он показывает контуры пяти mask, пять эталонных прямоугольников, верхнюю и нижнюю линии с коридорами допуска, линию `omission-long` и пять перпендикуляров. Верхняя и нижняя линии имеют разные цвета; violated geometry становится красной. Отсутствующая omission reference показывается красным крестом через диапазон ряда.
 
-Справа для каждого из пяти контактов выводятся отклонения верх/низ относительно допуска, результат rectangle и расстояние до omission. Общая строка содержит масштаб, размер rectangle и итоговый omission tilt ratio.
+Справа для каждого из пяти контактов выводятся отклонения верх/низ относительно допуска, результат rectangle и расстояние до omission. Общая строка содержит размер rectangle и итоговый omission tilt ratio.
 
 ### Наклон пяти длинных контактов относительно omission
 
@@ -364,15 +364,15 @@ long_tilt_ratio = abs(predicted_distance_right - predicted_distance_left)
 Алгоритм поиска положения сохранён: сначала прямоугольник проверяется по центру mask, затем ищется ближайшее к центру допустимое положение.
 
 ```text
-SPIDER_LEFT/RIGHT contacts-long: width=0.48 mm, height=0.36 mm
-SPIDER_IN/OUT flatness_short:    width=1.74 mm, height=0.66 mm
+SPIDER_LEFT/RIGHT contacts-long: width=11.5 px, height=8.6 px
+SPIDER_IN/OUT flatness_short:    width=25.2 px, height=9.6 px
 TOP contacts L/R:                width=28 px, height=35 px
 TOP contacts T/B:                width=30 px, height=28 px
 TOP platform, внутренний:        width=260 px, height=120 px
 TOP platform, область заплыва:   строится по контактам (без фиксированного размера)
 ```
 
-TOP больше не использует физический масштаб `px/um`. Размеры задаются непосредственно в пикселях:
+Ни одна камера больше не использует физический масштаб (`px/mm`, `px/um`). Размеры задаются непосредственно в пикселях:
 
 ```json
 "TOP": {

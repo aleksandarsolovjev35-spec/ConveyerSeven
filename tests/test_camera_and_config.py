@@ -276,10 +276,10 @@ class CameraAndConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         thresholds = ThresholdLoader(root / "thresholds.json").get_all()
         expected = {
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_mm": 0.48,
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_mm": 0.36,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_mm": 1.74,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_mm": 0.66,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 11.5,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_px": 8.6,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_px": 25.2,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_px": 9.6,
             "TOP.top_contacts_side_rect_width_px": 28,
             "TOP.top_contacts_side_rect_height_px": 35,
             "TOP.top_contacts_edge_rect_width_px": 30,

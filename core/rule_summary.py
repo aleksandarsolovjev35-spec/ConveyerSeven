@@ -135,10 +135,14 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             add(_metric(
                 "наклон", ratio, ratio_max, ok=_within(ratio, ratio_max),
             ))
-        scale = (role_details.get("inscribe_check") or {}).get(
-            "scale_px_per_mm"
-        )
-        add(_metric("масштаб", scale, unit=" px/mm"))
+        rect_width = role_details.get("rect_width_px")
+        rect_height = role_details.get("rect_height_px")
+        if rect_width is not None and rect_height is not None:
+            add(_metric(
+                "прямоугольник",
+                f"{_number(rect_width)}×{_number(rect_height)}",
+                unit=" px",
+            ))
 
     elif rule_name == "top_contacts":
         for group in ("L", "R", "T", "B"):
@@ -253,7 +257,6 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
 
 
 _REASON_TEXT = {
-    "no_scale": "нет масштаба",
     "no_valid_platform": "не найдена платформа",
     "invalid_platform_bbox": "некорректная платформа",
     "invalid_platform_orientation": "не определена ориентация",
