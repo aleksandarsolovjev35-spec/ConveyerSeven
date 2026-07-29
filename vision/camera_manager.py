@@ -74,7 +74,12 @@ _WARMUP_SECONDS = _env_float("CAMERA_WARMUP_SECONDS", 0.5, minimum=0.0)
 _WARMUP_READ_INTERVAL = _env_float(
     "CAMERA_WARMUP_READ_INTERVAL", 0.05, minimum=0.01
 )
-_DARK_RETRY_ATTEMPTS = _env_int("CAMERA_DARK_RETRY_ATTEMPTS", 15, minimum=0)
+# Повтор при пустом/near-black кадре во время обычного захвата. После
+# загрузки моделей камеры могли простаивать несколько секунд, и отдельные
+# UVC-устройства снова отдавали 1-2 секунды пустые или тёмные кадры.
+# 30 * 0.08 ~= 2.4с — меньше общего _CAPTURE_TIMEOUT, но достаточно,
+# чтобы переждать повторную автоэкспозицию перед preview/инспекцией.
+_DARK_RETRY_ATTEMPTS = _env_int("CAMERA_DARK_RETRY_ATTEMPTS", 30, minimum=0)
 _DARK_RETRY_INTERVAL = _env_float(
     "CAMERA_DARK_RETRY_INTERVAL", 0.08, minimum=0.01
 )
@@ -413,13 +418,27 @@ class CameraManager:
         Отдельный шаг используется в ``main.py`` после открытия камер и
         перед первым ``capture_all``.
         """
+        return self.warmup_roles(tuple(self.cameras.keys()), duration=duration)
+
+    def warmup_roles(self, roles, duration: float | None = None) -> dict:
+        """Прогреть выбранные роли камер и вернуть статистику чтений.
+
+        Используется не только для общего прогрева, но и для точечного
+        восстановления роли, которая после простоя отдаёт пустые/тёмные
+        кадры. Метод не латчит CameraManager в ошибку: прогрев является
+        подготовительной процедурой, а не production-захватом.
+        """
+        requested = tuple(dict.fromkeys(roles))
         actual_duration = (
             float(duration) if duration is not None else float(_WARMUP_SECONDS)
         )
-        if actual_duration <= 0.0:
+        if actual_duration <= 0.0 or not requested:
             return {}
         if not self.cameras:
             return {}
+        unknown = set(requested) - set(self.cameras)
+        if unknown:
+            raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
         self._ensure_usable()
         stats = {}
         stats_lock = threading.Lock()
@@ -471,7 +490,7 @@ class CameraManager:
                 )
 
         threads = []
-        for role in list(self.cameras.keys()):
+        for role in requested:
             thread = threading.Thread(
                 target=_warm, args=(role,), daemon=True,
                 name=f"warmup-{role}"

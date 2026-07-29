@@ -32,6 +32,7 @@ CYCLE_JOIN_TIMEOUT   = 15.0
 INIT_JOIN_TIMEOUT    = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
 COMPRESS_TIMEOUT     = 60.0
+CAMERA_READY_MEAN_MIN = 8.0
 
 
 def main():
@@ -280,12 +281,13 @@ def main():
                 "camera_warmup", "Прогрев камер",
             )
             try:
-                warmup_seconds = float(
-                    os.environ.get("CAMERA_WARMUP_SECONDS", "2.5")
+                warmup_seconds = _env_clamped_float(
+                    "CAMERA_WARMUP_SECONDS", 2.5, 0.5, 10.0,
                 )
-                # Не менее 0.5с, не более 10с для этапа загрузки
-                warmup_seconds = max(0.5, min(10.0, warmup_seconds))
                 stats = cameras.warmup_all(duration=warmup_seconds)
+                stats = _recover_weak_cameras_after_warmup(
+                    cameras, stats, "стартовый прогрев",
+                )
                 total_reads = sum(
                     s.get("reads", 0) for s in stats.values()
                 )
@@ -429,15 +431,24 @@ def main():
             monitor.boot_step_done("cycle")
             _ensure_initialization_active()
 
-            # Quick re-warmup before preview (models loading took time)
+            # Re-warmup before preview (models loading took time). Некоторые
+            # UVC-камеры после простоя снова отдают пустые/тёмные кадры;
+            # короткой 1с паузы INPUT_LEFT не всегда хватало.
             try:
-                quick = float(
-                    os.environ.get("CAMERA_PRE_PREVIEW_WARMUP_SECONDS", "1.0")
+                quick = _env_clamped_float(
+                    "CAMERA_PRE_PREVIEW_WARMUP_SECONDS", 2.5, 0.0, 5.0,
                 )
                 if quick > 0.0:
-                    cameras.warmup_all(duration=max(0.2, min(3.0, quick)))
+                    stats = cameras.warmup_all(duration=quick)
+                    _recover_weak_cameras_after_warmup(
+                        cameras, stats, "прогрев перед preview",
+                    )
             except Exception as exc:
-                print(f"[CAMERA] pre-preview warmup failed: {exc}")
+                monitor.boot_step_error(
+                    "preview", f"Ошибка прогрева перед preview: {exc}",
+                )
+                _report_startup_failure()
+                return
 
             # Preview
             monitor.boot_step_start(
@@ -612,6 +623,74 @@ def main():
 
 
 # Helpers
+
+def _env_clamped_float(
+    name: str, default: float, minimum: float, maximum: float,
+) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"[CONFIG] {name}={raw!r} не число, используется {default}")
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _weak_camera_warmup_reasons(stats: dict) -> dict:
+    """Вернуть роли, которые после прогрева всё ещё не похожи на живые."""
+    reasons = {}
+    for role, row in (stats or {}).items():
+        try:
+            reads = int(row.get("reads", 0) or 0)
+        except Exception:
+            reads = 0
+        try:
+            brightest = float(row.get("brightest", 0.0) or 0.0)
+        except Exception:
+            brightest = 0.0
+        if reads <= 0:
+            reasons[role] = "нет кадров"
+        elif brightest < CAMERA_READY_MEAN_MIN:
+            reasons[role] = (
+                f"тёмные кадры: max luminance {brightest:.1f} "
+                f"< {CAMERA_READY_MEAN_MIN:.1f}"
+            )
+    return reasons
+
+
+def _format_warmup_reasons(reasons: dict) -> str:
+    return "; ".join(
+        f"{role}: {reason}" for role, reason in sorted(reasons.items())
+    )
+
+
+def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict:
+    """Точечно догреть камеры, которые остались пустыми/тёмными."""
+    reasons = _weak_camera_warmup_reasons(stats)
+    if not reasons:
+        return stats
+
+    roles = tuple(reasons)
+    retry_seconds = _env_clamped_float(
+        "CAMERA_RECOVERY_WARMUP_SECONDS", 2.5, 0.2, 10.0,
+    )
+    print(
+        f"[CAMERA] {phase}: слабый прогрев ({_format_warmup_reasons(reasons)}); "
+        f"повторно прогреваем {', '.join(roles)} {retry_seconds:.1f}с"
+    )
+    retry_stats = cameras.warmup_roles(roles, duration=retry_seconds)
+    retry_reasons = _weak_camera_warmup_reasons(retry_stats)
+    merged = dict(stats or {})
+    merged.update(retry_stats)
+    if retry_reasons:
+        raise RuntimeError(
+            f"Камеры не стабилизировались после прогрева ({phase}): "
+            f"{_format_warmup_reasons(retry_reasons)}"
+        )
+    return merged
+
 
 def _shutdown_compress(archive):
     if not archive or not archive.enabled:

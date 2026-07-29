@@ -177,6 +177,8 @@ class UIServer:
                 self._append_log(message)
 
     def boot_step_error(self, key, message):
+        label = dict(BOOT_STEPS).get(key, key)
+        print(f"[BOOT] Ошибка этапа '{label}': {message}")
         with self.lock:
             if key in self.boot_steps:
                 self.boot_steps[key] = "error"
