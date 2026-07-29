@@ -30,10 +30,15 @@
     margin-top: 6px;
 }
 .line-conveyor-track {
-    display: flex;
+    /* The gates are fixed-width flex siblings.  Without an explicit flex
+       basis the grid has only its min-content width and all eight cells
+       collapse into a narrow accordion at normal window sizes. */
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) 58px;
     align-items: center;
-    gap: 3px;
-    overflow: hidden;
+    gap: 5px;
+    width: 100%;
+    overflow: visible;
     position: relative;
 }
 .line-conveyor-track::before {
@@ -48,9 +53,11 @@
 .production-line-cells {
     position: relative;
     z-index: 2;
+    width: 100%;
+    min-width: 0;
     height: 34px;
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 3px;
 }
 .production-line-cells .line-cell {
@@ -79,8 +86,10 @@
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 4px;
-    margin-top: 3px;
+    gap: 3px;
+    /* Keep labels aligned with the eight cells, not with the entrance and
+       exit gates around them. */
+    margin: 3px 63px 0;
 }
 
 .line-position-labels span {
@@ -424,7 +433,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 44px;
+    width: 58px;
+    min-width: 0;
     height: 32px;
     font: 700 8px var(--font-mono);
     letter-spacing: 0.6px;
