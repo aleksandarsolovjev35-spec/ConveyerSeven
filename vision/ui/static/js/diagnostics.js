@@ -252,6 +252,7 @@ function updateSelectedAnalysisStatus(ls) {
     if (!els.analyzeSelectedFrame) return;
     const selected = ls.selected_analysis || {};
     const wasActive = state.selectedAnalysisActive;
+    const wasLiveStreaming = state.liveStreaming;
     state.selectedAnalysisActive = selected.active === true;
     state.selectedAnalysisRole = selected.role || null;
     const live = ls.live || {};
@@ -259,6 +260,16 @@ function updateSelectedAnalysisStatus(ls) {
     state.liveFps = Number(live.fps || (ls.jog || {}).live_fps || 0);
     state.liveStreaming = live.streaming === true;
     state.liveStatic = live.static === true;
+
+    // При переходе между статикой и потоком (MOTION <-> CAPTURE) сразу
+    // переключаем источник главного кадра: live-pull для движения без
+    // геометрии, pull для стоп-кадра с правилами. Иначе оверлей прошлого
+    // анализа остаётся на движущемся кадре — эффект маркера на стекле.
+    if (wasLiveStreaming !== state.liveStreaming) {
+        if (typeof applyMainCameraSource === 'function') {
+            applyMainCameraSource();
+        }
+    }
 
     const controls = ls.controls || {};
     const allowed = state.selectedAnalysisActive

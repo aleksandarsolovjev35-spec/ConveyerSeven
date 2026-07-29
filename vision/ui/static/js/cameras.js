@@ -264,7 +264,13 @@ function applyMainCameraSource() {
     if (!state.currentCamera) return;
     if (state.splashActive) return;
 
-    if (state.jogActive) {
+    // Во время любого движения (JOG или производственное MOTION) оператор
+    // должен видеть поток без геометрии. Геометрия построена по статичному
+    // кадру и на движущемся изображении указывала бы мимо детали — эффект
+    // маркера на стекле. Поэтому используем live-pull и во время RUNNING.
+    const shouldLivePull = state.jogActive || state.liveStreaming;
+
+    if (shouldLivePull) {
         const desiredRole = state.currentCamera;
         const desiredView = state.mode;
         if (

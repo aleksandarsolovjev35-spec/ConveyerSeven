@@ -664,6 +664,18 @@ class ProductionCycle:
                 "updated_at": None,
             }
             self.live.resume()
+            # Убрать геометрию анализа с экрана: разметка построена по
+            # статичному кадру и на движущемся изображении указывала бы
+            # мимо детали (эффект маркера на лобовом стекле).
+            self.live.clear_overlays()
+            try:
+                fresh_frames = self.cameras.capture_all()
+                # Публикуем свежие кадры без оверлеев — возврат к живому виду.
+                self._refresh_monitor(fresh_frames)
+            except Exception:
+                # Если захват недоступен (камеры заняты / ошибка), хотя бы
+                # гарантируем очистку оверлеев и обновление статуса.
+                self._refresh_monitor()
             self._set_process(
                 "LIVE_SELECTED_CAMERA",
                 f"Поток восстановлен: {role}",
