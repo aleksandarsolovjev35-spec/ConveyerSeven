@@ -684,6 +684,8 @@ def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | Non
     return "ДЕФЕКТ"
 
 
+from core.rule_summary import build_presence_summary, build_rule_summary
+
 SUMMARY_LINES_LIMIT = 4
 
 PART_PRESENCE_RULE = "part_presence"
@@ -834,6 +836,13 @@ def build_rule_report_row(result) -> dict:
         rule_name == PART_PRESENCE_RULE and details.get("empty_tray")
     )
 
+    if rule_name == PART_PRESENCE_RULE:
+        summary_cards = build_presence_summary(details)
+    else:
+        summary_cards = build_rule_summary(
+            rule_name, details if has_per_role else {},
+        )
+
     summary_lines = _summary_lines(
         rule_name,
         triggered,
@@ -855,6 +864,7 @@ def build_rule_report_row(result) -> dict:
         "human_cause": human_cause,
         "detail_lines": detail_lines,
         "summary_lines": summary_lines,
+        "summary_cards": summary_cards,
         "part_absent": part_absent,
         "decisive": bool(part_absent or triggered or skipped),
         "consensus": dict(consensus),

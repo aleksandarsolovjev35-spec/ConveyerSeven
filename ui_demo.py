@@ -1,13 +1,70 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 import time
 
 import cv2
 import numpy as np
 import webview
 
+from core.rule_report import build_rule_report_rows
 from vision.ui import LiveMonitor
+
+
+def demo_rule_rows():
+    """Демонстрационные правила в продакшн-формате отчёта."""
+    return build_rule_report_rows([
+        SimpleNamespace(
+            rule_name="part_presence",
+            triggered=False,
+            details={
+                "empty_tray": False,
+                "flatness_left": 6,
+                "flatness_right": 5,
+                "effective_flatness_left": 6,
+                "effective_flatness_right": 5,
+                "false_positive_max_count_by_role": {
+                    "INPUT_LEFT": 2, "INPUT_RIGHT": 2,
+                },
+            },
+        ),
+        SimpleNamespace(
+            rule_name="long_omission",
+            triggered=True,
+            details={"per_role": {
+                "SPIDER_LEFT": {
+                    "triggered": True, "reason": None,
+                    "allowed_thickness_px": 20.0, "excess_pixels": 340,
+                    "largest_component_pixels": 340,
+                    "excess_component_min_px": 3,
+                    "max_excess_depth_px": 18.0,
+                    "top_line_actual_max_residual_px": 1.2,
+                    "top_line_max_residual_px": 3.0,
+                    "found": 5, "expected_count": 5,
+                },
+                "SPIDER_RIGHT": {
+                    "triggered": False, "reason": None,
+                    "allowed_thickness_px": 20.0, "excess_pixels": 0,
+                    "excess_component_min_px": 3,
+                    "max_excess_depth_px": 0.0,
+                    "top_line_actual_max_residual_px": 0.4,
+                    "top_line_max_residual_px": 3.0,
+                    "found": 5, "expected_count": 5,
+                },
+            }},
+        ),
+        SimpleNamespace(
+            rule_name="top_platform",
+            triggered=False,
+            details={"per_role": {"TOP": {
+                "triggered": False, "reason": None,
+                "placement": "centered", "shift_distance_px": 1.8,
+                "angle_deg": 0.4, "rect_width_px": 262,
+                "rect_height_px": 121, "found": 1, "expected_count": 1,
+            }}},
+        ),
+    ])
 
 ROLES = (
     "INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT",
@@ -93,6 +150,8 @@ class UiDemo:
         }
 
     def line_status(self):
+        # Демо-строки правил собираются реальным построителем отчёта,
+        # поэтому витрина совпадает с продакшн-форматом сводки.
         prestart = self.controls()["distributor_diagnostic"]
         cycle_analysis = self.state in {"RUNNING", "STOPPING"}
         selected_report = self.diagnostics.get("kind") == "SELECTED_MODEL"
@@ -114,14 +173,7 @@ class UiDemo:
                         "detections": 2,
                     }
                 ],
-                "rules": [
-                    {
-                        "name": "demo_rule",
-                        "triggered": False,
-                        "skipped": False,
-                        "detail": "Норма",
-                    }
-                ],
+                "rules": demo_rule_rows(),
             }
         elif selected_report:
             frame_analysis = {

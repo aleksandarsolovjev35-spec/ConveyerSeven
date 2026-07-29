@@ -450,18 +450,24 @@ function renderFrameAnalysisRules(rules) {
             item.classList.add('has-human-cause');
         }
 
-        // Подробная, но не избыточная сводка по фактам, определившим решение.
-        const summary = ruleSummaryLines(rule);
-        const showSummary = (
-            rule.triggered || rule.skipped || rule.show_detail || rule.part_absent
-        );
-        if (summary.length && showSummary) {
+        // Наглядная сводка: что обнаружено и какие получились показатели.
+        const cards = Array.isArray(rule.summary_cards) ? rule.summary_cards : [];
+        if (cards.length) {
             item.classList.add('has-detail');
-            for (const line of summary) {
-                const reason = document.createElement('small');
-                reason.className = 'frame-analysis-reason';
-                reason.textContent = line;
-                item.appendChild(reason);
+            item.appendChild(renderRuleSummaryCards(cards));
+        } else {
+            const summary = ruleSummaryLines(rule);
+            const showSummary = (
+                rule.triggered || rule.skipped || rule.show_detail || rule.part_absent
+            );
+            if (summary.length && showSummary) {
+                item.classList.add('has-detail');
+                for (const line of summary) {
+                    const reason = document.createElement('small');
+                    reason.className = 'frame-analysis-reason';
+                    reason.textContent = line;
+                    item.appendChild(reason);
+                }
             }
         }
 

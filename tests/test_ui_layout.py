@@ -171,7 +171,8 @@ class UiLayoutTests(unittest.TestCase):
         self.assertEqual(
             [path.name for path in js],
             [
-                "core.js", "boot.js", "diagnostics.js", "status.js",
+                "core.js", "boot.js", "diagnostics.js", "rule-summary.js",
+                "status.js",
                 "controls.js", "cameras.js", "jog.js", "history.js",
                 "bootstrap.js",
             ],

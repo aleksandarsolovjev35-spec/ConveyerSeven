@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.rule_summary import METRICS_PER_ROLE_LIMIT
 from core.rule_report import (
     SUMMARY_LINES_LIMIT,
     build_rule_report_row,
@@ -152,3 +153,102 @@ class LineCellIndexingTests(unittest.TestCase):
         self.assertIn(".line-cell[data-pos]", js)
         self.assertIn("Number(cell.dataset.pos)", js)
         self.assertNotIn("const cells = els.lineCells.children;", js)
+
+
+class RuleSummaryCardTests(unittest.TestCase):
+    """Сводка показывает и норму, и отклонение с числовыми показателями."""
+
+    def _omission_row(self):
+        return build_rule_report_row(SimpleNamespace(
+            rule_name="long_omission",
+            triggered=True,
+            details={"per_role": {
+                "SPIDER_LEFT": {
+                    "triggered": True, "reason": None,
+                    "allowed_thickness_px": 20.0, "excess_pixels": 340,
+                    "excess_component_min_px": 3, "max_excess_depth_px": 18.0,
+                    "top_line_actual_max_residual_px": 1.2,
+                    "top_line_max_residual_px": 3.0,
+                    "found": 5, "expected_count": 5,
+                },
+                "SPIDER_RIGHT": {
+                    "triggered": False, "reason": None,
+                    "allowed_thickness_px": 20.0, "excess_pixels": 0,
+                    "excess_component_min_px": 3, "max_excess_depth_px": 0.0,
+                    "top_line_actual_max_residual_px": 0.4,
+                    "top_line_max_residual_px": 3.0,
+                    "found": 5, "expected_count": 5,
+                },
+            }},
+        ))
+
+    def test_cards_cover_every_camera_including_good_ones(self):
+        cards = self._omission_row()["summary_cards"]
+        self.assertEqual(len(cards), 2)
+        by_role = {card["role"]: card for card in cards}
+        self.assertIs(by_role["SPIDER_LEFT"]["ok"], False)
+        self.assertIs(by_role["SPIDER_RIGHT"]["ok"], True)
+        self.assertEqual(by_role["SPIDER_RIGHT"]["verdict"], "в допуске")
+
+    def test_failing_camera_is_listed_first(self):
+        cards = self._omission_row()["summary_cards"]
+        self.assertEqual(cards[0]["role"], "SPIDER_LEFT")
+
+    def test_cards_report_what_was_detected(self):
+        cards = self._omission_row()["summary_cards"]
+        self.assertIn("объекты: 5/5", cards[0]["found"])
+
+    def test_metrics_pair_value_with_limit_and_state(self):
+        card = self._omission_row()["summary_cards"][0]
+        metrics = {metric["label"]: metric for metric in card["metrics"]}
+        self.assertEqual(metrics["избыток"]["value"], "340 px")
+        self.assertEqual(metrics["избыток"]["limit"], "3 px")
+        self.assertIs(metrics["избыток"]["ok"], False)
+        self.assertIs(metrics["отклонение линии"]["ok"], True)
+        self.assertLessEqual(len(card["metrics"]), METRICS_PER_ROLE_LIMIT)
+
+    def test_presence_cards_show_counts_per_input_camera(self):
+        row = build_rule_report_row(_presence(False))
+        cards = {card["role"]: card for card in row["summary_cards"]}
+        self.assertEqual(set(cards), {"INPUT_LEFT", "INPUT_RIGHT"})
+        self.assertEqual(cards["INPUT_LEFT"]["metrics"][0]["label"], "flatness")
+
+    def test_platform_placement_is_human_readable(self):
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="top_platform", triggered=False,
+            details={"per_role": {"TOP": {
+                "triggered": False, "reason": None, "placement": "centered",
+                "shift_distance_px": 1.8, "angle_deg": 0.4,
+            }}},
+        ))
+        metrics = {m["label"]: m for m in row["summary_cards"][0]["metrics"]}
+        self.assertEqual(metrics["положение"]["value"], "по центру")
+        self.assertIs(metrics["положение"]["ok"], True)
+
+    def test_skipped_camera_is_marked_without_measurement(self):
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="top_contacts", triggered=False,
+            details={"per_role": {"TOP": {
+                "skipped": True, "reason": "no_valid_platform",
+            }}},
+        ))
+        card = row["summary_cards"][0]
+        self.assertIsNone(card["ok"])
+        self.assertIn("не найдена платформа", card["verdict"])
+
+    def test_ui_module_renders_summary_cards(self):
+        js = (ROOT / "vision/ui/static/js/rule-summary.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("renderRuleSummaryCards", js)
+        self.assertIn("rule-summary-metric", js)
+        self.assertIn("Обнаружено", js)
+        diagnostics = (ROOT / "vision/ui/static/js/diagnostics.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("rule.summary_cards", diagnostics)
+        css = (ROOT / "vision/ui/static/css/stats.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".rule-summary-metric.is-ok", css)
+        self.assertIn(".rule-summary-metric.is-bad", css)
