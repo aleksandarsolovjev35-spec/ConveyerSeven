@@ -377,3 +377,94 @@
     font-weight: 600;
 }
 
+
+/* ─── Сводка правила: что обнаружено и показатели с допуском ───────── */
+
+.rule-summary {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+}
+
+.rule-summary-role {
+    padding: 4px 5px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--border-strong);
+    border-radius: 3px;
+    background: var(--bg-0);
+}
+
+.rule-summary-role.is-ok { border-left-color: var(--ok); }
+.rule-summary-role.is-bad { border-left-color: var(--bad); }
+.rule-summary-role.is-neutral { border-left-color: var(--warn); }
+
+.rule-summary-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.rule-summary-camera {
+    color: var(--text);
+    font: 700 8.5px var(--font-mono);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.rule-summary-verdict {
+    font: 700 8px var(--font-mono);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.rule-summary-role.is-ok .rule-summary-verdict { color: var(--ok); }
+.rule-summary-role.is-bad .rule-summary-verdict { color: var(--bad); }
+.rule-summary-role.is-neutral .rule-summary-verdict { color: var(--warn); }
+
+.rule-summary-found {
+    margin-top: 2px;
+    color: var(--text-dim);
+    font: 8px/1.4 var(--font-mono);
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.rule-summary-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 6px;
+    margin-top: 3px;
+}
+
+.rule-summary-metric {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px;
+    min-width: 0;
+    padding: 1px 3px;
+    border-radius: 2px;
+    background: var(--bg-1);
+}
+
+.rule-summary-metric-label {
+    overflow: hidden;
+    color: var(--text-muted);
+    font: 8px var(--font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rule-summary-metric-value {
+    color: var(--text);
+    font: 700 8px var(--font-mono);
+    white-space: nowrap;
+}
+
+.rule-summary-metric.is-ok .rule-summary-metric-value { color: var(--ok); }
+.rule-summary-metric.is-bad .rule-summary-metric-value { color: var(--bad); }

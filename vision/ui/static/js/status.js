@@ -217,8 +217,17 @@ function updateLineStatus(ls) {
 
 let _prevLineParts = [];
 
+// Длительность одного шага линии: анимации деталей и прокрутка ленты
+// используют одно и то же значение, поэтому движение выглядит синхронным.
+function lineMoveDuration(process = {}) {
+    const conv = process.conveyor || {};
+    const speed = Number(conv.speed) || 0;
+    if (!speed) return 420;
+    // 20000 -> 420мс; 30000 -> ~280мс; 15000 -> ~560мс
+    return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
+}
+
 function updateLineCells(lineParts, process = {}) {
-    const cells = els.lineCells.children;
     const isConveyorMoving = (process.phase || '').includes('CONVEYOR') ||
                              (process.phase || '').includes('MOTION') ||
                              (process.phase || '').includes('ROUTE_PREPARE');
@@ -228,9 +237,24 @@ function updateLineCells(lineParts, process = {}) {
     if (!belt) {
         belt = document.createElement('div');
         belt.className = 'conveyor-belt';
+        const track = document.createElement('div');
+        track.className = 'conveyor-belt-track';
+        // Насечки ленты — реальные элементы, чтобы движение было видимым.
+        for (let n = 0; n < 80; n++) {
+            const notch = document.createElement('span');
+            notch.className = 'conveyor-notch';
+            track.appendChild(notch);
+        }
+        belt.appendChild(track);
         els.lineCells.insertBefore(belt, els.lineCells.firstChild);
     }
     belt.classList.toggle('moving', !!isConveyorMoving);
+
+    // Длительность шага ленты = длительность анимаций деталей (синхронно).
+    els.lineCells.style.setProperty('--move-duration', `${lineMoveDuration(process)}ms`);
+
+    // Только реальные ячейки позиций: лента и "летящие" копии не считаются.
+    const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
 
     const phaseEl = document.getElementById('process-phase') || (() => {
         const p = document.createElement('div');
@@ -248,12 +272,11 @@ function updateLineCells(lineParts, process = {}) {
 
     const current = lineParts || [];
     const prev = _prevLineParts || [];
-    const doAnimate = isConveyorMoving && prev.length > 0;
+    const doAnimate = isConveyorMoving;
 
     // Сброс стилей
     for (let i = 0; i < cells.length; i++) {
         const c = cells[i];
-        if (c.classList.contains('conveyor-belt')) continue;
         c.style.transitionDuration = '';
         c.style.transform = '';
         c.style.opacity = '';
@@ -263,9 +286,9 @@ function updateLineCells(lineParts, process = {}) {
     // Обновляем содержимое
     for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
-        if (cell.classList.contains('conveyor-belt')) continue;
 
-        const part = current.find(p => p.position === i);
+        const position = Number(cell.dataset.pos);
+        const part = current.find(p => p.position === position);
         cell.className = 'line-cell';
         cell.dataset.partId = part ? part.id : '';
 
@@ -283,7 +306,7 @@ function updateLineCells(lineParts, process = {}) {
         }
 
         const active = Array.isArray(process.positions) ? process.positions : [];
-        if (active.includes(i)) {
+        if (active.includes(position)) {
             cell.classList.add('process-active');
             if ((process.phase || '').includes('CAMERA') || (process.phase || '').includes('ANALYSIS')) cell.classList.add('process-camera');
             if ((process.phase || '').includes('ROUTE') || (process.phase || '').includes('DROP')) cell.classList.add('process-route');
@@ -294,16 +317,7 @@ function updateLineCells(lineParts, process = {}) {
     // Под реальную механику: 1 шаг = ~410-450мс (move_step + wait_stop)
     // Используем conveyor.speed для масштабирования (выше скорость — короче анимация)
     if (doAnimate) {
-        let DURATION = 420;
-        const conv = process.conveyor || {};
-        if (conv.speed) {
-            // 20000 -> 420мс; 30000 -> ~280мс; 15000 -> ~560мс
-            const spd = Number(conv.speed) || 20000;
-            DURATION = Math.max(265, Math.min(620, Math.round(8400000 / spd)));
-        }
-
-        // Apply dynamic duration to container for belt & cells
-        els.lineCells.style.setProperty('--move-duration', `${DURATION}ms`);
+        const DURATION = lineMoveDuration(process);
 
         // 1. Реальное перемещение деталей: используем "летающие" overlay-элементы
         //    + улучшенный реализм (подъём + микро-вибрация)

@@ -292,28 +292,36 @@
     right: 2%;
     top: 48%;
     height: 4px;
-    background: repeating-linear-gradient(
-        90deg,
-        rgba(100, 120, 145, 0.15) 0px,
-        rgba(100, 120, 145, 0.15) 10px,
-        rgba(140, 160, 185, 0.55) 10px,
-        rgba(140, 160, 185, 0.55) 24px
-    );
+    background: rgba(140, 160, 185, 0.22);
     border-radius: 999px;
     z-index: 0;
-    opacity: 0.65;
-    transition: opacity 180ms ease;
+    opacity: 0.55;
+    overflow: hidden;
+    transition: opacity 180ms ease, background-color 180ms ease;
     pointer-events: none;
 }
 
 .conveyor-belt.moving {
-    animation: conveyor-scroll var(--move-duration, 420ms) linear infinite;
+    background: rgba(140, 160, 185, 0.32);
     opacity: 0.95;
 }
 
-@keyframes conveyor-scroll {
-    from { background-position: 0 0; }
-    to   { background-position: -38px 0; }
+/* Насечки ленты: отдельные элементы вместо градиента (строгая тема). */
+.conveyor-belt-track {
+    position: absolute;
+    inset: 0;
+    width: 200%;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    will-change: transform;
+}
+
+.conveyor-notch {
+    flex: 0 0 14px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(160, 182, 205, 0.55);
 }
 
 /* === Реалистичное движение деталей по линии === */
@@ -375,16 +383,9 @@
     will-change: transform, opacity;
 }
 
-/* Wobble / микро-вибрация во время движения */
+/* Микро-подъём во время движения (кадры анимации — в motion.css) */
 .flying-part.wobbling {
-    animation: part-wobble var(--move-duration, 420ms) linear infinite;
-}
-
-@keyframes part-wobble {
-    0%, 100% { transform: translateY(-1.5px) rotate(0deg); }
-    25% { transform: translateY(-2.2px) rotate(0.8deg); }
-    50% { transform: translateY(-0.8px) rotate(-0.6deg); }
-    75% { transform: translateY(-2.5px) rotate(0.5deg); }
+    translate: 0 -1.6px;
 }
 
 /* Подъём + проседание (добавляется JS) */
@@ -409,16 +410,12 @@
     top: 50%;
     width: 22px;
     height: 3px;
-    background: linear-gradient(to right, transparent, rgba(140,160,185,0.65));
+    background: rgba(140, 160, 185, 0.4);
     transform: translateY(-50%);
     border-radius: 999px;
-    animation: belt-trail-enter 380ms ease-out forwards;
+    opacity: 0.5;
+    transition: opacity 380ms var(--ease), width 380ms var(--ease);
     pointer-events: none;
-}
-
-@keyframes belt-trail-enter {
-    from { opacity: 0.9; width: 8px; }
-    to   { opacity: 0; width: 32px; }
 }
 
 /* === Улучшенный ВЫХОД детали (наклон + падение) === */

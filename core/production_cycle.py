@@ -4,7 +4,7 @@ import traceback
 from collections import deque
 
 from core.live_preview import LivePreview
-from core.rule_report import build_rule_report_row
+from core.rule_report import build_rule_report_row, build_rule_report_rows
 from core.state_machine import StateMachine, State
 from core.step_stages import (
     STAGE_SETTLE_SECONDS,
@@ -473,6 +473,10 @@ class ProductionCycle:
     def _rule_report_row(result) -> dict:
         return build_rule_report_row(result)
 
+    @staticmethod
+    def _rule_report_rows(results) -> list:
+        return build_rule_report_rows(results)
+
     def diagnostic_analyze_selected_camera(self, role: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
             return False
@@ -577,6 +581,12 @@ class ProductionCycle:
                         "INPUT_LEFT и INPUT_RIGHT"
                     ),
                     "detail_lines": [],
+                    "summary_lines": [
+                        "Не выполнено: для part_presence одновременно нужны "
+                        "INPUT_LEFT и INPUT_RIGHT"
+                    ],
+                    "part_absent": False,
+                    "decisive": True,
                     "consensus": {},
                 })
             rule_rows.extend(
@@ -1491,10 +1501,9 @@ class ProductionCycle:
                     else "Итог трёх свежих кадров: голосование каждого правила 2 из 3"
                 ),
                 "models": [dict(item) for item in self._last_model_health],
-                "rules": [
-                    self._rule_report_row(result)
-                    for result in self._frame_analysis_rule_results
-                ],
+                "rules": self._rule_report_rows(
+                    self._frame_analysis_rule_results
+                ),
                 "updated_at": self._frame_analysis_updated_at,
             }
 

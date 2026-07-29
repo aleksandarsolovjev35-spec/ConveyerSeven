@@ -330,7 +330,13 @@ function updateFrameAnalysisStatus(ls) {
         report.message || 'Ожидание результатов анализа',
     );
     setIfChanged(els.frameAnalysisModelsTitle, `МОДЕЛИ · ${models.length}`);
-    setIfChanged(els.frameAnalysisRulesTitle, `ПРАВИЛА · ${rules.length}`);
+    const decisive = decisiveRules(rules);
+    setIfChanged(
+        els.frameAnalysisRulesTitle,
+        decisive.length === rules.length
+            ? `ПРАВИЛА · ${rules.length}`
+            : `ПРАВИЛА · ${decisive.length}/${rules.length}`,
+    );
 
     const renderKey = JSON.stringify({
         kind: report.kind,
@@ -382,6 +388,24 @@ function renderFrameAnalysisModels(models) {
     }
 }
 
+function decisiveRules(rules) {
+    // Отсутствие детали — единственная причина решения: прочие правила скрываем.
+    const absent = rules.find(rule => rule.part_absent === true);
+    if (absent) return [absent];
+    return rules;
+}
+
+function ruleSummaryLines(rule) {
+    if (Array.isArray(rule.summary_lines) && rule.summary_lines.length) {
+        return rule.summary_lines.filter(Boolean).map(String);
+    }
+    const detailLines = Array.isArray(rule.detail_lines)
+        ? rule.detail_lines.filter(Boolean).map(String)
+        : [];
+    if (detailLines.length) return detailLines;
+    return rule.detail ? [String(rule.detail)] : [];
+}
+
 function renderFrameAnalysisRules(rules) {
     els.frameAnalysisRules.replaceChildren();
     if (!rules.length) {
@@ -391,14 +415,16 @@ function renderFrameAnalysisRules(rules) {
         );
         return;
     }
-    for (const rule of rules) {
+    const visibleRules = decisiveRules(rules);
+    for (const rule of visibleRules) {
         const item = document.createElement('div');
         const stateClass = rule.neutral
             ? ''
             : (rule.skipped
                 ? 'skipped'
                 : (rule.triggered ? 'triggered' : 'ok'));
-        item.className = `frame-analysis-item ${stateClass}`;
+        item.className = `frame-analysis-item ${stateClass}`.trim();
+        if (rule.part_absent) item.classList.add('part-absent');
 
         const name = document.createElement('span');
         const result = document.createElement('b');
@@ -408,11 +434,15 @@ function renderFrameAnalysisRules(rules) {
                 ? 'НЕ ВЫПОЛНЕНО'
                 : (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА')
         );
-
         item.append(name, result);
 
-        // === НОВАЯ ПРОСТАЯ ПРИЧИНА (human_cause) ===
-        if (rule.triggered && rule.human_cause) {
+        if (rule.part_absent) {
+            const absent = document.createElement('div');
+            absent.className = 'frame-analysis-human-cause';
+            absent.textContent = 'ДЕТАЛЬ НЕ ОБНАРУЖЕНА';
+            item.appendChild(absent);
+            item.classList.add('has-human-cause');
+        } else if (rule.triggered && rule.human_cause) {
             const cause = document.createElement('div');
             cause.className = 'frame-analysis-human-cause';
             cause.textContent = rule.human_cause;
@@ -420,33 +450,24 @@ function renderFrameAnalysisRules(rules) {
             item.classList.add('has-human-cause');
         }
 
-        const detailLines = Array.isArray(rule.detail_lines)
-            ? rule.detail_lines.filter(Boolean)
-            : [];
-        const visibleDetails = detailLines.length
-            ? detailLines
-            : (rule.detail ? [String(rule.detail)] : []);
-
-        // Показываем технические детали только если нет короткой причины
-        if (
-            (rule.triggered || rule.skipped || rule.show_detail)
-            && visibleDetails.length
-            && !rule.human_cause
-        ) {
+        // Наглядная сводка: что обнаружено и какие получились показатели.
+        const cards = Array.isArray(rule.summary_cards) ? rule.summary_cards : [];
+        if (cards.length) {
             item.classList.add('has-detail');
-            for (const detailLine of visibleDetails) {
-                const reason = document.createElement('small');
-                reason.className = 'frame-analysis-reason';
-                reason.textContent = String(detailLine);
-                item.appendChild(reason);
-            }
-        } else if (rule.detail && !rule.human_cause && !rule.triggered) {
-            // Для нормальных правил показываем коротко
-            if (rule.detail.length < 80) {
-                const short = document.createElement('small');
-                short.className = 'frame-analysis-reason';
-                short.textContent = rule.detail;
-                item.appendChild(short);
+            item.appendChild(renderRuleSummaryCards(cards));
+        } else {
+            const summary = ruleSummaryLines(rule);
+            const showSummary = (
+                rule.triggered || rule.skipped || rule.show_detail || rule.part_absent
+            );
+            if (summary.length && showSummary) {
+                item.classList.add('has-detail');
+                for (const line of summary) {
+                    const reason = document.createElement('small');
+                    reason.className = 'frame-analysis-reason';
+                    reason.textContent = line;
+                    item.appendChild(reason);
+                }
             }
         }
 
