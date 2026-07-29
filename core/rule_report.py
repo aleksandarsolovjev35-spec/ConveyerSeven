@@ -684,6 +684,102 @@ def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | Non
     return "ДЕФЕКТ"
 
 
+SUMMARY_LINES_LIMIT = 4
+
+PART_PRESENCE_RULE = "part_presence"
+
+PART_ABSENT_TEXT = "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
+
+
+def _presence_summary(details: dict) -> list:
+    """Короткая сводка по правилу присутствия детали."""
+    limits = details.get("false_positive_max_count_by_role") or {}
+    lines = []
+    for role, key in (
+        ("INPUT_LEFT", "flatness_left"),
+        ("INPUT_RIGHT", "flatness_right"),
+    ):
+        found = int(details.get(key) or 0)
+        limit = limits.get(role)
+        limit_text = (
+            f" (порог ложных {int(limit)})" if isinstance(limit, int) else ""
+        )
+        lines.append(f"{role}: flatness {found}{limit_text}")
+    return lines
+
+
+def _failing_roles(per_role: dict) -> set:
+    return {
+        role
+        for role, role_details in per_role.items()
+        if isinstance(role_details, dict) and role_details.get("triggered")
+    }
+
+
+def _summary_lines(
+    rule_name: str,
+    triggered: bool,
+    skipped: bool,
+    details: dict,
+    per_role: dict,
+    detail_lines: list,
+    detail: str,
+) -> list:
+    """Компактная, но информативная сводка по правилу для правой панели.
+
+    Показываются только те строки, которые реально влияли на решение по детали:
+    для сработавшего правила — роли камер с отклонением, для пропущенного —
+    причина отсутствия измерения. Список ограничен ``SUMMARY_LINES_LIMIT``.
+    """
+    if rule_name == PART_PRESENCE_RULE:
+        return _presence_summary(details)
+
+    if skipped:
+        return [str(detail)] if detail else []
+
+    if not triggered:
+        return []
+
+    lines = []
+    if isinstance(per_role, dict) and per_role:
+        roles = _failing_roles(per_role) or set(per_role)
+        if detail_lines:
+            lines = [
+                line
+                for line in detail_lines
+                if str(line).split(":", 1)[0].split(" ", 1)[0] in roles
+            ] or list(detail_lines)
+        else:
+            lines = _generic_failure_rows(rule_name, per_role)
+    if not lines and detail:
+        lines = [str(detail)]
+
+    if len(lines) > SUMMARY_LINES_LIMIT:
+        hidden = len(lines) - SUMMARY_LINES_LIMIT
+        lines = lines[:SUMMARY_LINES_LIMIT] + [f"…ещё {hidden} строк(и)"]
+    return [str(line) for line in lines]
+
+
+def filter_rule_report_rows(rows) -> list:
+    """Оставить только решающие правила.
+
+    Если деталь не обнаружена, все прочие правила не влияли на решение —
+    показывается единственная строка «ДЕТАЛЬ НЕ ОБНАРУЖЕНА».
+    """
+    rows = list(rows or [])
+    for row in rows:
+        if row.get("name") == PART_PRESENCE_RULE and row.get("part_absent"):
+            return [row]
+    return rows
+
+
+def build_rule_report_rows(results) -> list:
+    """Собрать строки отчёта и отфильтровать неинформативные правила."""
+    return filter_rule_report_rows(
+        [build_rule_report_row(result) for result in results or []]
+    )
+
+
 def build_rule_report_row(result) -> dict:
     """Собрать одну строку отчёта по правилу для HMI и диагностики."""
     details = getattr(result, "details", {}) or {}
@@ -734,6 +830,20 @@ def build_rule_report_row(result) -> dict:
         rule_name, triggered, details, consensus,
     )
 
+    part_absent = bool(
+        rule_name == PART_PRESENCE_RULE and details.get("empty_tray")
+    )
+
+    summary_lines = _summary_lines(
+        rule_name,
+        triggered,
+        skipped,
+        details,
+        per_role if has_per_role else {},
+        detail_lines,
+        str(detail),
+    )
+
     return {
         "name": result.rule_name,
         "triggered": triggered,
@@ -744,5 +854,8 @@ def build_rule_report_row(result) -> dict:
         "detail": str(detail),
         "human_cause": human_cause,
         "detail_lines": detail_lines,
+        "summary_lines": summary_lines,
+        "part_absent": part_absent,
+        "decisive": bool(part_absent or triggered or skipped),
         "consensus": dict(consensus),
     }

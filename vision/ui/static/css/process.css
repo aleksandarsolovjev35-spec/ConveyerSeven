@@ -292,18 +292,36 @@
     right: 2%;
     top: 48%;
     height: 4px;
-    background: rgba(140, 160, 185, 0.35);
-    border-top: 1px solid rgba(100, 120, 145, 0.25);
+    background: rgba(140, 160, 185, 0.22);
     border-radius: 999px;
     z-index: 0;
     opacity: 0.55;
+    overflow: hidden;
     transition: opacity 180ms ease, background-color 180ms ease;
     pointer-events: none;
 }
 
 .conveyor-belt.moving {
-    background: rgba(160, 182, 205, 0.6);
-    opacity: 0.9;
+    background: rgba(140, 160, 185, 0.32);
+    opacity: 0.95;
+}
+
+/* Насечки ленты: отдельные элементы вместо градиента (строгая тема). */
+.conveyor-belt-track {
+    position: absolute;
+    inset: 0;
+    width: 200%;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    will-change: transform;
+}
+
+.conveyor-notch {
+    flex: 0 0 14px;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(160, 182, 205, 0.55);
 }
 
 /* === Реалистичное движение деталей по линии === */
@@ -365,10 +383,9 @@
     will-change: transform, opacity;
 }
 
-/* Микро-подъём во время движения (без цикличной анимации) */
+/* Микро-подъём во время движения (кадры анимации — в motion.css) */
 .flying-part.wobbling {
-    transform: translateY(-1.8px);
-    transition: transform var(--move-duration, 420ms) var(--ease);
+    translate: 0 -1.6px;
 }
 
 /* Подъём + проседание (добавляется JS) */

@@ -92,3 +92,44 @@
         animation: none !important;
     }
 }
+
+/* ─── Движение производственной линии ─────────────────────────────── */
+/* Анимации ленты и деталей вынесены сюда: модули панелей остаются
+   статичными по требованиям строгой темы. */
+
+.conveyor-belt.moving .conveyor-belt-track {
+    animation: conveyorScroll var(--move-duration, 420ms) linear infinite;
+}
+
+@keyframes conveyorScroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-24px); }
+}
+
+.flying-part.wobbling {
+    animation: partWobble var(--move-duration, 420ms) ease-in-out infinite;
+}
+
+@keyframes partWobble {
+    0%, 100% { translate: 0 -1.6px; }
+    25%      { translate: 0 -2.4px; }
+    50%      { translate: 0 -0.9px; }
+    75%      { translate: 0 -2.2px; }
+}
+
+.line-cell.entering-with-trail::after {
+    animation: beltTrailEnter 380ms var(--ease) forwards;
+}
+
+@keyframes beltTrailEnter {
+    from { opacity: 0.85; width: 8px; }
+    to   { opacity: 0; width: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .conveyor-belt.moving .conveyor-belt-track,
+    .flying-part.wobbling,
+    .line-cell.entering-with-trail::after {
+        animation: none !important;
+    }
+}
