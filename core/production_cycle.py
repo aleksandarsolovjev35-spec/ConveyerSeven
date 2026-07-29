@@ -978,10 +978,16 @@ class ProductionCycle:
         self._execute_drop()
         self._check_motion_cancelled()
 
+        active_cam_positions = []
+        if self.sm.accepts_new_parts:
+            active_cam_positions.append(self.OFFSET_INPUT)
+        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+            active_cam_positions.append(self.OFFSET_SPIDER)
+
         self._set_process(
             "SETTLE",
             "Ожидание затухания вибрации перед съёмкой",
-            positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+            positions=active_cam_positions,
         )
         self.stages.enter_settle()
         self._check_motion_cancelled()
@@ -990,13 +996,19 @@ class ProductionCycle:
         """CAPTURE: три синхронных набора кадров неподвижной детали."""
         self.stages.enter_capture()
 
+        active_cam_positions = []
+        if self.sm.accepts_new_parts:
+            active_cam_positions.append(self.OFFSET_INPUT)
+        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+            active_cam_positions.append(self.OFFSET_SPIDER)
+
         frame_runs = []
         for run_number in range(1, INSPECTION_RUNS + 1):
             self._set_process(
                 "CAMERA_CAPTURE",
                 f"Синхронный захват семи камер: прогон "
                 f"{run_number}/{INSPECTION_RUNS}",
-                positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+                positions=active_cam_positions,
             )
             frame_runs.append(self.cameras.capture_all())
             self._check_motion_cancelled()
@@ -1022,15 +1034,20 @@ class ProductionCycle:
                 display_frames.update(input_result.raw_frames)
             self._check_motion_cancelled()
 
-        self._set_process(
-            "SPIDER_CHECK",
-            "Проверка детали на +4: три прогона, голосование 2 из 3",
-            positions=[self.OFFSET_SPIDER],
-        )
-        spider_result = self._run_spider_inspection(frame_runs)
-        if spider_result is not None:
-            display_frames.update(spider_result.raw_frames)
-        self._check_motion_cancelled()
+        spider_parts = [
+            part for part in self.parts
+            if part.step_created + self.OFFSET_SPIDER == self.current_step
+        ]
+        if spider_parts:
+            self._set_process(
+                "SPIDER_CHECK",
+                "Проверка детали на +4: три прогона, голосование 2 из 3",
+                positions=[self.OFFSET_SPIDER],
+            )
+            spider_result = self._run_spider_inspection(frame_runs)
+            if spider_result is not None:
+                display_frames.update(spider_result.raw_frames)
+            self._check_motion_cancelled()
         return display_frames
 
     def _stage_review(self, display_frames):

@@ -453,10 +453,14 @@ class UiDemo:
                 if now < review_until:
                     # Пауза на просмотр результатов анализа, как REVIEW_SECONDS.
                     left = int(review_until - now + 0.999)
+                    active_cam_pos = [
+                        p["position"] for p in self.parts
+                        if p["position"] in {0, 4}
+                    ]
                     self.process = self._process(
                         "ANALYSIS_REVIEW",
                         f"Просмотр результатов анализа: {left} с до следующего шага",
-                        [0, 4],
+                        active_cam_pos,
                     )
                     continue
                 if now - last_step >= 2.0:

@@ -58,6 +58,17 @@
     box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 
+.production-line-cells .line-cell::before {
+    content: "№" attr(data-cell-no);
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font: 700 8.5px var(--font-mono);
+    color: var(--text-muted);
+    opacity: 0.65;
+    pointer-events: none;
+}
+
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -356,6 +367,30 @@
 .line-token.cell-cleanup {
     background: var(--warn-bg);
     border-color: var(--warn);
+    color: var(--warn);
+}
+
+.line-token::after {
+    content: "•••";
+    position: absolute;
+    right: 3px;
+    bottom: 1px;
+    font: 700 8px var(--font-mono);
+    opacity: 0.75;
+}
+
+.line-token.cell-good::after {
+    content: "✓";
+    color: var(--ok);
+}
+
+.line-token.cell-bad::after {
+    content: "✕";
+    color: var(--bad);
+}
+
+.line-token.cell-cleanup::after {
+    content: "🧹";
     color: var(--warn);
 }
 
