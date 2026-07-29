@@ -36,8 +36,8 @@ def thresholds(role="SPIDER_IN", tilt_limit=0.20):
         f"{role}.spider_contacts_short_expected_count": 2,
         f"{role}.spider_contacts_short_level_deviation_ratio": 1.0,
         f"{role}.spider_contacts_short_omission_tilt_ratio_max": tilt_limit,
-        f"{role}.spider_contacts_short_inscribed_rect_width_mm": 1.0,
-        f"{role}.spider_contacts_short_inscribed_rect_height_mm": 0.5,
+        f"{role}.spider_contacts_short_inscribed_rect_width_px": 14.5,
+        f"{role}.spider_contacts_short_inscribed_rect_height_px": 7.3,
         f"{role}.spider_contacts_short_area_absolute_min": 100,
         f"{role}.spider_contacts_short_y_filter_ratio": 3.0,
         f"{role}.spider_short_omission_min_confidence": 0.3,
@@ -165,7 +165,7 @@ class ShortContactOmissionTiltTests(unittest.TestCase):
             for drawing in result.drawings
         ), 1)
 
-    def test_masks_are_required_and_no_scale_is_fail_closed(self):
+    def test_masks_are_required(self):
         role = "SPIDER_IN"
         omission = rectangle("omission-short", 80, 100, 160, 60)
         invalid_contacts = [
@@ -181,22 +181,6 @@ class ShortContactOmissionTiltTests(unittest.TestCase):
             drawing.get("type") == "construction_error"
             and drawing.get("message") == "NO CONTACT MASK #2"
             for drawing in invalid.drawings
-        ))
-
-        coincident = [
-            rectangle("flatness_short", 100, 200, 30, 30),
-            rectangle("flatness_short", 100, 200, 30, 30),
-        ]
-        no_scale = SpiderContactsShortRule(thresholds(role)).check({
-            role: [*coincident, omission],
-        })
-        details = no_scale.details["per_role"][role]
-        self.assertTrue(no_scale.triggered)
-        self.assertEqual(details["inscribe_check"]["reason"], "no_scale")
-        self.assertTrue(any(
-            drawing.get("type") == "construction_error"
-            and drawing.get("message") == "NO SCALE"
-            for drawing in no_scale.drawings
         ))
 
     def test_renderer_has_all_geometry_without_text_or_fill(self):

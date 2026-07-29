@@ -156,24 +156,33 @@ class UiDemo:
         cycle_analysis = self.state in {"RUNNING", "STOPPING"}
         selected_report = self.diagnostics.get("kind") == "SELECTED_MODEL"
         if cycle_analysis:
+            # Как и в рабочем цикле, панель следует за камерой, которую
+            # оператор выбрал в UI: ВХОД для входных камер, КОНТРОЛЬ +4
+            # для остальных.
+            role = self.monitor.server.active_camera_role
+            group = "INPUT" if role in ("INPUT_LEFT", "INPUT_RIGHT") else "SPIDER"
+            stage_label = "ВХОД" if group == "INPUT" else "КОНТРОЛЬ +4"
             frame_analysis = {
                 "available": True,
                 "kind": "CYCLE",
                 "active": True,
                 "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА",
-                "role": None,
+                "role": role,
+                "group": group,
+                "stage": stage_label,
                 "part_id": self.process.get("part_id"),
-                "message": "Демонстрационный результат текущего кадра",
+                "message": f"Демонстрационный результат: {stage_label}",
                 "models": [
                     {
-                        "role": "TOP",
-                        "model": "demo/top.pt",
+                        "role": role or "TOP",
+                        "model": "demo/model.pt",
                         "ok": True,
                         "elapsed_ms": 12,
                         "detections": 2,
                     }
                 ],
                 "rules": demo_rule_rows(),
+                "updated_at": time.time(),
             }
         elif selected_report:
             frame_analysis = {
@@ -435,9 +444,22 @@ class UiDemo:
 
     def _loop(self):
         last_step = time.monotonic()
+        review_until = 0.0
         while not self.stop_event.wait(0.1):
             with self.lock:
-                if self.state in {"RUNNING", "STOPPING"} and time.monotonic() - last_step >= 2.0:
+                if self.state not in {"RUNNING", "STOPPING"}:
+                    continue
+                now = time.monotonic()
+                if now < review_until:
+                    # Пауза на просмотр результатов анализа, как REVIEW_SECONDS.
+                    left = int(review_until - now + 0.999)
+                    self.process = self._process(
+                        "ANALYSIS_REVIEW",
+                        f"Просмотр результатов анализа: {left} с до следующего шага",
+                        [0, 4],
+                    )
+                    continue
+                if now - last_step >= 2.0:
                     last_step = time.monotonic()
                     self.step += 1
                     for part in self.parts:
@@ -450,6 +472,7 @@ class UiDemo:
                         self.next_part += 1
                     if self.state == "STOPPING" and not self.parts:
                         self.state = "STOPPED"
+                    review_until = now + 5.0
                     self.process = self._process("STEP_COMPLETE", "Демонстрационный шаг завершён", range(8))
                     self.publish(frames=True)
 

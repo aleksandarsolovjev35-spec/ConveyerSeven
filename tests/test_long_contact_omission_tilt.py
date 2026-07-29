@@ -36,8 +36,8 @@ def thresholds(role="SPIDER_LEFT", tilt_limit=0.20):
         f"{role}.spider_contacts_long_expected_count": 5,
         f"{role}.spider_contacts_long_line_deviation_ratio": 0.35,
         f"{role}.spider_contacts_long_omission_tilt_ratio_max": tilt_limit,
-        f"{role}.spider_contacts_long_inscribed_rect_width_mm": 0.4,
-        f"{role}.spider_contacts_long_inscribed_rect_height_mm": 0.3,
+        f"{role}.spider_contacts_long_inscribed_rect_width_px": 9.6,
+        f"{role}.spider_contacts_long_inscribed_rect_height_px": 7.2,
         f"{role}.spider_contacts_long_y_filter_ratio": 3.0,
         f"{role}.spider_long_omission_min_confidence": 0.3,
     }
@@ -193,25 +193,6 @@ class LongContactOmissionTiltTests(unittest.TestCase):
             if drawing.get("type") == "construction_error"
         )
         self.assertEqual(count_error["message"], "CONTACTS 4/5")
-
-    def test_missing_scale_has_short_construction_label(self):
-        role = "SPIDER_LEFT"
-        contacts = [
-            rectangle("contacts-long", 100, 180 + index * 25, 20, 20)
-            for index in range(5)
-        ]
-        omission = rectangle("omission-long", 80, 100, 80, 60)
-        result = SpiderContactsLongRule(thresholds(role)).check({
-            role: [*contacts, omission],
-        })
-        details = result.details["per_role"][role]
-        self.assertTrue(result.triggered)
-        self.assertEqual(details["reason"], "no_scale")
-        self.assertTrue(any(
-            drawing.get("type") == "construction_error"
-            and drawing.get("message") == "NO SCALE"
-            for drawing in result.drawings
-        ))
 
     def test_renderer_has_all_geometry_without_text_or_mask_fill(self):
         source = (

@@ -394,6 +394,7 @@ def main():
                     jog=jog,
                     settle_seconds=calib["settle_time"],
                     stage_trace_seconds=calib["stage_trace_time"],
+                    review_seconds=calib["review_time"],
                 )
                 monitor.start_callback  = cycle.request_start
                 monitor.stop_callback   = cycle.request_stop

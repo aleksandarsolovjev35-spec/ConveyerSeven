@@ -183,14 +183,17 @@ class FakeJog:
 
 
 class CoreCycleTests(unittest.TestCase):
-    def make_cycle(self, conveyor=None, jog=None, archive=None):
+    def make_cycle(self, conveyor=None, jog=None, archive=None, monitor=None):
         return ProductionCycle(
             conveyor or FakeConveyor(),
             FakeCameras(),
             FakeInspector(),
             FakeDistributor(),
+            monitor=monitor,
             archive=archive,
             jog=jog,
+            # Реальная пауза просмотра (5 с) в юнит-тестах не нужна.
+            review_seconds=0,
         )
 
     def test_fault_transition_is_latched_from_running(self):
@@ -384,8 +387,8 @@ class CoreCycleTests(unittest.TestCase):
                 "delta_top": 0.0,
                 "delta_bottom": 0.0,
                 "delta_height": 0.0,
-                "rect_width_mm": 1.74,
-                "rect_height_mm": 0.66,
+                "rect_width_px": 25.2,
+                "rect_height_px": 9.6,
                 "omission_tilt_ratio_max": 0.2,
                 "omission_tilt_check": {
                     "status": "error",
@@ -393,7 +396,6 @@ class CoreCycleTests(unittest.TestCase):
                 },
                 "inscribe_check": {
                     "status": "ok",
-                    "scale_px_per_mm": 14.5,
                 },
                 "items": [
                     {
@@ -512,8 +514,8 @@ class CoreCycleTests(unittest.TestCase):
                 "reason": None,
                 "ignored": 0,
                 "line_tolerance_px": 7.0,
-                "rect_width_mm": 0.48,
-                "rect_height_mm": 0.36,
+                "rect_width_px": 11.5,
+                "rect_height_px": 8.6,
                 "omission_tilt_ratio_max": 0.2,
                 "omission_tilt_check": {
                     "status": "fail",
@@ -521,7 +523,6 @@ class CoreCycleTests(unittest.TestCase):
                 },
                 "inscribe_check": {
                     "status": "fail",
-                    "scale_px_per_mm": 24.0,
                 },
                 "items": items,
             }}},
@@ -694,25 +695,78 @@ class CoreCycleTests(unittest.TestCase):
         self.assertIn("overlap 9 px -> БРАК", row["detail"])
 
     def test_running_status_exposes_current_models_and_rules(self):
-        cycle = self.make_cycle()
+        cycle = self.make_cycle(monitor=ActiveCameraMonitor())
         self.assertTrue(cycle.request_start())
-        cycle._last_model_health = [{
-            "role": "TOP",
-            "model": "weights/top.pt",
-            "ok": True,
-            "elapsed_ms": 12,
-            "detections": 2,
-        }]
-        cycle._frame_analysis_rule_results = [SimpleNamespace(
-            rule_name="top_rule",
-            triggered=False,
-            details={},
-        )]
+        cycle._frame_analysis_groups["SPIDER"] = {
+            "part_id": 3,
+            "rule_results": [SimpleNamespace(
+                rule_name="top_rule",
+                triggered=False,
+                details={},
+            )],
+            "models": [{
+                "role": "TOP",
+                "model": "weights/top.pt",
+                "ok": True,
+                "elapsed_ms": 12,
+                "detections": 2,
+            }],
+            "updated_at": time.time(),
+        }
         report = cycle._build_status()["frame_analysis"]
         self.assertTrue(report["available"])
         self.assertEqual(report["kind"], "CYCLE")
+        self.assertEqual(report["group"], "SPIDER")
+        self.assertEqual(report["stage"], "КОНТРОЛЬ +4")
+        self.assertEqual(report["part_id"], 3)
         self.assertEqual(len(report["models"]), 1)
         self.assertEqual(len(report["rules"]), 1)
+
+    def test_frame_analysis_panel_follows_manually_selected_camera(self):
+        monitor = ActiveCameraMonitor()
+        cycle = self.make_cycle(monitor=monitor)
+        self.assertTrue(cycle.request_start())
+        cycle._frame_analysis_groups["INPUT"] = {
+            "part_id": 1,
+            "rule_results": [SimpleNamespace(
+                rule_name="part_presence",
+                triggered=False,
+                details={"empty_tray": False},
+            )],
+            "models": [{
+                "role": "INPUT_LEFT",
+                "model": "weights/input.pt",
+                "ok": True,
+                "elapsed_ms": 9,
+                "detections": 1,
+            }],
+            "updated_at": time.time(),
+        }
+        # Входные камеры показывают результат ВХОДА.
+        monitor.server.active_camera_role = "INPUT_LEFT"
+        report = cycle._build_status()["frame_analysis"]
+        self.assertEqual(report["group"], "INPUT")
+        self.assertEqual(report["stage"], "ВХОД")
+        self.assertEqual(report["role"], "INPUT_LEFT")
+        self.assertEqual(report["part_id"], 1)
+        self.assertEqual(len(report["rules"]), 1)
+        self.assertIn("вход", report["message"].lower())
+        monitor.server.active_camera_role = "INPUT_RIGHT"
+        report = cycle._build_status()["frame_analysis"]
+        self.assertEqual(report["group"], "INPUT")
+        self.assertEqual(report["role"], "INPUT_RIGHT")
+        self.assertEqual(len(report["rules"]), 1)
+
+        # При переключении на остальные камеры панель сразу показывает
+        # результат КОНТРОЛЯ +4, даже если для него данных ещё нет.
+        monitor.server.active_camera_role = "TOP"
+        report = cycle._build_status()["frame_analysis"]
+        self.assertEqual(report["group"], "SPIDER")
+        self.assertEqual(report["stage"], "КОНТРОЛЬ +4")
+        self.assertEqual(report["role"], "TOP")
+        self.assertIsNone(report["part_id"])
+        self.assertEqual(report["rules"], [])
+        self.assertIn("нет", report["message"])
 
     def test_backend_control_permissions_match_every_line_state(self):
         cycle = self.make_cycle()

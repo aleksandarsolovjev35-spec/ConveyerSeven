@@ -21,14 +21,14 @@ def rect_detection(class_name, x, y, width=20, height=20):
 
 
 class InscribedRectangleDimensionTests(unittest.TestCase):
-    def test_long_contact_width_and_height_convert_independently(self):
+    def test_long_contact_width_and_height_are_used_directly_in_pixels(self):
         role = "SPIDER_LEFT"
         thresholds = {
             f"{role}.spider_contacts_long_min_confidence": 0.3,
             f"{role}.spider_contacts_long_expected_count": 5,
             f"{role}.spider_contacts_long_line_deviation_ratio": 0.35,
-            f"{role}.spider_contacts_long_inscribed_rect_width_mm": 0.5,
-            f"{role}.spider_contacts_long_inscribed_rect_height_mm": 0.25,
+            f"{role}.spider_contacts_long_inscribed_rect_width_px": 12.0,
+            f"{role}.spider_contacts_long_inscribed_rect_height_px": 6.0,
             f"{role}.spider_contacts_long_y_filter_ratio": 3.0,
         }
         contacts = [
@@ -37,18 +37,20 @@ class InscribedRectangleDimensionTests(unittest.TestCase):
         ]
         result = SpiderContactsLongRule(thresholds).check({role: contacts})
         check = result.details["per_role"][role]["inscribe_check"]
-        self.assertAlmostEqual(check["scale_px_per_mm"], 24.0)
-        self.assertAlmostEqual(check["expected_width_px"], 12.0)
-        self.assertAlmostEqual(check["expected_height_px"], 6.0)
+        self.assertAlmostEqual(check["rect_width_px"], 12.0)
+        self.assertAlmostEqual(check["rect_height_px"], 6.0)
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["fails"], 0)
+        self.assertNotIn("scale_px_per_mm", check)
 
-    def test_short_contact_width_and_height_convert_independently(self):
+    def test_short_contact_width_and_height_are_used_directly_in_pixels(self):
         role = "SPIDER_IN"
         thresholds = {
             f"{role}.spider_contacts_short_min_confidence": 0.3,
             f"{role}.spider_contacts_short_expected_count": 2,
             f"{role}.spider_contacts_short_level_deviation_ratio": 0.35,
-            f"{role}.spider_contacts_short_inscribed_rect_width_mm": 2.0,
-            f"{role}.spider_contacts_short_inscribed_rect_height_mm": 1.0,
+            f"{role}.spider_contacts_short_inscribed_rect_width_px": 29.0,
+            f"{role}.spider_contacts_short_inscribed_rect_height_px": 14.5,
             f"{role}.spider_contacts_short_area_absolute_min": 100,
             f"{role}.spider_contacts_short_y_filter_ratio": 3.0,
         }
@@ -58,10 +60,11 @@ class InscribedRectangleDimensionTests(unittest.TestCase):
         ]
         result = SpiderContactsShortRule(thresholds).check({role: contacts})
         check = result.details["per_role"][role]["inscribe_check"]
-        scale = 80.0 / 5.5
-        self.assertAlmostEqual(check["scale_px_per_mm"], round(scale, 3))
-        self.assertAlmostEqual(check["expected_width_px"], round(2.0 * scale, 1))
-        self.assertAlmostEqual(check["expected_height_px"], round(1.0 * scale, 1))
+        self.assertAlmostEqual(check["rect_width_px"], 29.0)
+        self.assertAlmostEqual(check["rect_height_px"], 14.5)
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["fails"], 0)
+        self.assertNotIn("scale_px_per_mm", check)
 
     def test_top_contacts_passes_side_and_edge_pixel_rectangles(self):
         rule = TopContactsRule({

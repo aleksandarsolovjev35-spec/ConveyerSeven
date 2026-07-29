@@ -28,6 +28,10 @@ from domain.part import (
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
 
+# Пауза после обработки кадров нейросетями: оператор успевает отсмотреть
+# результат анализа до начала следующего шага.
+REVIEW_SECONDS = 5.0
+
 
 class ProductionCycle:
     """
@@ -40,6 +44,8 @@ class ProductionCycle:
 
     JOG_ALLOWED_STATES = ("IDLE", "STOPPED", "PAUSED")
 
+    FRAME_ANALYSIS_GROUPS = ("INPUT", "SPIDER")
+
     def __init__(
         self,
         conveyor,
@@ -51,6 +57,7 @@ class ProductionCycle:
         jog=None,
         settle_seconds=STAGE_SETTLE_SECONDS,
         stage_trace_seconds=STAGE_TRACE_SECONDS,
+        review_seconds=REVIEW_SECONDS,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -59,6 +66,7 @@ class ProductionCycle:
         self.monitor      = monitor
         self.archive      = archive
         self.jog          = jog
+        self.review_seconds = max(0.0, float(review_seconds))
 
         self.distributor.on_state_changed = self._refresh_monitor
 
@@ -81,8 +89,7 @@ class ProductionCycle:
         self._last_vision_results: dict = {}
         self._last_rule_results: list = []
         self._last_model_health: list = []
-        self._frame_analysis_rule_results: list = []
-        self._frame_analysis_updated_at = None
+        self._frame_analysis_groups = self._empty_frame_analysis_groups()
 
         self._drain_start_time: float = 0
         self._fault_reason = None
@@ -135,6 +142,10 @@ class ProductionCycle:
         # Пауза в рабочем цикле
         self._pause_requested = threading.Event()
         self._pause_frame_active = False
+
+        # Первый шаг после пуска: сначала контроль того, что уже стоит под
+        # камерами, и только потом движение ленты.
+        self._await_initial_inspection = False
 
     # Process telemetry
 
@@ -214,8 +225,11 @@ class ProductionCycle:
                 self._drain_start_time = 0
                 self._fault_reason = None
                 self._last_model_health = []
-                self._frame_analysis_rule_results = []
-                self._frame_analysis_updated_at = None
+                self._reset_frame_analysis()
+                # Деталь могла остаться под входными камерами ещё до пуска:
+                # первый шаг выполняется без движения ленты, чтобы она
+                # попала в учёт, а не уехала дальше непроверенной.
+                self._await_initial_inspection = True
                 if self._diagnostics.get("kind") == "SELECTED_MODEL":
                     self._diagnostics = {
                         "status": "NOT_RUN",
@@ -652,8 +666,7 @@ class ProductionCycle:
             self._last_vision_results = {}
             self._last_rule_results = []
             self._last_model_health = []
-            self._frame_analysis_rule_results = []
-            self._frame_analysis_updated_at = None
+            self._reset_frame_analysis()
             self._diagnostics = {
                 "status": "NOT_RUN",
                 "kind": None,
@@ -898,6 +911,7 @@ class ProductionCycle:
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
         )
+        self._stage_review(display_frames)
         self._stage_publish(display_frames)
 
     def _stage_motion(self):
@@ -906,6 +920,19 @@ class ProductionCycle:
         # Разметка прошлого шага построена по статичному кадру и на
         # движущемся изображении указывала бы мимо детали.
         self.live.clear_overlays()
+
+        if self._await_initial_inspection:
+            # Деталь уже стоит под входными камерами: сначала её контроль,
+            # движение ленты начнётся со следующего шага. Счётчик шагов не
+            # увеличивается — физическая позиция не изменилась.
+            self._await_initial_inspection = False
+            self._set_process(
+                "INITIAL_INSPECTION",
+                "Деталь уже под камерами: контроль без движения ленты",
+                positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+            )
+            self._check_motion_cancelled()
+            return None
 
         self._pending_drop = self._find_pending_drop()
         pending_id = self._pending_drop.id if self._pending_drop else None
@@ -1005,6 +1032,44 @@ class ProductionCycle:
             display_frames.update(spider_result.raw_frames)
         self._check_motion_cancelled()
         return display_frames
+
+    def _stage_review(self, display_frames):
+        """REVIEW: пауза на просмотр работы нейросетей после анализа.
+
+        Кадры со статичной разметкой уже опубликованы и остаются на
+        экране, а лента стоит: оператор успевает отсмотреть результат
+        до начала следующего шага. Паузу можно прервать остановкой или
+        выходом из программы.
+        """
+        if self.review_seconds <= 0:
+            return
+        self._refresh_monitor(display_frames)
+        deadline = time.monotonic() + self.review_seconds
+        shown_seconds = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if (
+                self._cancel_motion.is_set()
+                or self.sm.force_exit
+                or self.sm.exit_requested
+                or self.sm.state != State.RUNNING
+            ):
+                break
+            whole = int(remaining + 0.999)
+            if whole != shown_seconds:
+                shown_seconds = whole
+                self._set_process(
+                    "ANALYSIS_REVIEW",
+                    "Просмотр результатов анализа: "
+                    f"{whole} с до следующего шага",
+                    positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+                )
+            time.sleep(min(0.1, max(remaining, 0.01)))
+        # FORCE EXIT во время паузы сбрасывает цепочку фаз: выходить нужно
+        # штатной ошибкой отмены до входа в PUBLISH, а не сбросом шага.
+        self._check_motion_cancelled()
 
     def _stage_publish(self, display_frames):
         """PUBLISH: маршрут годных деталей и вывод результата на экран."""
@@ -1109,10 +1174,9 @@ class ProductionCycle:
             force_bad=self.force_all_bad,
         )
         self._append_latest_model_health(result)
-        self._frame_analysis_rule_results = list(result.rule_results)
-        self._frame_analysis_updated_at = time.time()
 
         if result.is_empty_tray:
+            self._record_frame_analysis("INPUT", None, result)
             self.empty_count += 1
             self._last_vision_results.update(result.vision_results)
             self._last_rule_results.extend(result.rule_results)
@@ -1127,6 +1191,7 @@ class ProductionCycle:
         part = Part(self.part_counter, self.current_step)
         part.inspection_consensus["input"] = dict(result.consensus)
         self.parts.append(part)
+        self._record_frame_analysis("INPUT", part.id, result)
         print(f"[INPUT] Деталь #{part.id}")
 
         for defect in result.defects:
@@ -1181,8 +1246,7 @@ class ProductionCycle:
                 force_bad=self.force_all_bad,
             )
             self._append_latest_model_health(result)
-            self._frame_analysis_rule_results = list(result.rule_results)
-            self._frame_analysis_updated_at = time.time()
+            self._record_frame_analysis("SPIDER", part.id, result)
             part.inspection_consensus["spider"] = dict(result.consensus)
 
             for defect in result.defects:
@@ -1208,6 +1272,9 @@ class ProductionCycle:
                 f"категория={part.route_category}"
             )
             return result
+        # На позиции +4 в этом шаге детали нет: старый результат другой
+        # детали показывать нельзя.
+        self._frame_analysis_groups["SPIDER"] = self._empty_frame_analysis_entry()
         return None
 
     # Distributor flow
@@ -1357,6 +1424,67 @@ class ProductionCycle:
             return
         self._last_model_health = [dict(item) for item in rows]
 
+    # Анализ кадра по группам камер (ВХОД / КОНТРОЛЬ +4)
+
+    def _empty_frame_analysis_entry(self) -> dict:
+        return {
+            "part_id": None,
+            "rule_results": [],
+            "models": [],
+            "updated_at": None,
+        }
+
+    def _empty_frame_analysis_groups(self) -> dict:
+        return {
+            group: self._empty_frame_analysis_entry()
+            for group in self.FRAME_ANALYSIS_GROUPS
+        }
+
+    def _reset_frame_analysis(self):
+        self._frame_analysis_groups = self._empty_frame_analysis_groups()
+
+    def _record_frame_analysis(self, group: str, part_id, result):
+        """Сохранить итог стадии в клетку её группы камер.
+
+        Правая панель UI показывает анализ выбранной оператором камеры,
+        поэтому результаты хранятся раздельно для ВХОДА и КОНТРОЛЯ +4.
+        """
+        rows = getattr(result, "model_health", None)
+        if not isinstance(rows, list) or not rows:
+            vision = getattr(self.inspector, "vision", None)
+            rows = getattr(vision, "last_health", None) or []
+        self._frame_analysis_groups[group] = {
+            "part_id": part_id,
+            "rule_results": list(result.rule_results),
+            "models": [
+                dict(item) for item in rows if isinstance(item, dict)
+            ],
+            "updated_at": time.time(),
+        }
+
+    def _active_frame_analysis_group(self) -> str:
+        """Группа камер, чей анализ показывать: за выбранной камерой UI."""
+        input_roles = set(
+            getattr(self.inspector, "INPUT_ROLES", None)
+            or ("INPUT_LEFT", "INPUT_RIGHT")
+        )
+        try:
+            role = self._get_active_camera_role()
+        except Exception:
+            role = None
+        if role in input_roles:
+            return "INPUT"
+        if role is not None:
+            return "SPIDER"
+        # Камера ещё не выбрана: последняя обновлённая группа.
+        updated = {
+            name: entry.get("updated_at") or 0
+            for name, entry in self._frame_analysis_groups.items()
+        }
+        if any(updated.values()):
+            return max(updated, key=updated.get)
+        return "INPUT"
+
     def _on_stage_change(self, previous, current, elapsed: float):
         """Печать границы фаз шага: видно, где именно проводится время."""
         print(
@@ -1499,24 +1627,37 @@ class ProductionCycle:
         selected_report = report.get("kind") == "SELECTED_MODEL"
 
         if state_name in ("RUNNING", "STOPPING"):
+            # Панель следует за камерой, выбранной оператором: анализ
+            # меняется при каждом переключении камеры в рабочем цикле.
+            group = self._active_frame_analysis_group()
+            entry = self._frame_analysis_groups[group]
+            stage_label = "ВХОД" if group == "INPUT" else "КОНТРОЛЬ +4"
+            try:
+                active_role = self._get_active_camera_role()
+            except Exception:
+                active_role = None
+            has_data = (
+                entry["updated_at"] is not None
+                and bool(entry["rule_results"] or entry["models"])
+            )
             return {
                 "available": True,
                 "kind": "CYCLE",
                 "active": True,
                 "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА",
-                "role": None,
-                "part_id": self._process.get("part_id"),
+                "role": active_role,
+                "group": group,
+                "stage": stage_label,
+                "part_id": entry["part_id"],
                 "message": (
-                    "Ожидание результатов анализа"
-                    if not self._last_model_health
-                    and not self._frame_analysis_rule_results
-                    else "Итог трёх свежих кадров: голосование каждого правила 2 из 3"
+                    f"{stage_label}: итог трёх свежих кадров; "
+                    "голосование каждого правила 2 из 3"
+                    if has_data
+                    else f"{stage_label}: результатов анализа пока нет"
                 ),
-                "models": [dict(item) for item in self._last_model_health],
-                "rules": self._rule_report_rows(
-                    self._frame_analysis_rule_results
-                ),
-                "updated_at": self._frame_analysis_updated_at,
+                "models": [dict(item) for item in entry["models"]],
+                "rules": self._rule_report_rows(entry["rule_results"]),
+                "updated_at": entry["updated_at"],
             }
 
         if selected_report:

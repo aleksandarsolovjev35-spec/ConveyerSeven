@@ -372,11 +372,24 @@ class ProductionLivePreviewTests(unittest.TestCase):
             EmptyTrayInspector(),
             FakeDistributor(),
             monitor=monitor,
+            # Паузу просмотра в тестах не держим: она растянула бы каждый
+            # шаг на секунды реального времени.
+            review_seconds=0,
         )
 
-    def run_steps(self, cycle, seconds=0.6):
+    def run_steps(self, cycle, seconds=0.6, min_moves=0):
         thread = threading.Thread(target=cycle.start, daemon=True)
         thread.start()
+        if min_moves:
+            # Первый шаг теперь — контроль детали под камерами без
+            # движения ленты, поэтому ждём именно факта проезда.
+            deadline = time.monotonic() + 10.0
+            while (
+                cycle.conveyor.moves < min_moves
+                and time.monotonic() < deadline
+                and thread.is_alive()
+            ):
+                time.sleep(0.02)
         time.sleep(seconds)
         cycle.request_force_exit()
         thread.join(3.0)
@@ -387,7 +400,9 @@ class ProductionLivePreviewTests(unittest.TestCase):
         monitor = RecordingMonitor()
         cycle = self.make_cycle(cameras, monitor)
         self.assertTrue(cycle.request_start())
-        self.run_steps(cycle)
+        # Стартовый контроль ленту не двигает, поэтому ждём первый
+        # фактический проезд, прежде чем проверять live-кадры в движении.
+        self.run_steps(cycle, min_moves=1)
 
         self.assertGreater(cycle.conveyor.moves, 0)
         # Во время движения оператор получает свежие кадры.
@@ -400,7 +415,7 @@ class ProductionLivePreviewTests(unittest.TestCase):
         cameras = TrackingCameras()
         cycle = self.make_cycle(cameras, RecordingMonitor())
         self.assertTrue(cycle.request_start())
-        self.run_steps(cycle)
+        self.run_steps(cycle, min_moves=1)
 
         self.assertGreater(cameras.inspection_reads, 0)
         self.assertNotIn(

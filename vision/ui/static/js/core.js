@@ -200,6 +200,7 @@ const els = {
     statInline:       $('stat-inline'),
     statEmpty:        $('stat-empty'),
     lineCells:        $('line-cells'),
+    processPhaseLabel: $('process-phase-label'),
     defectsSection:   $('defects-section'),
     defectsTitle:     $('defects-title'),
     defectsList:      $('defects-list'),

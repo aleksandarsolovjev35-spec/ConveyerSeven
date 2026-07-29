@@ -50,23 +50,23 @@ class BaseRule:
 
         Пример:
           thresholds = {
-              "spider_contacts_long_inscribed_rect_width_mm": 0.50,
-              "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_mm": 0.48,
+              "spider_contacts_long_inscribed_rect_width_px": 12.0,
+              "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 11.5,
           }
 
           _get(
-              "spider_contacts_long_inscribed_rect_width_mm",
-              0.40,
+              "spider_contacts_long_inscribed_rect_width_px",
+              10.0,
               role="SPIDER_LEFT",
           )
-          -> 0.48  (per-role)
+          -> 11.5  (per-role)
 
           _get(
-              "spider_contacts_long_inscribed_rect_width_mm",
-              0.40,
+              "spider_contacts_long_inscribed_rect_width_px",
+              10.0,
               role="SPIDER_RIGHT",
           )
-          -> 0.50  (общий, per-role не задан)
+          -> 12.0  (общий, per-role не задан)
         """
         if role:
             role_key = f"{role}.{key}"

@@ -276,10 +276,10 @@ class CameraAndConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         thresholds = ThresholdLoader(root / "thresholds.json").get_all()
         expected = {
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_mm": 0.48,
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_mm": 0.36,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_mm": 1.74,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_mm": 0.66,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 11.5,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_px": 8.6,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_px": 25.2,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_px": 9.6,
             "TOP.top_contacts_side_rect_width_px": 28,
             "TOP.top_contacts_side_rect_height_px": 35,
             "TOP.top_contacts_edge_rect_width_px": 30,
@@ -768,6 +768,28 @@ class CameraAndConfigTests(unittest.TestCase):
                 json.dumps({**DEFAULTS, "settle_time": 99.0}), encoding="utf-8"
             )
             with self.assertRaisesRegex(ValueError, "settle_time"):
+                load_calibration(path)
+
+    def test_review_time_is_optional_and_validated(self):
+        """Старые calibration.json без review_time читаются с 5 с паузой."""
+        from config.calibration_loader import DEFAULTS
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "calibration.json"
+
+            path.write_text(json.dumps(DEFAULTS), encoding="utf-8")
+            # По умолчанию пауза просмотра результатов — не меньше 5 с.
+            self.assertGreaterEqual(load_calibration(path)["review_time"], 5.0)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "review_time": 2.5}), encoding="utf-8"
+            )
+            self.assertEqual(load_calibration(path)["review_time"], 2.5)
+
+            path.write_text(
+                json.dumps({**DEFAULTS, "review_time": 99.0}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "review_time"):
                 load_calibration(path)
 
 

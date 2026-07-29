@@ -188,8 +188,12 @@ function selectCamera(role) {
     });
 
     updateMainCameraLabel();
-    sendActiveCameraIfChanged(role);
+    // Панель анализа кадра следует за выбранной камерой: статус
+    // опрашивается сразу и ещё раз после того, как backend зафиксировал
+    // новую активную камеру.
+    sendActiveCameraIfChanged(role).finally(requestImmediateStatus);
     applyMainCameraSource();
+    requestImmediateStatus();
 }
 
 function navigateCamera(direction) {

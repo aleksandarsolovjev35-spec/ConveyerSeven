@@ -36,8 +36,8 @@ LONG_CONTACT_PARAMETER_NAMES = (
     "spider_contacts_long_line_deviation_ratio",
     "spider_contacts_long_max_level_slope",
     "spider_contacts_long_omission_tilt_ratio_max",
-    "spider_contacts_long_inscribed_rect_width_mm",
-    "spider_contacts_long_inscribed_rect_height_mm",
+    "spider_contacts_long_inscribed_rect_width_px",
+    "spider_contacts_long_inscribed_rect_height_px",
     "spider_contacts_long_y_filter_ratio",
 )
 SHORT_CONTACT_PARAMETER_NAMES = (
@@ -45,8 +45,8 @@ SHORT_CONTACT_PARAMETER_NAMES = (
     "spider_contacts_short_expected_count",
     "spider_contacts_short_level_deviation_ratio",
     "spider_contacts_short_omission_tilt_ratio_max",
-    "spider_contacts_short_inscribed_rect_width_mm",
-    "spider_contacts_short_inscribed_rect_height_mm",
+    "spider_contacts_short_inscribed_rect_width_px",
+    "spider_contacts_short_inscribed_rect_height_px",
     "spider_contacts_short_area_absolute_min",
     "spider_contacts_short_y_filter_ratio",
 )
@@ -213,6 +213,8 @@ class ThresholdLoader:
                 type(value) is not int or value <= 0
             ):
                 raise ValueError(f"{key} должен быть целым числом > 0")
+            if "inscribed_rect_" in key and float(value) <= 0.0:
+                raise ValueError(f"{key} должен быть числом > 0")
 
         for key in self.OMISSION_CONFIDENCE_KEYS:
             value = data[key]
