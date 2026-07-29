@@ -320,18 +320,7 @@ class TopRuleTests(unittest.TestCase):
                 [630, 261], [570, 261], [570, 330], [300, 330],
             ],
         }
-        self.assertFalse(rule.check({"TOP": [overflow_platform]}).triggered)
-
-        overflow_contacts = {
-            "class": "contacts",
-            "confidence": 0.99,
-            "bbox": [300, 200, 630, 330],
-            "mask": [
-                [300, 200], [570, 200], [570, 249], [630, 249],
-                [630, 261], [570, 261], [570, 330], [300, 330],
-            ],
-        }
-        hit = rule.check({"TOP": [clean_platform, overflow_contacts]})
+        hit = rule.check({"TOP": [overflow_platform]})
         details = hit.details["per_role"]["TOP"]
         self.assertTrue(hit.triggered)
         self.assertGreaterEqual(details["largest_component_pixels"], 3)

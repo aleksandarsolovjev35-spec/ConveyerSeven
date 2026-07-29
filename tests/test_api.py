@@ -216,18 +216,6 @@ class ApiTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
 
-    def test_boot_messages_are_formatted_on_a_single_line(self):
-        """Любое сообщение загрузки обязано выводиться в одну строку."""
-        server = UIServer()
-        server.boot_step_start("serial", "Поиск контроллера\r\nна COM-портах")
-        self.assertEqual(server.boot_message, "Поиск контроллера на COM-портах")
-        self.assertIn("Поиск контроллера на COM-портах", server.splash_log)
-
-        server.boot_step_error("serial", "Ошибка порта:\n\tCOM1 занят")
-        self.assertEqual(server.boot_message, "ОШИБКА: Ошибка порта: COM1 занят")
-        self.assertEqual(server.boot_error, "Ошибка порта: COM1 занят")
-        self.assertIn("[ОШИБКА] Ошибка порта: COM1 занят", server.splash_log)
-
 
 if __name__ == "__main__":
     unittest.main()

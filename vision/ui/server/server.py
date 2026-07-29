@@ -159,37 +159,29 @@ class UIServer:
             self.active_camera_role = role
         return True
 
-    @staticmethod
-    def _one_line(text: str | None) -> str | None:
-        if text is None:
-            return None
-        return " ".join(str(text).split())
-
     def boot_step_start(self, key, message=None):
         with self.lock:
             if key in self.boot_steps:
                 self.boot_steps[key] = "running"
                 self.boot_current = key
             if message:
-                clean = self._one_line(message)
-                self.boot_message = clean
-                self._append_log(clean)
+                self.boot_message = message
+                self._append_log(message)
 
     def boot_step_done(self, key, message=None):
         with self.lock:
             if key in self.boot_steps:
                 self.boot_steps[key] = "done"
             if message:
-                self._append_log(self._one_line(message))
+                self._append_log(message)
 
     def boot_step_error(self, key, message):
         with self.lock:
             if key in self.boot_steps:
                 self.boot_steps[key] = "error"
-            clean = self._one_line(message)
-            self.boot_error = clean
-            self.boot_message = f"ОШИБКА: {clean}"
-            self._append_log(f"[ОШИБКА] {clean}")
+            self.boot_error = message
+            self.boot_message = f"ОШИБКА: {message}"
+            self._append_log(f"[ОШИБКА] {message}")
 
     def boot_complete(self):
         with self.lock:
@@ -198,9 +190,8 @@ class UIServer:
 
     def set_splash_status(self, text):
         with self.lock:
-            clean = self._one_line(text)
-            self.boot_message = clean
-            self._append_log(clean)
+            self.boot_message = text
+            self._append_log(text)
 
     def _append_log(self, text):
         self.splash_log.append(text)

@@ -108,7 +108,7 @@ html, body {
 }
 
 .splash-inner {
-    width: 680px;
+    width: 420px;
     max-width: 90vw;
     display: flex;
     flex-direction: column;
@@ -124,10 +124,6 @@ html, body {
     color: var(--accent);
     letter-spacing: 6px;
     text-transform: uppercase;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
 }
 
 .splash-status {
@@ -136,10 +132,6 @@ html, body {
     font-size: 13px;
     letter-spacing: 0.5px;
     text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
 }
 
 .splash-progress-bar {
@@ -199,10 +191,8 @@ html, body {
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 11px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
+    word-break: break-word;
+    line-height: 1.5;
 }
 
 /* ─── Main layout ─────────────────────────────────────────────────── */
