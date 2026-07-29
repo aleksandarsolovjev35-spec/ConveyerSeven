@@ -86,6 +86,7 @@
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 1fr));
+    min-width: 0;
     gap: 3px;
     /* Keep labels aligned with the eight cells, not with the entrance and
        exit gates around them. */
@@ -415,10 +416,10 @@
 
 /* ─── Механическая мнемосхема пневмо-сброса DIST2 (SCADA) ──────── */
 .scada-actuator { margin-top: 5px; padding: 4px 8px; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; font: 600 9px var(--font-mono); color: var(--text-muted); }
-.scada-actuator-track { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.scada-label-text { font-weight: 700; color: var(--text-dim); }
-.scada-pneumo-unit { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-strong); transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease); }
-.pneumo-title { font-weight: 700; color: var(--text-dim); }
+.scada-actuator-track { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.scada-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; font-weight: 700; color: var(--text-dim); }
+.scada-pneumo-unit { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; padding: 2px 6px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-strong); transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease); }
+.pneumo-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: var(--text-dim); }
 .pneumo-cylinder { position: relative; width: 32px; height: 8px; background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 2px; overflow: hidden; }
 .pneumo-rod { width: 6px; height: 100%; background: var(--ok); transition: width 220ms cubic-bezier(0.25, 0.1, 0.25, 1), background-color 220ms var(--ease); }
 .scada-pneumo-unit.is-actuating { border-color: var(--bad); background: var(--bad-bg); }
@@ -459,3 +460,25 @@
 .blade-card.dist-cleanup { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
 .blade-card.dist-reject .axis-route b { color: var(--bad); }
 .blade-card.dist-cleanup .axis-route b { color: var(--warn); }
+
+/* Keep the line legible when the window is resized below the normal
+   1280px operator viewport.  The middle track remains fluid while the
+   portals become compact instead of forcing the eight cells to collapse. */
+@media (max-width: 720px) {
+    .line-conveyor-track {
+        grid-template-columns: 42px minmax(0, 1fr) 42px;
+        gap: 3px;
+    }
+    .line-gate {
+        width: 42px;
+        font-size: 7px;
+        letter-spacing: 0.2px;
+    }
+    .line-position-labels {
+        margin-left: 45px;
+        margin-right: 45px;
+    }
+    .scada-actuator-track { gap: 4px; }
+    .scada-label-text { display: none; }
+    .pneumo-title { max-width: 34vw; }
+}
