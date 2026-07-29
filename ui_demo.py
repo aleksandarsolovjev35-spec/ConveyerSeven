@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import random
+import tempfile
 import threading
 from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 import time
 
@@ -86,6 +89,55 @@ COLORS = (
 )
 
 
+class DemoArchive:
+    """Small file-backed archive so demo history cards are actually usable."""
+
+    def __init__(self, frames):
+        self._tempdir = tempfile.TemporaryDirectory(prefix="conveyer-seven-demo-")
+        self.root = Path(self._tempdir.name)
+        self.records = {}
+        for role, frame in frames.items():
+            path = self.root / f"{role}.jpg"
+            cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+
+    def add(self, part_id, category, decision):
+        part_id = int(part_id)
+        record = {
+            "category": category,
+            "decision": decision,
+            "time": time.time(),
+        }
+        self.records[part_id] = record
+        folder = self.root / str(part_id)
+        folder.mkdir(exist_ok=True)
+        (folder / "meta.json").write_text(
+            json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def get_part_info(self, part_id):
+        part_id = int(part_id)
+        if part_id not in self.records:
+            return None
+        return {"folder": str(self.root / str(part_id))}
+
+    def get_part_images(self, part_id):
+        if int(part_id) not in self.records:
+            return {}
+        return {
+            role: {
+                "raw": str(self.root / f"{role}.jpg"),
+                "debug": str(self.root / f"{role}.jpg"),
+            }
+            for role in ROLES
+        }
+
+    def metadata(self, part_id):
+        return dict(self.records.get(int(part_id), {}))
+
+    def close(self):
+        self._tempdir.cleanup()
+
+
 class UiDemo:
     def __init__(self):
         self.monitor = LiveMonitor(
@@ -123,6 +175,7 @@ class UiDemo:
             "updated_at": None,
         }
         self.frames = self._make_frames()
+        self.archive = DemoArchive(self.frames)
         self._next_step_at = 0.0
         self._review_until = 0.0
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -549,6 +602,7 @@ class UiDemo:
                     else:
                         self.cleanup += 1
                         decision = "cleanup"
+                    self.archive.add(part["id"], cat, decision)
                     self.recent_parts.append({
                         "id": part["id"],
                         "category": cat,
@@ -600,6 +654,9 @@ class UiDemo:
 def main():
     demo = UiDemo()
     monitor = demo.monitor
+    # History cards must open the same archive endpoint as production, even
+    # though demo images are synthetic and stored in a temporary directory.
+    monitor.server.archive = demo.archive
     monitor.start_callback = demo.start
     monitor.stop_callback = demo.stop
     monitor.pause_callback = demo.pause
@@ -637,6 +694,7 @@ def main():
         demo.stop_event.set()
         demo.thread.join(2.0)
         monitor.stop_server()
+        demo.archive.close()
 
 
 if __name__ == "__main__":
