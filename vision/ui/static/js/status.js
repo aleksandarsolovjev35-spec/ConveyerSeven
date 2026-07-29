@@ -254,6 +254,32 @@ function _applyTokenCategory(el, category) {
     else if (category === 'GOOD') el.classList.add('cell-good');
 }
 
+function _updateMechanicalScada(lineParts, process = {}) {
+    const pneumoUnit = document.getElementById('scada-pneumo-unit');
+    const chuteEl = document.getElementById('scada-chute');
+    const chuteLabel = document.getElementById('scada-chute-label');
+    if (!pneumoUnit || !chuteEl || !chuteLabel) return;
+
+    const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
+    const category = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
+    const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
+
+    pneumoUnit.classList.remove('is-actuating');
+    chuteEl.classList.remove('is-rejecting', 'is-cleanup');
+
+    if (category === 'BAD' || (isDropPhase && category !== 'GOOD' && partAtReject)) {
+        pneumoUnit.classList.add('is-actuating');
+        chuteEl.classList.add('is-rejecting');
+        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · БРАК';
+    } else if (category === 'CLEANUP') {
+        pneumoUnit.classList.add('is-actuating');
+        chuteEl.classList.add('is-cleanup');
+        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · ОЧИСТКА';
+    } else {
+        chuteLabel.textContent = '▶ ПРОХОД ЛИНИИ';
+    }
+}
+
 function updateLineCells(lineParts, process = {}) {
     const isConveyorMoving = (process.phase || '').includes('CONVEYOR') ||
                              (process.phase || '').includes('MOTION') ||
@@ -387,9 +413,15 @@ function updateLineCells(lineParts, process = {}) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
         }
+        if (meta.position === 7 && (meta.category === 'BAD' || meta.category === 'CLEANUP')) {
+            token.el.dataset.atReject = 'true';
+        } else {
+            delete token.el.dataset.atReject;
+        }
         token.el.textContent = `№${id}`;
         token.el.title = `Деталь №${id} · ${categoryLabel(meta.category)}`;
     }
 
+    _updateMechanicalScada(lineParts, process);
     _lineSyncDone = true;
 }
