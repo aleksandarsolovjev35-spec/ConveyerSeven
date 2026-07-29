@@ -269,7 +269,7 @@ function _updateMechanicalScada(lineParts, process = {}) {
     pneumoUnit.classList.remove('is-actuating');
     chuteEl.classList.remove('is-rejecting', 'is-cleanup');
 
-    if (category === 'BAD' || (isDropPhase && category !== 'GOOD' && partAtReject)) {
+    if (category === 'BAD') {
         pneumoUnit.classList.add('is-actuating');
         chuteEl.classList.add('is-rejecting');
         chuteLabel.textContent = '▼ СБРОС В ЛОТОК · БРАК';
@@ -277,6 +277,10 @@ function _updateMechanicalScada(lineParts, process = {}) {
         pneumoUnit.classList.add('is-actuating');
         chuteEl.classList.add('is-cleanup');
         chuteLabel.textContent = '▼ СБРОС В ЛОТОК · ОЧИСТКА';
+    } else if (isDropPhase && partAtReject) {
+        pneumoUnit.classList.add('is-actuating');
+        chuteEl.classList.add('is-rejecting');
+        chuteLabel.textContent = '▼ СБРОС В ЛОТОК';
     } else {
         chuteLabel.textContent = '▶ ПРОХОД ЛИНИИ';
     }
@@ -296,12 +300,15 @@ function _updateLineGates(lineParts, process = {}) {
     const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
     const outCat = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
     const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
-    if (outCat === 'BAD' || (isDropPhase && outCat !== 'GOOD' && partAtReject)) {
+    if (outCat === 'BAD') {
         gateOut.classList.add('gate-rejecting');
         gateOut.textContent = '▼ СБРОС';
     } else if (outCat === 'CLEANUP') {
         gateOut.classList.add('gate-cleanup');
         gateOut.textContent = '▼ ОЧИСТКА';
+    } else if (isDropPhase && partAtReject) {
+        gateOut.classList.add('gate-rejecting');
+        gateOut.textContent = '▼ СБРОС';
     } else {
         gateOut.classList.add('gate-active');
         gateOut.textContent = 'ВЫХОД ▸';
