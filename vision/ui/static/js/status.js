@@ -207,6 +207,8 @@ function updateLineStatus(ls) {
         distributorActionLabel(action),
     );
 
+    _updateDistributorColorCoding(ls);
+
     updateJogState(ls.jog || null);
     updateStateOverlay(ls);
     updateJogHardware(ls);
@@ -252,6 +254,91 @@ function _applyTokenCategory(el, category) {
     if (category === 'BAD') el.classList.add('cell-bad');
     else if (category === 'CLEANUP') el.classList.add('cell-cleanup');
     else if (category === 'GOOD') el.classList.add('cell-good');
+}
+
+function _updateMechanicalScada(lineParts, process = {}) {
+    const pneumoUnit = document.getElementById('scada-pneumo-unit');
+    const chuteEl = document.getElementById('scada-chute');
+    const chuteLabel = document.getElementById('scada-chute-label');
+    if (!pneumoUnit || !chuteEl || !chuteLabel) return;
+
+    const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
+    const category = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
+    const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
+
+    pneumoUnit.classList.remove('is-actuating');
+    chuteEl.classList.remove('is-rejecting', 'is-cleanup');
+
+    if (category === 'BAD' || (isDropPhase && category !== 'GOOD' && partAtReject)) {
+        pneumoUnit.classList.add('is-actuating');
+        chuteEl.classList.add('is-rejecting');
+        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · БРАК';
+    } else if (category === 'CLEANUP') {
+        pneumoUnit.classList.add('is-actuating');
+        chuteEl.classList.add('is-cleanup');
+        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · ОЧИСТКА';
+    } else {
+        chuteLabel.textContent = '▶ ПРОХОД ЛИНИИ';
+    }
+}
+
+function _updateLineGates(lineParts, process = {}) {
+    const gateIn = document.querySelector('.line-gate-in');
+    const gateOut = document.querySelector('.line-gate-out');
+    if (!gateIn || !gateOut) return;
+
+    gateIn.className = 'line-gate line-gate-in';
+    gateOut.className = 'line-gate line-gate-out';
+
+    const partAtInput = (lineParts || []).find(p => Number(p.position) === 0);
+    if (partAtInput) gateIn.classList.add('gate-active');
+
+    const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
+    const outCat = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
+    const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
+    if (outCat === 'BAD' || (isDropPhase && outCat !== 'GOOD' && partAtReject)) {
+        gateOut.classList.add('gate-rejecting');
+        gateOut.textContent = '▼ СБРОС';
+    } else if (outCat === 'CLEANUP') {
+        gateOut.classList.add('gate-cleanup');
+        gateOut.textContent = '▼ ОЧИСТКА';
+    } else {
+        gateOut.classList.add('gate-active');
+        gateOut.textContent = 'ВЫХОД ▸';
+    }
+}
+
+function _updateDistributorColorCoding(ls) {
+    const d1Card = document.getElementById('dist1-card');
+    const d2Card = document.getElementById('dist2-card');
+    if (!d1Card || !d2Card) return;
+
+    d1Card.classList.remove('dist-reject', 'dist-cleanup');
+    d2Card.classList.remove('dist-reject', 'dist-cleanup');
+
+    const d1Pos = Math.max(0, Number(ls.dist1_position || 0));
+    const d1Max = Math.max(1, Number(ls.dist1_max || 340));
+    const d1Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
+        String(ls.dist1_state || '').toUpperCase(),
+    );
+    // DIST1: подсветка только когда вышел из исходного (pos > 0).
+    // В исходном (ПРОХОД, pos=0) и при перемещении — не горит.
+    if (!d1Moving && d1Pos > 0) {
+        if (d1Pos >= d1Max) d1Card.classList.add('dist-reject');
+        else d1Card.classList.add('dist-cleanup');
+    }
+
+    const d2Pos = Math.max(0, Number(ls.dist2_position || 0));
+    const d2Max = Math.max(1, Number(ls.dist2_max || 340));
+    const d2Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
+        String(ls.dist2_state || '').toUpperCase(),
+    );
+    // DIST2: подсветка только когда вышел из исходного (pos > 0).
+    // В исходном (канал БРАК, pos=0) и при перемещении — не горит.
+    if (!d2Moving && d2Pos > 0) {
+        if (d2Pos >= d2Max) d2Card.classList.add('dist-cleanup');
+        else d1Card.classList.add('dist-reject');
+    }
 }
 
 function updateLineCells(lineParts, process = {}) {
@@ -387,9 +474,16 @@ function updateLineCells(lineParts, process = {}) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
         }
+        if (meta.position === 7 && (meta.category === 'BAD' || meta.category === 'CLEANUP')) {
+            token.el.dataset.atReject = 'true';
+        } else {
+            delete token.el.dataset.atReject;
+        }
         token.el.textContent = `№${id}`;
         token.el.title = `Деталь №${id} · ${categoryLabel(meta.category)}`;
     }
 
+    _updateMechanicalScada(lineParts, process);
+    _updateLineGates(lineParts, process);
     _lineSyncDone = true;
 }

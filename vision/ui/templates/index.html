@@ -72,15 +72,19 @@
                         <span class="process-line-title">ПУТЬ ДЕТАЛЕЙ</span>
                     </div>
                     <div class="line-cells-wrapper production-line-wrapper" style="position:relative;">
-                        <div id="line-cells" class="line-cells production-line-cells" style="position:relative; overflow:visible;">
-                            <div class="line-cell" data-pos="0"></div>
-                            <div class="line-cell" data-pos="1"></div>
-                            <div class="line-cell" data-pos="2"></div>
-                            <div class="line-cell" data-pos="3"></div>
-                            <div class="line-cell" data-pos="4"></div>
-                            <div class="line-cell" data-pos="5"></div>
-                            <div class="line-cell" data-pos="6"></div>
-                            <div class="line-cell" data-pos="7"></div>
+                        <div class="line-conveyor-track">
+                            <div class="line-gate line-gate-in" aria-hidden="true">▸ ВХОД</div>
+                            <div id="line-cells" class="line-cells production-line-cells" style="position:relative; overflow:visible;">
+                                <div class="line-cell" data-pos="0" data-cell-no="1"></div>
+                                <div class="line-cell" data-pos="1" data-cell-no="2"></div>
+                                <div class="line-cell" data-pos="2" data-cell-no="3"></div>
+                                <div class="line-cell" data-pos="3" data-cell-no="4"></div>
+                                <div class="line-cell" data-pos="4" data-cell-no="5"></div>
+                                <div class="line-cell" data-pos="5" data-cell-no="6"></div>
+                                <div class="line-cell" data-pos="6" data-cell-no="7"></div>
+                                <div class="line-cell" data-pos="7" data-cell-no="8"></div>
+                            </div>
+                            <div class="line-gate line-gate-out" aria-hidden="true">ВЫХОД ▸</div>
                         </div>
                     <div class="line-position-labels" aria-label="Позиции линии">
                         <span class="stage-position">1 · ВХОД</span>
@@ -91,6 +95,20 @@
                         <span>6</span>
                         <span>7</span>
                         <span class="stage-position">8 · СОРТИРОВКА</span>
+                    </div>
+                    <div id="scada-actuator" class="scada-actuator" aria-hidden="true">
+                        <div class="scada-actuator-track">
+                            <span class="scada-label-text">МЕХАНИКА ЛИНИИ</span>
+                            <div class="scada-pneumo-unit" id="scada-pneumo-unit">
+                                <span class="pneumo-title">DIST2 · ПНЕВМО-ТОЛКАТЕЛЬ</span>
+                                <div class="pneumo-cylinder">
+                                    <div id="pneumo-rod" class="pneumo-rod"></div>
+                                </div>
+                            </div>
+                            <div class="scada-chute" id="scada-chute">
+                                <span id="scada-chute-label" class="scada-chute-label">▶ ПРОХОД ЛИНИИ</span>
+                            </div>
+                        </div>
                     </div>
                     <div id="process-phase-label" class="process-phase-label"></div>
                     </div>
