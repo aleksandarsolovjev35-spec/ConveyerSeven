@@ -1,3 +1,4 @@
+import math
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,21 @@ def top_contacts():
         rect("contacts", 580, 530, 620, 570),
     ])
     return contacts
+
+
+def _tilted_mask(width, height, angle_deg):
+    """Повёрнутый прямоугольник как detection с одной только mask."""
+    radians = math.radians(angle_deg)
+    cos_a = math.cos(radians)
+    sin_a = math.sin(radians)
+    corners = [
+        (-width / 2.0, -height / 2.0), (width / 2.0, -height / 2.0),
+        (width / 2.0, height / 2.0), (-width / 2.0, height / 2.0),
+    ]
+    return {"mask": [
+        [500.0 + x * cos_a - y * sin_a, 400.0 + x * sin_a + y * cos_a]
+        for x, y in corners
+    ]}
 
 
 def glass_references():
@@ -404,6 +420,68 @@ class TopRuleTests(unittest.TestCase):
         self.assertNotIn("draw_text_with_bg", source)
         self.assertNotIn("cv2.putText", source)
         self.assertNotIn("cv2.fillPoly", source)
+
+    def test_platform_overlap_treats_platform_as_always_vertical(self):
+        """Вертикально стоящая платформа не должна класть область набок."""
+        # Платформа выше, чем шире: minAreaRect отдаёт угол длинной оси 90°.
+        vertical_platform = rect("platform", 500, 200, 800, 600)
+        contacts = []
+        for center_y in (240, 320, 400, 480, 560):
+            contacts.append(
+                rect("contacts", 440, center_y - 15, 480, center_y + 15)
+            )
+            contacts.append(
+                rect("contacts", 820, center_y - 15, 860, center_y + 15)
+            )
+        for center_x in (580, 720):
+            contacts.append(
+                rect("contacts", center_x - 15, 140, center_x + 15, 180)
+            )
+            contacts.append(
+                rect("contacts", center_x - 15, 620, center_x + 15, 660)
+            )
+
+        rule = TopPlatformOverlapRule(self.thresholds)
+        result = rule.check({"TOP": [vertical_platform, *contacts]})
+        details = result.details["per_role"]["TOP"]
+        self.assertFalse(result.triggered)
+        # Угол приведён к вертикали, а не к длинной оси.
+        self.assertEqual(details["angle_deg"], 0.0)
+        # Стороны совпадают с физическим расположением контактов.
+        self.assertEqual(
+            details["contact_groups"], {"L": 5, "R": 5, "T": 2, "B": 2},
+        )
+        # width — поперёк детали, height — вдоль неё.
+        self.assertAlmostEqual(details["boundary_width_px"], 380.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 480.0, places=1)
+
+        # expand_x растягивает область по горизонтали экрана.
+        thresholds = dict(self.thresholds)
+        thresholds["TOP.top_platform_overlap_expand_x_ratio"] = 2.0
+        stretched = TopPlatformOverlapRule(thresholds).check({
+            "TOP": [vertical_platform, *contacts],
+        })
+        points = np.asarray(next(
+            drawing["points"] for drawing in stretched.drawings
+            if drawing.get("type") == "platform_overlap_boundary"
+        ), dtype=float)
+        spans = points.max(axis=0) - points.min(axis=0)
+        self.assertAlmostEqual(spans[0], 760.0, places=1)
+        self.assertAlmostEqual(spans[1], 480.0, places=1)
+
+    def test_platform_overlap_angle_is_normalized_to_upright(self):
+        rule = TopPlatformOverlapRule(self.thresholds)
+        tall = {"mask": [[0, 0], [140, 0], [140, 305], [0, 305]]}
+        wide = {"mask": [[0, 0], [305, 0], [305, 140], [0, 140]]}
+        self.assertEqual(rule._upright_angle(tall), 0.0)
+        self.assertEqual(rule._upright_angle(wide), 0.0)
+        self.assertIsNone(rule._upright_angle({"mask": []}))
+        for angle in (-40.0, -7.5, 0.0, 7.5, 40.0):
+            self.assertAlmostEqual(
+                rule._upright_angle(_tilted_mask(140, 305, angle)),
+                angle,
+                places=2,
+            )
 
     def test_platform_overlap_area_respects_margin_and_expand(self):
         thresholds = dict(self.thresholds)

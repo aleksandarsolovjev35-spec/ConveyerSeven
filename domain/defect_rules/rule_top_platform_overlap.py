@@ -142,7 +142,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "contacts_found": len(contacts),
             }
 
-        angle = mask_orientation(platform)
+        angle = cls._upright_angle(platform)
         if angle is None:
             drawings.append({
                 "type": "platform_overlap_platform",
@@ -289,6 +289,33 @@ class TopPlatformOverlapRule(BaseRule):
     # ------------------------------------------------------------------
     # Построение области по контактам
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _upright_angle(platform):
+        """Угол платформы, приведённый к вертикальной ориентации.
+
+        ``mask_orientation`` возвращает угол *длинной* оси mask, поэтому у
+        вертикально стоящей детали он равен ~90°, и рабочая система
+        координат ложится набок: стороны L/R и T/B меняются местами, а
+        ``expand_x/y_ratio`` начинают растягивать область поперёк
+        ожидаемого направления.
+
+        Платформа всегда стоит вертикально, поэтому угол нормализуется в
+        диапазон ``[-45, 45]``: ось X рабочей системы совпадает с
+        горизонталью детали (стороны L/R), ось Y — с вертикалью (T/B).
+        Небольшой физический наклон детали при этом сохраняется.
+        """
+        angle = mask_orientation(platform)
+        if angle is None:
+            return None
+        angle = float(angle) % 180.0
+        if angle >= 90.0:
+            angle -= 180.0
+        if angle > 45.0:
+            angle -= 90.0
+        elif angle < -45.0:
+            angle += 90.0
+        return angle
 
     @staticmethod
     def _rotate_point(point, center, angle_deg):
