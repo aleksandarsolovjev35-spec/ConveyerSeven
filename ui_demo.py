@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import threading
+from collections import deque
 from types import SimpleNamespace
 import time
 
@@ -97,6 +98,7 @@ class UiDemo:
         self.exit_requested = False
         self.step = 0
         self.parts = []
+        self.recent_parts = deque(maxlen=10)
         self.next_part = 1
         self.good = 0
         self.bad = 0
@@ -266,7 +268,10 @@ class UiDemo:
             vision_results={},
             rule_results=[],
             line_status=self.line_status(),
-            recent_parts=[],
+            # The real cycle keeps the last ten completed parts.  Passing an
+            # empty list here made the demo history stay permanently blank,
+            # hiding whether sorting had actually happened.
+            recent_parts=list(self.recent_parts),
         )
 
     def start(self):
@@ -537,10 +542,19 @@ class UiDemo:
                     cat = part.get("target_category", "GOOD")
                     if cat == "GOOD":
                         self.good += 1
+                        decision = "none"
                     elif cat == "BAD":
                         self.bad += 1
+                        decision = "demo_defect"
                     else:
                         self.cleanup += 1
+                        decision = "cleanup"
+                    self.recent_parts.append({
+                        "id": part["id"],
+                        "category": cat,
+                        "decision": decision,
+                        "time": time.time(),
+                    })
 
                 # Симуляция распределителей: подсветка при сортировке.
                 parts_at_reject = [p for p in self.parts if p["position"] == 7]
