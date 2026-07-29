@@ -336,6 +336,7 @@ function maybeRequestMainFrame() {
     mainBufferLoading     = true;
     mainBufferRequestRole = state.currentCamera;
     mainBufferRequestView = state.mode;
+    mainBufferRequestVersion = state.currentVersion;
 
     const versionQuery = state.mainCamMode === 'live-pull'
         ? `live=1&t=${Date.now()}`
