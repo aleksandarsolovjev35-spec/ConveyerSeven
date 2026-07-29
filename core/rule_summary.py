@@ -228,8 +228,14 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             ))
 
     elif rule_name in ("glass", "glass_on_contacts"):
-        hits = role_details.get("hits") or role_details.get("pairs") or []
-        add(_metric("совпадений стекла", len(hits), 0, ok=not hits))
+        # ``glass`` stores each cleanup overlap in ``hits``.  In contrast,
+        # ``glass_on_contacts`` intentionally exposes ``hits`` as a numeric
+        # count of glasses and the individual overlaps in ``pairs``.  Prefer
+        # the collection so the HMI never calls len() on that count.
+        overlaps = role_details.get("pairs") or role_details.get("hits") or []
+        if not isinstance(overlaps, (list, tuple)):
+            overlaps = []
+        add(_metric("совпадений стекла", len(overlaps), 0, ok=not overlaps))
 
     # Универсальные показатели, если специфичных не нашлось.
     if not metrics:
