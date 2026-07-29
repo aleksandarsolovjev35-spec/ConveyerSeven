@@ -39,6 +39,7 @@ def thresholds(role="SPIDER_LEFT", tilt_limit=0.20):
         f"{role}.spider_contacts_long_inscribed_rect_width_px": 9.6,
         f"{role}.spider_contacts_long_inscribed_rect_height_px": 7.2,
         f"{role}.spider_contacts_long_y_filter_ratio": 3.0,
+        f"{role}.spider_contacts_long_max_level_slope": 0.25,
         f"{role}.spider_long_omission_min_confidence": 0.3,
     }
 
