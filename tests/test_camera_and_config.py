@@ -204,13 +204,20 @@ class CameraAndConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Лишние или неизвестные"):
                 ThresholdLoader(path)
 
-            invalid_boundary = dict(raw)
-            invalid_boundary["TOP"] = dict(raw["TOP"])
-            invalid_boundary["TOP"][
-                "top_platform_overlap_boundary_width_px"
-            ] = 149
-            path = self.write_json(temp, "invalid_boundary.json", invalid_boundary)
-            with self.assertRaisesRegex(ValueError, "не может быть меньше"):
+            invalid_ratio = dict(raw)
+            invalid_ratio["TOP"] = dict(raw["TOP"])
+            invalid_ratio["TOP"][
+                "top_platform_overlap_contact_inner_ratio"
+            ] = 1.5
+            path = self.write_json(temp, "invalid_ratio.json", invalid_ratio)
+            with self.assertRaisesRegex(ValueError, "должен быть 0..1"):
+                ThresholdLoader(path)
+
+            invalid_expand = dict(raw)
+            invalid_expand["TOP"] = dict(raw["TOP"])
+            invalid_expand["TOP"]["top_platform_overlap_expand_x_ratio"] = 0
+            path = self.write_json(temp, "invalid_expand.json", invalid_expand)
+            with self.assertRaisesRegex(ValueError, "должны быть > 0"):
                 ThresholdLoader(path)
 
             invalid_component = dict(raw)
@@ -279,11 +286,9 @@ class CameraAndConfigTests(unittest.TestCase):
             "TOP.top_contacts_edge_rect_height_px": 28,
             "TOP.top_platform_inscribed_rect_width_px": 260,
             "TOP.top_platform_inscribed_rect_height_px": 120,
-            "TOP.top_platform_overlap_boundary_width_px": 305,
-            "TOP.top_platform_overlap_boundary_height_px": 140,
             "TOP.top_platform_overlap_excess_component_min_px": 3,
             "TOP.top_platform_overlap_contact_min_confidence": 0.3,
-            "TOP.top_platform_overlap_contact_inner_ratio": 0.33,
+            "TOP.top_platform_overlap_contact_inner_ratio": 0.5,
             "TOP.top_platform_overlap_margin_px": 0,
             "TOP.top_platform_overlap_expand_x_ratio": 1.0,
             "TOP.top_platform_overlap_expand_y_ratio": 1.0,
@@ -296,13 +301,13 @@ class CameraAndConfigTests(unittest.TestCase):
             "TOP.top_platform_overlap_contact_min_confidence", thresholds,
         )
         self.assertNotIn("TOP.top_platform_overlap_min_px", thresholds)
-        self.assertGreaterEqual(
-            thresholds["TOP.top_platform_overlap_boundary_width_px"],
-            thresholds["TOP.top_platform_inscribed_rect_width_px"],
+        # Область заплыва строится только по контактам: фиксированные
+        # размеры внешней границы больше не настраиваются.
+        self.assertNotIn(
+            "TOP.top_platform_overlap_boundary_width_px", thresholds,
         )
-        self.assertGreaterEqual(
-            thresholds["TOP.top_platform_overlap_boundary_height_px"],
-            thresholds["TOP.top_platform_inscribed_rect_height_px"],
+        self.assertNotIn(
+            "TOP.top_platform_overlap_boundary_height_px", thresholds,
         )
         for key in (
             "TOP.top_glass_case_min_confidence",

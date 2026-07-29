@@ -48,9 +48,6 @@ class DebugOverlay:
             elif (
                 draw_type == "platform_overlap_platform"
                 and "top_platform_actual" in available_types
-            ) or (
-                draw_type == "platform_overlap_inner_attempt"
-                and "top_platform_inscribed_rect" in available_types
             ):
                 # Более точная отрисовка уже есть в наборе: дубль пропускаем.
                 continue
@@ -219,10 +216,10 @@ class DebugOverlay:
             # --- Platform overlap rule: outer overflow boundary ---
             elif draw_type == "platform_overlap_platform":
                 PlatformOverlapRenderer.draw_platform(img, d)
-            elif draw_type == "platform_overlap_inner_attempt":
-                PlatformOverlapRenderer.draw_inner_attempt(img, d)
             elif draw_type == "platform_overlap_boundary":
                 PlatformOverlapRenderer.draw_boundary(img, d)
+            elif draw_type == "platform_overlap_contact_anchors":
+                PlatformOverlapRenderer.draw_contact_anchors(img, d)
             elif draw_type == "platform_overlap_region":
                 PlatformOverlapRenderer.draw_region(img, d)
 

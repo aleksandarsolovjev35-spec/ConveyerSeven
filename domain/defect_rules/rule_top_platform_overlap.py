@@ -1,4 +1,5 @@
 import math
+
 import cv2
 import numpy as np
 
@@ -7,28 +8,35 @@ from domain.defect_rules.top_geometry import (
     infer_shape,
     largest_valid_mask,
     mask_orientation,
+    mask_points,
     oriented_rectangle_points,
     rasterize_mask,
-    try_inscribe_center_then_nearest,
 )
 
 
 CONTACT_CLASS = "contacts"
+SIDES = ("L", "R", "T", "B")
 
 
 class TopPlatformOverlapRule(BaseRule):
-    """Контроль заплыва platform mask за настраиваемую внешнюю границу.
+    """Контроль заплыва platform mask за область, построенную по контактам.
 
-    Два режима построения границы:
-    1) fallback — концентрический прямоугольник вокруг inscribed_rect
-       (старая логика): ``top_platform_overlap_boundary_width/height_px``.
-    2) contact-based — прямоугольник, построенный через контакты TOP,
-       который задевает одну треть каждого контакта (параметр
-       ``top_platform_overlap_contact_inner_ratio``). Размер области
-       дополнительно меняется через ``margin_px`` и ``expand_x/y_ratio``.
+    Область строится только по контактам TOP: контакты группируются по
+    сторонам платформы (L/R/T/B) в системе координат, повёрнутой на угол
+    платформы. Для каждой стороны берётся медиана опорных точек контактов
+    (по умолчанию ``top_platform_overlap_contact_inner_ratio = 0.5`` —
+    центры контактов), и по этим четырём линиям строится ориентированный
+    прямоугольник. Размер дополнительно правится через ``margin_px``
+    (расширение наружу) и ``expand_x/y_ratio``.
 
-    Если контакты найдены в достаточном количестве (по одному на каждую
-    сторону L/R/T/B), используется contact-based режим, иначе — fallback.
+    Если контактов не хватает хотя бы по одному на каждую сторону,
+    построить область невозможно: правило считает это браком построения
+    (``NO CONTACT RECT``). Концентрический fallback вокруг inscribed rect
+    больше не используется.
+
+    Если платформа пересекает границы этого прямоугольника, срабатывает
+    правило пересечения, а вышедшие за границу пиксели маски платформы
+    выделяются как дефектная область.
     """
 
     name = "platform_contacts_overlap"
@@ -48,22 +56,6 @@ class TopPlatformOverlapRule(BaseRule):
                 "top_platform_overlap_platform_min_confidence", 0.3,
                 role=role,
             )
-            inner_width = self._get(
-                "top_platform_inscribed_rect_width_px", 260,
-                role=role,
-            )
-            inner_height = self._get(
-                "top_platform_inscribed_rect_height_px", 120,
-                role=role,
-            )
-            boundary_width = self._get(
-                "top_platform_overlap_boundary_width_px", 305,
-                role=role,
-            )
-            boundary_height = self._get(
-                "top_platform_overlap_boundary_height_px", 140,
-                role=role,
-            )
             component_min = self._get(
                 "top_platform_overlap_excess_component_min_px", 3,
                 role=role,
@@ -73,7 +65,7 @@ class TopPlatformOverlapRule(BaseRule):
                 role=role,
             )
             contact_inner_ratio = self._get(
-                "top_platform_overlap_contact_inner_ratio", 0.33,
+                "top_platform_overlap_contact_inner_ratio", 0.5,
                 role=role,
             )
             margin_px = self._get(
@@ -104,10 +96,6 @@ class TopPlatformOverlapRule(BaseRule):
                 role=role,
                 platforms=platforms,
                 contacts=contacts,
-                inner_width=float(inner_width),
-                inner_height=float(inner_height),
-                boundary_width=float(boundary_width),
-                boundary_height=float(boundary_height),
                 component_min=int(component_min),
                 contact_inner_ratio=float(contact_inner_ratio),
                 margin_px=float(margin_px),
@@ -131,10 +119,6 @@ class TopPlatformOverlapRule(BaseRule):
         role,
         platforms,
         contacts,
-        inner_width,
-        inner_height,
-        boundary_width,
-        boundary_height,
         component_min,
         contact_inner_ratio,
         margin_px,
@@ -155,6 +139,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "reason": "no_valid_platform",
                 "found": len(platforms),
                 "ignored": 0,
+                "contacts_found": len(contacts),
             }
 
         angle = mask_orientation(platform)
@@ -179,6 +164,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "reason": "invalid_platform_orientation",
                 "found": len(platforms),
                 "ignored": max(0, len(platforms) - 1),
+                "contacts_found": len(contacts),
             }
 
         drawings.append({
@@ -190,7 +176,6 @@ class TopPlatformOverlapRule(BaseRule):
             "triggered": False,
         })
 
-        # Попробовать построить границу через контакты
         contact_boundary = cls._build_boundary_from_contacts(
             platform=platform,
             contacts=contacts,
@@ -201,62 +186,40 @@ class TopPlatformOverlapRule(BaseRule):
             expand_y_ratio=expand_y_ratio,
         )
 
-        if contact_boundary is not None:
-            center = contact_boundary["center"]
-            b_width = contact_boundary["width"]
-            b_height = contact_boundary["height"]
-            boundary = contact_boundary["points"]
-            anchor = "contacts_rectangle"
-            # Для отладки можно нарисовать контакты, но сохраняем
-            # совместимость типов отрисовки: boundary тот же.
-            boundary_center = center
-            used_contacts = contact_boundary["used_contacts"]
-            group_counts = contact_boundary["group_counts"]
-        else:
-            # Fallback — старая концентрическая логика через inscribed rect
-            inner_fit = try_inscribe_center_then_nearest(
-                platform,
-                width_px=inner_width,
-                height_px=inner_height,
-                angle_deg=angle,
+        if contact_boundary is None:
+            group_counts = cls._empty_groups_summary(
+                platform, contacts, angle,
             )
-            if not inner_fit.get("fits") or inner_fit.get("placed_center") is None:
-                if inner_fit.get("points") is not None:
-                    drawings.append({
-                        "type": "platform_overlap_inner_attempt",
-                        "role": role,
-                        "points": inner_fit["points"],
-                        "triggered": True,
-                    })
-                drawings.append({
-                    "type": "construction_error",
-                    "role": role,
-                    "bbox": platform.get("bbox") or [0, 0, 0, 0],
-                    "message": "NO INNER RECT",
-                    "triggered": True,
-                })
-                return {
-                    "triggered": True,
-                    "reason": "inner_platform_reference_not_fitted",
-                    "found": len(platforms),
-                    "ignored": max(0, len(platforms) - 1),
-                    "inner_rect_width_px": inner_width,
-                    "inner_rect_height_px": inner_height,
-                }
+            drawings.append({
+                "type": "construction_error",
+                "role": role,
+                "bbox": platform.get("bbox") or [0, 0, 0, 0],
+                "message": "NO CONTACT RECT",
+                "triggered": True,
+            })
+            return {
+                "triggered": True,
+                "reason": "contact_boundary_not_built",
+                "found": len(platforms),
+                "ignored": max(0, len(platforms) - 1),
+                "anchor": "contacts_rectangle",
+                "angle_deg": round(float(angle), 3),
+                "contacts_found": len(contacts),
+                "used_contacts": 0,
+                "contact_groups": group_counts,
+                "contact_inner_ratio": round(float(contact_inner_ratio), 4),
+                "margin_px": round(float(margin_px), 3),
+                "expand_x_ratio": round(float(expand_x_ratio), 4),
+                "expand_y_ratio": round(float(expand_y_ratio), 4),
+            }
 
-            center = inner_fit["placed_center"]
-            boundary = oriented_rectangle_points(
-                center=center,
-                width_px=boundary_width,
-                height_px=boundary_height,
-                angle_deg=angle,
-            )
-            b_width = boundary_width
-            b_height = boundary_height
-            anchor = "top_platform_inscribed_rect"
-            boundary_center = center
-            used_contacts = 0
-            group_counts = {}
+        center = contact_boundary["center"]
+        b_width = contact_boundary["width"]
+        b_height = contact_boundary["height"]
+        boundary = contact_boundary["points"]
+        used_contacts = contact_boundary["used_contacts"]
+        group_counts = contact_boundary["group_counts"]
+        anchor_points = contact_boundary["anchor_points"]
 
         shape = infer_shape([platform])
         platform_raster = rasterize_mask(platform, shape)
@@ -278,6 +241,16 @@ class TopPlatformOverlapRule(BaseRule):
             "type": "platform_overlap_boundary",
             "role": role,
             "points": boundary_points,
+            "anchor": "contacts_rectangle",
+            "triggered": is_triggered,
+        })
+        drawings.append({
+            "type": "platform_overlap_contact_anchors",
+            "role": role,
+            "points": [
+                [int(round(point[0])), int(round(point[1]))]
+                for point, _group in anchor_points
+            ],
             "triggered": is_triggered,
         })
         if is_triggered:
@@ -292,13 +265,13 @@ class TopPlatformOverlapRule(BaseRule):
             measurement.pop("confirmed_raster")
             measurement.pop("confirmed_contours")
 
-        result = {
+        return {
             "triggered": is_triggered,
             "reason": None,
             "found": len(platforms),
             "ignored": max(0, len(platforms) - 1),
-            "anchor": anchor,
-            "boundary_center": [round(float(v), 3) for v in boundary_center],
+            "anchor": "contacts_rectangle",
+            "boundary_center": [round(float(v), 3) for v in center],
             "angle_deg": round(float(angle), 3),
             "boundary_width_px": round(float(b_width), 3),
             "boundary_height_px": round(float(b_height), 3),
@@ -307,80 +280,15 @@ class TopPlatformOverlapRule(BaseRule):
             "margin_px": round(float(margin_px), 3),
             "expand_x_ratio": round(float(expand_x_ratio), 4),
             "expand_y_ratio": round(float(expand_y_ratio), 4),
+            "contacts_found": len(contacts),
             "used_contacts": int(used_contacts),
             "contact_groups": dict(group_counts),
             **measurement,
         }
-        # Для совместимости со старой телеметрией сохраняем старые ключи,
-        # если использовался fallback.
-        if anchor == "top_platform_inscribed_rect":
-            result["inner_rect_width_px"] = inner_width
-            result["inner_rect_height_px"] = inner_height
-        else:
-            result["inner_rect_width_px"] = inner_width
-            result["inner_rect_height_px"] = inner_height
-        return result
 
     # ------------------------------------------------------------------
-    # Построение границы через контакты
+    # Построение области по контактам
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _group_contacts_by_side(contacts, platform_bbox):
-        """Сгруппировать контакты по сторонам относительно platform bbox.
-
-        Контакты слева (L) имеют центр x < x1 платформы, справа (R) x > x2,
-        сверху (T) y < y1, снизу (B) y > y2. Если bbox контакта внутри
-        платформы (что не должно случаться), отнесение делается по
-        ближайшему к центру стороны.
-        """
-        groups = {"L": [], "R": [], "T": [], "B": []}
-        if not platform_bbox or len(platform_bbox) != 4:
-            return groups
-        px1, py1, px2, py2 = map(float, platform_bbox)
-        pcx = (px1 + px2) * 0.5
-        pcy = (py1 + py2) * 0.5
-        for det in contacts:
-            bbox = det.get("bbox")
-            if not bbox or len(bbox) != 4:
-                continue
-            try:
-                x1, y1, x2, y2 = map(float, bbox)
-            except Exception:
-                continue
-            if x2 <= x1 or y2 <= y1:
-                continue
-            cx = (x1 + x2) * 0.5
-            cy = (y1 + y2) * 0.5
-            # Кандидаты по расстоянию до сторон
-            candidates = []
-            if cx < px1:
-                candidates.append((px1 - cx, "L"))
-            if cx > px2:
-                candidates.append((cx - px2, "R"))
-            if cy < py1:
-                candidates.append((py1 - cy, "T"))
-            if cy > py2:
-                candidates.append((cy - py2, "B"))
-            if candidates:
-                _, g = min(candidates, key=lambda it: it[0])
-                groups[g].append(det)
-            else:
-                # Внутри bbox платформы — определить по более удалённой оси
-                dx = abs(cx - pcx)
-                dy = abs(cy - pcy)
-                if dx > dy:
-                    groups["L" if cx < pcx else "R"].append(det)
-                else:
-                    groups["T" if cy < pcy else "B"].append(det)
-        return groups
-
-    @staticmethod
-    def _median(values):
-        if not values:
-            return None
-        arr = np.asarray(values, dtype=float)
-        return float(np.median(arr))
 
     @staticmethod
     def _rotate_point(point, center, angle_deg):
@@ -398,6 +306,127 @@ class TopPlatformOverlapRule(BaseRule):
         ry = dx * sin_a + dy * cos_a
         return (cx + rx, cy + ry)
 
+    @staticmethod
+    def _median(values):
+        if not values:
+            return None
+        return float(np.median(np.asarray(values, dtype=float)))
+
+    @classmethod
+    def _platform_frame(cls, platform, angle_deg):
+        """Центр платформы и её габариты в повёрнутой системе координат."""
+        points = mask_points(platform)
+        if points is None:
+            return None
+        center, _size, _angle = cv2.minAreaRect(points)
+        center = (float(center[0]), float(center[1]))
+        rotated = [
+            cls._rotate_point(point, center, -float(angle_deg))
+            for point in points
+        ]
+        xs = [point[0] for point in rotated]
+        ys = [point[1] for point in rotated]
+        return {
+            "center": center,
+            "x_min": min(xs),
+            "x_max": max(xs),
+            "y_min": min(ys),
+            "y_max": max(ys),
+        }
+
+    @classmethod
+    def _contact_frame(cls, detection, center, angle_deg):
+        """Габариты bbox контакта в повёрнутой системе координат."""
+        bbox = detection.get("bbox")
+        if not bbox or len(bbox) != 4:
+            return None
+        try:
+            x1, y1, x2, y2 = map(float, bbox)
+        except (TypeError, ValueError):
+            return None
+        if x2 <= x1 or y2 <= y1:
+            return None
+        corners = ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
+        rotated = [
+            cls._rotate_point(corner, center, -float(angle_deg))
+            for corner in corners
+        ]
+        xs = [point[0] for point in rotated]
+        ys = [point[1] for point in rotated]
+        return {
+            "x_min": min(xs),
+            "x_max": max(xs),
+            "y_min": min(ys),
+            "y_max": max(ys),
+            "cx": (min(xs) + max(xs)) * 0.5,
+            "cy": (min(ys) + max(ys)) * 0.5,
+        }
+
+    @staticmethod
+    def _side_for(contact_frame, platform_frame):
+        """Определить сторону платформы, с которой стоит контакт."""
+        cx = contact_frame["cx"]
+        cy = contact_frame["cy"]
+        candidates = []
+        if cx < platform_frame["x_min"]:
+            candidates.append((platform_frame["x_min"] - cx, "L"))
+        if cx > platform_frame["x_max"]:
+            candidates.append((cx - platform_frame["x_max"], "R"))
+        if cy < platform_frame["y_min"]:
+            candidates.append((platform_frame["y_min"] - cy, "T"))
+        if cy > platform_frame["y_max"]:
+            candidates.append((cy - platform_frame["y_max"], "B"))
+        if candidates:
+            # Сторона, от которой контакт отстоит дальше всего наружу.
+            return max(candidates, key=lambda item: item[0])[1]
+        # Контакт внутри габарита платформы — решаем по дальней оси.
+        center_x = (platform_frame["x_min"] + platform_frame["x_max"]) * 0.5
+        center_y = (platform_frame["y_min"] + platform_frame["y_max"]) * 0.5
+        half_width = max(1e-6, (platform_frame["x_max"] - platform_frame["x_min"]) * 0.5)
+        half_height = max(1e-6, (platform_frame["y_max"] - platform_frame["y_min"]) * 0.5)
+        if abs(cx - center_x) / half_width >= abs(cy - center_y) / half_height:
+            return "L" if cx < center_x else "R"
+        return "T" if cy < center_y else "B"
+
+    @classmethod
+    def _group_contacts_by_side(cls, contacts, platform_frame, angle_deg):
+        """Сгруппировать контакты по сторонам платформы."""
+        groups = {side: [] for side in SIDES}
+        if platform_frame is None:
+            return groups
+        for detection in contacts:
+            frame = cls._contact_frame(
+                detection, platform_frame["center"], angle_deg,
+            )
+            if frame is None:
+                continue
+            groups[cls._side_for(frame, platform_frame)].append(frame)
+        return groups
+
+    @classmethod
+    def _empty_groups_summary(cls, platform, contacts, angle_deg):
+        platform_frame = cls._platform_frame(platform, angle_deg)
+        groups = cls._group_contacts_by_side(
+            contacts, platform_frame, angle_deg,
+        )
+        return {side: len(items) for side, items in groups.items()}
+
+    @staticmethod
+    def _anchor_value(frame, side, inner_ratio):
+        """Опорная координата контакта по его стороне.
+
+        ``inner_ratio = 0.5`` даёт центр контакта, ``0`` — внутреннюю
+        (обращённую к платформе) кромку, ``1`` — внешнюю кромку.
+        """
+        ratio = float(inner_ratio)
+        if side == "L":
+            return frame["x_max"] - (frame["x_max"] - frame["x_min"]) * ratio
+        if side == "R":
+            return frame["x_min"] + (frame["x_max"] - frame["x_min"]) * ratio
+        if side == "T":
+            return frame["y_max"] - (frame["y_max"] - frame["y_min"]) * ratio
+        return frame["y_min"] + (frame["y_max"] - frame["y_min"]) * ratio
+
     @classmethod
     def _build_boundary_from_contacts(
         cls,
@@ -410,177 +439,82 @@ class TopPlatformOverlapRule(BaseRule):
         expand_x_ratio,
         expand_y_ratio,
     ):
-        """Построить ориентированный прямоугольник через контакты.
-
-        Для каждого контакта вычисляется точка на его внутренней трети:
-        - L: x = x2 - w*ratio, y = cy
-        - R: x = x1 + w*ratio, y = cy
-        - T: x = cx, y = y2 - h*ratio
-        - B: x = cx, y = y1 + h*ratio
-
-        Затем все точки поворачиваются на -angle вокруг центра платформы,
-        и медиана по каждой стороне даёт границы в повёрнутой системе.
-        После применения margin и expand прямоугольник возвращается в
-        исходную систему координат.
-        """
+        """Построить ориентированный прямоугольник по контактам."""
         if not contacts:
             return None
-        platform_bbox = platform.get("bbox")
-        if not platform_bbox or len(platform_bbox) != 4:
+        platform_frame = cls._platform_frame(platform, angle_deg)
+        if platform_frame is None:
             return None
-        try:
-            px1, py1, px2, py2 = map(float, platform_bbox)
-        except Exception:
-            return None
-        if px2 <= px1 or py2 <= py1:
-            return None
-        p_center = ((px1 + px2) * 0.5, (py1 + py2) * 0.5)
+        p_center = platform_frame["center"]
 
-        groups = cls._group_contacts_by_side(contacts, platform_bbox)
-        # Требуется хотя бы по одному контакту на каждую сторону для
-        # стабильного прямоугольника.
-        if not all(len(groups[g]) > 0 for g in ("L", "R", "T", "B")):
+        groups = cls._group_contacts_by_side(
+            contacts, platform_frame, angle_deg,
+        )
+        group_counts = {side: len(items) for side, items in groups.items()}
+        if not all(group_counts[side] > 0 for side in SIDES):
             return None
 
-        # Сбор inset точек и значений для медианы
-        inset_points = []  # list of (point, group)
-        l_vals = []
-        r_vals = []
-        t_vals = []
-        b_vals = []
+        values = {side: [] for side in SIDES}
+        anchor_points = []
+        for side in SIDES:
+            for frame in groups[side]:
+                value = cls._anchor_value(frame, side, inner_ratio)
+                values[side].append(value)
+                rotated_point = (
+                    (value, frame["cy"]) if side in ("L", "R")
+                    else (frame["cx"], value)
+                )
+                anchor_points.append((
+                    cls._rotate_point(
+                        rotated_point, p_center, float(angle_deg),
+                    ),
+                    side,
+                ))
 
-        for det in groups["L"]:
-            bbox = det.get("bbox")
-            if not bbox:
-                continue
-            x1, y1, x2, y2 = map(float, bbox)
-            w = x2 - x1
-            inset_x = x2 - w * float(inner_ratio)
-            cy = (y1 + y2) * 0.5
-            pt = (inset_x, cy)
-            inset_points.append((pt, "L"))
-            l_vals.append(inset_x)
-
-        for det in groups["R"]:
-            bbox = det.get("bbox")
-            if not bbox:
-                continue
-            x1, y1, x2, y2 = map(float, bbox)
-            w = x2 - x1
-            inset_x = x1 + w * float(inner_ratio)
-            cy = (y1 + y2) * 0.5
-            pt = (inset_x, cy)
-            inset_points.append((pt, "R"))
-            r_vals.append(inset_x)
-
-        for det in groups["T"]:
-            bbox = det.get("bbox")
-            if not bbox:
-                continue
-            x1, y1, x2, y2 = map(float, bbox)
-            h = y2 - y1
-            inset_y = y2 - h * float(inner_ratio)
-            cx = (x1 + x2) * 0.5
-            pt = (cx, inset_y)
-            inset_points.append((pt, "T"))
-            t_vals.append(inset_y)
-
-        for det in groups["B"]:
-            bbox = det.get("bbox")
-            if not bbox:
-                continue
-            x1, y1, x2, y2 = map(float, bbox)
-            h = y2 - y1
-            inset_y = y1 + h * float(inner_ratio)
-            cx = (x1 + x2) * 0.5
-            pt = (cx, inset_y)
-            inset_points.append((pt, "B"))
-            b_vals.append(inset_y)
-
-        if not (l_vals and r_vals and t_vals and b_vals):
+        left = cls._median(values["L"])
+        right = cls._median(values["R"])
+        top = cls._median(values["T"])
+        bottom = cls._median(values["B"])
+        if None in (left, right, top, bottom):
+            return None
+        if left >= right or top >= bottom:
             return None
 
-        # Поворот точек на -angle вокруг центра платформы для вычисления
-        # границ в системе координат, выровненной с платформой.
-        rotated_l_x = []
-        rotated_r_x = []
-        rotated_t_y = []
-        rotated_b_y = []
-
-        for pt, group in inset_points:
-            rpt = cls._rotate_point(pt, p_center, -float(angle_deg))
-            if rpt is None:
-                continue
-            if group == "L":
-                rotated_l_x.append(rpt[0])
-            elif group == "R":
-                rotated_r_x.append(rpt[0])
-            elif group == "T":
-                rotated_t_y.append(rpt[1])
-            elif group == "B":
-                rotated_b_y.append(rpt[1])
-
-        left_rot = cls._median(rotated_l_x)
-        right_rot = cls._median(rotated_r_x)
-        top_rot = cls._median(rotated_t_y)
-        bottom_rot = cls._median(rotated_b_y)
-
-        if None in (left_rot, right_rot, top_rot, bottom_rot):
-            return None
-        if left_rot >= right_rot or top_rot >= bottom_rot:
+        # margin расширяет область наружу по всем сторонам
+        left -= float(margin_px)
+        right += float(margin_px)
+        top -= float(margin_px)
+        bottom += float(margin_px)
+        if right - left <= 0 or bottom - top <= 0:
             return None
 
-        # Применить margin (расширение наружу)
-        left_rot -= float(margin_px)
-        right_rot += float(margin_px)
-        top_rot -= float(margin_px)
-        bottom_rot += float(margin_px)
-
-        width0 = right_rot - left_rot
-        height0 = bottom_rot - top_rot
-        if width0 <= 0 or height0 <= 0:
+        center_x = (left + right) * 0.5
+        center_y = (top + bottom) * 0.5
+        width = (right - left) * float(expand_x_ratio)
+        height = (bottom - top) * float(expand_y_ratio)
+        if width <= 0 or height <= 0:
             return None
 
-        # Применить expand коэффициенты
-        center_rot_x = (left_rot + right_rot) * 0.5
-        center_rot_y = (top_rot + bottom_rot) * 0.5
-        width_exp = width0 * float(expand_x_ratio)
-        height_exp = height0 * float(expand_y_ratio)
-        if width_exp <= 0 or height_exp <= 0:
-            return None
-
-        left_rot = center_rot_x - width_exp * 0.5
-        right_rot = center_rot_x + width_exp * 0.5
-        top_rot = center_rot_y - height_exp * 0.5
-        bottom_rot = center_rot_y + height_exp * 0.5
-
-        # Центр в повёрнутой системе
-        center_rot = (center_rot_x, center_rot_y)
-
-        # Вернуть центр в исходную систему
-        center_orig = cls._rotate_point(center_rot, p_center, float(angle_deg))
+        center_orig = cls._rotate_point(
+            (center_x, center_y), p_center, float(angle_deg),
+        )
         if center_orig is None:
             return None
 
-        # Построить ориентированный прямоугольник
         points = oriented_rectangle_points(
             center=center_orig,
-            width_px=width_exp,
-            height_px=height_exp,
+            width_px=width,
+            height_px=height,
             angle_deg=float(angle_deg),
         )
-
         return {
             "center": center_orig,
-            "width": width_exp,
-            "height": height_exp,
+            "width": width,
+            "height": height,
             "points": points,
-            "used_contacts": len(inset_points),
-            "group_counts": {k: len(v) for k, v in groups.items()},
-            "left_rot": left_rot,
-            "right_rot": right_rot,
-            "top_rot": top_rot,
-            "bottom_rot": bottom_rot,
+            "used_contacts": len(anchor_points),
+            "group_counts": group_counts,
+            "anchor_points": anchor_points,
         }
 
     @staticmethod

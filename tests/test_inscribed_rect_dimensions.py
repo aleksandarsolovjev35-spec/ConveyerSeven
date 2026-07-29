@@ -96,25 +96,28 @@ class InscribedRectangleDimensionTests(unittest.TestCase):
         self.assertEqual(kwargs["rect_width"], 180.0)
         self.assertEqual(kwargs["rect_height"], 70.0)
 
-    def test_top_platform_overlap_passes_editable_outer_boundary(self):
+    def test_top_platform_overlap_passes_editable_contact_area_settings(self):
         rule = TopPlatformOverlapRule({
-            "TOP.top_platform_inscribed_rect_width_px": 260,
-            "TOP.top_platform_inscribed_rect_height_px": 120,
             "TOP.top_platform_overlap_platform_min_confidence": 0.3,
-            "TOP.top_platform_overlap_boundary_width_px": 281,
-            "TOP.top_platform_overlap_boundary_height_px": 142,
             "TOP.top_platform_overlap_excess_component_min_px": 5,
+            "TOP.top_platform_overlap_contact_min_confidence": 0.4,
+            "TOP.top_platform_overlap_contact_inner_ratio": 0.5,
+            "TOP.top_platform_overlap_margin_px": 4,
+            "TOP.top_platform_overlap_expand_x_ratio": 1.1,
+            "TOP.top_platform_overlap_expand_y_ratio": 0.9,
         })
         with patch.object(
             rule, "_check_role", return_value={"triggered": False},
         ) as check_role:
             rule.check({"TOP": []})
         kwargs = check_role.call_args.kwargs
-        self.assertEqual(kwargs["inner_width"], 260.0)
-        self.assertEqual(kwargs["inner_height"], 120.0)
-        self.assertEqual(kwargs["boundary_width"], 281.0)
-        self.assertEqual(kwargs["boundary_height"], 142.0)
         self.assertEqual(kwargs["component_min"], 5)
+        self.assertEqual(kwargs["contact_inner_ratio"], 0.5)
+        self.assertEqual(kwargs["margin_px"], 4.0)
+        self.assertEqual(kwargs["expand_x_ratio"], 1.1)
+        self.assertEqual(kwargs["expand_y_ratio"], 0.9)
+        self.assertNotIn("boundary_width", kwargs)
+        self.assertNotIn("inner_width", kwargs)
 
 
 if __name__ == "__main__":

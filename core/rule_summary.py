@@ -178,6 +178,10 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             "макс. компонент",
             role_details.get("largest_component_pixels"), unit=" px",
         ))
+        add(_metric(
+            "контакты области",
+            role_details.get("used_contacts"),
+        ))
 
     elif rule_name == "window_geometry":
         top_limits = role_details.get("top_limits_px") or []
@@ -257,6 +261,7 @@ _REASON_TEXT = {
     "empty_case_ring": "пустое кольцо корпуса",
     "case_central_not_inside_case": "смещён центр корпуса",
     "inner_platform_reference_not_fitted": "не построен эталон платформы",
+    "contact_boundary_not_built": "область по контактам не построена",
 }
 
 

@@ -832,9 +832,15 @@ def rule_report_row(result, required_roles=()) -> dict:
             if reason == "invalid_platform_orientation":
                 overflow_rows.append(f"{role}: не построена orientation platform")
                 continue
-            if reason == "inner_platform_reference_not_fitted":
+            if reason == "contact_boundary_not_built":
+                groups = role_details.get("contact_groups") or {}
+                group_text = "/".join(
+                    f"{side}{int(groups.get(side) or 0)}"
+                    for side in ("L", "R", "T", "B")
+                )
                 overflow_rows.append(
-                    f"{role}: не построен inner rectangle 260x120px"
+                    f"{role}: область по контактам не построена "
+                    f"({group_text})"
                 )
                 continue
             overflow_rows.append(
@@ -952,6 +958,7 @@ def rule_report_row(result, required_roles=()) -> dict:
             "triggered", "reason", "boundary_width_px",
             "boundary_height_px", "excess_component_min_px",
             "largest_component_pixels", "excess_pixels",
+            "used_contacts", "contact_groups",
         )
         reported_details = {
             "per_role": {

@@ -87,8 +87,6 @@ TOP_PARAMETER_NAMES = (
     "top_platform_inscribed_rect_width_px",
     "top_platform_inscribed_rect_height_px",
     "top_platform_overlap_platform_min_confidence",
-    "top_platform_overlap_boundary_width_px",
-    "top_platform_overlap_boundary_height_px",
     "top_platform_overlap_excess_component_min_px",
     "top_platform_overlap_contact_min_confidence",
     "top_platform_overlap_contact_inner_ratio",
@@ -268,32 +266,14 @@ class ThresholdLoader:
                 type(value) is not int or value <= 0
             ):
                 raise ValueError(f"{key} должен быть целым числом > 0")
-            if (
-                "inscribed_rect_" in key
-                or "overlap_boundary_" in key
-            ) and float(value) <= 0.0:
+            if "inscribed_rect_" in key and float(value) <= 0.0:
                 raise ValueError(f"{key} должен быть числом > 0")
             if key.endswith("_excess_component_min_px") and (
                 type(value) is not int or value < 1
             ):
                 raise ValueError(f"{key} должен быть целым числом >= 1")
 
-        inner_width = data["TOP.top_platform_inscribed_rect_width_px"]
-        inner_height = data["TOP.top_platform_inscribed_rect_height_px"]
-        boundary_width = data["TOP.top_platform_overlap_boundary_width_px"]
-        boundary_height = data["TOP.top_platform_overlap_boundary_height_px"]
-        if float(boundary_width) < float(inner_width):
-            raise ValueError(
-                "TOP.top_platform_overlap_boundary_width_px не может быть "
-                "меньше top_platform_inscribed_rect_width_px"
-            )
-        if float(boundary_height) < float(inner_height):
-            raise ValueError(
-                "TOP.top_platform_overlap_boundary_height_px не может быть "
-                "меньше top_platform_inscribed_rect_height_px"
-            )
-
-        # Новые пороги для построения области через контакты
+        # Пороги построения области заплыва через контакты
         contact_inner = data["TOP.top_platform_overlap_contact_inner_ratio"]
         if not 0.0 <= float(contact_inner) <= 1.0:
             raise ValueError(
