@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import random
+import tempfile
 import threading
+from collections import deque
+from pathlib import Path
 from types import SimpleNamespace
 import time
 
@@ -71,10 +75,67 @@ ROLES = (
     "INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT",
     "SPIDER_IN", "SPIDER_OUT", "TOP",
 )
+
+# Keep the demo clock aligned with the production cycle.  These are elapsed
+# times, not ``sleep`` durations: a delayed UI/webview must never make the
+# simulator run faster (or execute several steps in a burst).
+STEP_SECONDS = 2.0
+REVIEW_SECONDS = 5.0
+TICK_SECONDS = 0.05
+
 COLORS = (
     (55, 75, 95), (65, 95, 70), (90, 65, 75), (80, 80, 45),
     (70, 55, 100), (45, 90, 95), (95, 70, 45),
 )
+
+
+class DemoArchive:
+    """Small file-backed archive so demo history cards are actually usable."""
+
+    def __init__(self, frames):
+        self._tempdir = tempfile.TemporaryDirectory(prefix="conveyer-seven-demo-")
+        self.root = Path(self._tempdir.name)
+        self.records = {}
+        for role, frame in frames.items():
+            path = self.root / f"{role}.jpg"
+            cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+
+    def add(self, part_id, category, decision):
+        part_id = int(part_id)
+        record = {
+            "category": category,
+            "decision": decision,
+            "time": time.time(),
+        }
+        self.records[part_id] = record
+        folder = self.root / str(part_id)
+        folder.mkdir(exist_ok=True)
+        (folder / "meta.json").write_text(
+            json.dumps(record, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def get_part_info(self, part_id):
+        part_id = int(part_id)
+        if part_id not in self.records:
+            return None
+        return {"folder": str(self.root / str(part_id))}
+
+    def get_part_images(self, part_id):
+        if int(part_id) not in self.records:
+            return {}
+        return {
+            role: {
+                "raw": str(self.root / f"{role}.jpg"),
+                "debug": str(self.root / f"{role}.jpg"),
+            }
+            for role in ROLES
+        }
+
+    def metadata(self, part_id):
+        return dict(self.records.get(int(part_id), {}))
+
+    def close(self):
+        self._tempdir.cleanup()
 
 
 class UiDemo:
@@ -89,6 +150,7 @@ class UiDemo:
         self.exit_requested = False
         self.step = 0
         self.parts = []
+        self.recent_parts = deque(maxlen=10)
         self.next_part = 1
         self.good = 0
         self.bad = 0
@@ -100,6 +162,7 @@ class UiDemo:
         self.dist2_state = "IDLE"
         self.dist_target = "BAD"
         self.dist_action = "ДЕМО-РЕЖИМ"
+        self.diagnostic_busy = False
         self.jog_active = False
         self.jog_busy = False
         self.jog_direction = None
@@ -113,6 +176,11 @@ class UiDemo:
             "updated_at": None,
         }
         self.frames = self._make_frames()
+        self.archive = DemoArchive(self.frames)
+        self._next_step_at = 0.0
+        self._review_until = 0.0
+        self._paused_step_remaining = None
+        self._paused_review_remaining = None
         self.thread = threading.Thread(target=self._loop, daemon=True)
 
     @staticmethod
@@ -135,7 +203,13 @@ class UiDemo:
         return frames
 
     def controls(self):
-        prestart = self.state in {"IDLE", "STOPPED"} and not self.parts and not self.jog_busy and not self.selected_analysis
+        prestart = (
+            self.state in {"IDLE", "STOPPED"}
+            and not self.parts
+            and not self.jog_busy
+            and not self.selected_analysis
+            and not self.diagnostic_busy
+        )
         return {
             "start": prestart,
             "stop": self.state in {"RUNNING", "PAUSED"},
@@ -229,7 +303,7 @@ class UiDemo:
             "distributor_state": self.dist1_state,
             "process": dict(self.process),
             "diagnostic_allowed": prestart,
-            "diagnostic_busy": False,
+            "diagnostic_busy": self.diagnostic_busy,
             "controls": self.controls(),
             "selected_analysis": {
                 "active": self.selected_analysis,
@@ -256,7 +330,10 @@ class UiDemo:
             vision_results={},
             rule_results=[],
             line_status=self.line_status(),
-            recent_parts=[],
+            # The real cycle keeps the last ten completed parts.  Passing an
+            # empty list here made the demo history stay permanently blank,
+            # hiding whether sorting had actually happened.
+            recent_parts=list(self.recent_parts),
         )
 
     def start(self):
@@ -265,6 +342,13 @@ class UiDemo:
                 return False
             self.jog_active = False
             self.state = "RUNNING"
+            # Start a fresh monotonic schedule.  Using a deadline instead of
+            # resetting a counter in the worker prevents a slow status/render
+            # callback from causing an immediate double step.
+            self._next_step_at = time.monotonic() + STEP_SECONDS
+            self._review_until = 0.0
+            self._paused_step_remaining = None
+            self._paused_review_remaining = None
             if self.diagnostics.get("kind") == "SELECTED_MODEL":
                 self.diagnostics = {
                     "status": "NOT_RUN",
@@ -284,6 +368,10 @@ class UiDemo:
             if self.state not in {"RUNNING", "PAUSED"}:
                 return False
             self.state = "STOPPING"
+            # Production exits REVIEW immediately on STOP and drains only
+            # already present parts.  Do the same instead of keeping the UI
+            # stuck on a five-second review countdown.
+            self._review_until = 0.0
             self.process = self._process("DRAINING", "Опорожнение демонстрационной линии")
             self.publish()
         return True
@@ -292,6 +380,14 @@ class UiDemo:
         with self.lock:
             if self.state != "RUNNING":
                 return False
+            now = time.monotonic()
+            self._paused_step_remaining = max(0.0, self._next_step_at - now)
+            self._paused_review_remaining = (
+                max(0.0, self._review_until - now)
+                if self._review_until else None
+            )
+            self._next_step_at = 0.0
+            self._review_until = 0.0
             self.state = "PAUSED"
             self.process = self._process(
                 "PAUSED",
@@ -305,6 +401,16 @@ class UiDemo:
         with self.lock:
             if self.state != "PAUSED":
                 return False
+            now = time.monotonic()
+            if self._paused_review_remaining is not None:
+                self._review_until = now + self._paused_review_remaining
+            else:
+                self._next_step_at = now + max(
+                    STEP_SECONDS,
+                    self._paused_step_remaining or 0.0,
+                )
+            self._paused_step_remaining = None
+            self._paused_review_remaining = None
             self.state = "RUNNING"
             self.process = self._process(
                 "RESUMED",
@@ -321,7 +427,10 @@ class UiDemo:
 
     def jog_enter(self):
         with self.lock:
-            if self.state not in {"IDLE", "STOPPED", "PAUSED"}:
+            if (
+                self.state not in {"IDLE", "STOPPED", "PAUSED"}
+                or self.selected_analysis
+            ):
                 return False
             self.jog_active = True
             self.publish()
@@ -361,29 +470,50 @@ class UiDemo:
             "DIST1_HOME": ("dist1", 0), "DIST1_OPEN": ("dist1", 340),
             "DIST2_BAD": ("dist2", 0), "DIST2_CLEANUP": ("dist2", 340),
         }
-        if command not in targets or not self.controls()["distributor_diagnostic"]:
-            return False
-        name, target = targets[command]
-        if command == "DIST2_BAD":
-            self.dist_target = "BAD"
-        elif command == "DIST2_CLEANUP":
-            self.dist_target = "CLEANUP"
-        for value in range(0, 11):
-            position = round((self.dist1 if name == "dist1" else self.dist2) + (target - (self.dist1 if name == "dist1" else self.dist2)) * value / 10)
+        with self.lock:
+            if (
+                command not in targets
+                or not self.controls()["distributor_diagnostic"]
+                or self.diagnostic_busy
+            ):
+                return False
+            self.diagnostic_busy = True
+            name, target = targets[command]
+            # A second diagnostic command must start from the position that
+            # was actually reached by the previous command.
+            start_position = self.dist1 if name == "dist1" else self.dist2
+            if command == "DIST2_BAD":
+                self.dist_target = "BAD"
+            elif command == "DIST2_CLEANUP":
+                self.dist_target = "CLEANUP"
+            self.publish()
+        try:
+            for value in range(0, 11):
+                # Interpolate from a stable origin.  The old code used the
+                # current position for every iteration, so it only travelled
+                # ~65% of the route and visibly stopped short of the marker.
+                position = round(start_position + (target - start_position) * value / 10)
+                with self.lock:
+                    if name == "dist1":
+                        self.dist1 = position
+                        self.dist1_state = "MOVING" if value < 10 else "IDLE"
+                    else:
+                        self.dist2 = position
+                        self.dist2_state = "MOVING" if value < 10 else "IDLE"
+                    self.dist_action = f"ДЕМО {command}"
+                    self.publish()
+                if value < 10:
+                    time.sleep(0.03)
+        finally:
             with self.lock:
-                if name == "dist1":
-                    self.dist1 = position
-                    self.dist1_state = "MOVING" if value < 10 else "IDLE"
-                else:
-                    self.dist2 = position
-                    self.dist2_state = "MOVING" if value < 10 else "IDLE"
-                self.dist_action = f"ДЕМО {command}"
+                self.diagnostic_busy = False
                 self.publish()
-            time.sleep(0.03)
         return True
 
     def check_cameras(self):
         with self.lock:
+            if not self.controls()["camera_diagnostic"]:
+                return False
             self.diagnostics = {
                 "status": "PASSED", "kind": "CAMERAS",
                 "message": "Демо-режим: семь синтетических камер",
@@ -395,6 +525,8 @@ class UiDemo:
 
     def check_vision_rules(self):
         with self.lock:
+            if not self.controls()["vision_rule_diagnostic"]:
+                return False
             self.diagnostics = {
                 "status": "PASSED", "kind": "VISION_RULES",
                 "message": "Демонстрационный отчёт моделей и правил",
@@ -408,6 +540,8 @@ class UiDemo:
 
     def analyze_selected(self, role):
         with self.lock:
+            if role not in ROLES or not self.controls()["selected_model_analysis"]:
+                return False
             self.selected_analysis = True
             self.selected_role = role
             self.diagnostics = {
@@ -444,101 +578,134 @@ class UiDemo:
         return True
 
     def _loop(self):
-        last_step = time.monotonic()
-        review_until = 0.0
-        while not self.stop_event.wait(0.1):
+        while not self.stop_event.wait(TICK_SECONDS):
             with self.lock:
                 if self.state not in {"RUNNING", "STOPPING"}:
                     continue
                 now = time.monotonic()
-                if now < review_until:
-                    # Пауза на просмотр результатов анализа, как REVIEW_SECONDS.
-                    left = int(review_until - now + 0.999)
-                    active_cam_pos = [
-                        p["position"] for p in self.parts
-                        if p["position"] in {0, 4}
-                    ]
-                    self.process = self._process(
-                        "ANALYSIS_REVIEW",
-                        f"Просмотр результатов анализа: {left} с до следующего шага",
-                        active_cam_pos,
-                    )
-                    continue
-                if now - last_step >= 2.0:
-                    last_step = time.monotonic()
-                    self.step += 1
-                    for part in self.parts:
-                        part["position"] += 1
-                    # Обновление категории после SPIDER-контроля (позиция ≥ 4)
-                    for part in self.parts:
-                        if part["position"] >= 4 and part["category"] == "UNKNOWN":
-                            part["category"] = part.get("target_category", "GOOD")
-                    # Подсчёт сошедших деталей по категории
-                    finished = [part for part in self.parts if part["position"] > 7]
-                    self.parts = [part for part in self.parts if part["position"] <= 7]
-                    for part in finished:
-                        cat = part.get("target_category", "GOOD")
-                        if cat == "GOOD":
-                            self.good += 1
-                        elif cat == "BAD":
-                            self.bad += 1
-                        else:
-                            self.cleanup += 1
-                    # Симуляция распределителей: подсветка при сортировке
-                    parts_at_reject = [p for p in self.parts if p["position"] == 7]
-                    if parts_at_reject:
-                        part = parts_at_reject[0]
-                        if part["category"] == "BAD":
-                            self.dist1 = 340
-                            self.dist1_state = "IDLE"
-                            self.dist2 = 0
-                            self.dist2_state = "IDLE"
-                            self.dist_target = "BAD"
-                            self.dist_action = f"СБРОС #{part['id']} → БРАК"
-                        elif part["category"] == "CLEANUP":
-                            self.dist1 = 340
-                            self.dist1_state = "IDLE"
-                            self.dist2 = 340
-                            self.dist2_state = "IDLE"
-                            self.dist_target = "CLEANUP"
-                            self.dist_action = f"СБРОС #{part['id']} → ОЧИСТКА"
-                        else:
-                            self.dist1 = 0
-                            self.dist1_state = "IDLE"
-                            self.dist2 = 0
-                            self.dist2_state = "IDLE"
-                            self.dist_target = "BAD"
-                            self.dist_action = f"ПРОХОД #{part['id']}"
+
+                # REVIEW is a real barrier in ProductionCycle.  Publish the
+                # countdown when its displayed second changes; the previous
+                # demo updated the object but never published it, leaving the
+                # browser on STEP_COMPLETE for the whole five seconds.
+                if self._review_until and now < self._review_until:
+                    left = int(self._review_until - now + 0.999)
+                    if self.state == "STOPPING":
+                        self._review_until = 0.0
                     else:
-                        # Нет деталей на сбросе — распределители в исходном
-                        self.dist1 = 0
-                        self.dist1_state = "IDLE"
-                        self.dist2 = 0
-                        self.dist2_state = "IDLE"
+                        active_cam_pos = [
+                            p["position"] for p in self.parts
+                            if p["position"] in {0, 4}
+                        ]
+                        label = f"Просмотр результатов анализа: {left} с до следующего шага"
+                        if self.process.get("label") != label:
+                            self.process = self._process(
+                                "ANALYSIS_REVIEW", label, active_cam_pos
+                            )
+                            self.publish()
+                        continue
+                self._review_until = 0.0
+
+                # Production stops an already empty line without inventing a
+                # dummy conveyor step.  This also makes STOP responsive while
+                # the demo is between parts.
+                if self.state == "STOPPING" and not self.parts:
+                    self.state = "STOPPED"
+                    self.process = self._process("STOPPED", "Демонстрационная линия остановлена")
+                    self.publish()
+                    continue
+
+                if now < self._next_step_at:
+                    continue
+
+                # Advance by one deadline, never by a while-loop catch-up.
+                # If the process/UI was paused for a while, real hardware has
+                # not performed the missed cycles either.
+                self._next_step_at = now + STEP_SECONDS
+                self.step += 1
+                for part in self.parts:
+                    part["position"] += 1
+                # Обновление категории после SPIDER-контроля (позиция ≥ 4)
+                for part in self.parts:
+                    if part["position"] >= 4 and part["category"] == "UNKNOWN":
+                        part["category"] = part.get("target_category", "GOOD")
+                finished = [part for part in self.parts if part["position"] > 7]
+                self.parts = [part for part in self.parts if part["position"] <= 7]
+                for part in finished:
+                    cat = part.get("target_category", "GOOD")
+                    if cat == "GOOD":
+                        self.good += 1
+                        decision = "none"
+                    elif cat == "BAD":
+                        self.bad += 1
+                        decision = "demo_defect"
+                    else:
+                        self.cleanup += 1
+                        decision = "cleanup"
+                    self.archive.add(part["id"], cat, decision)
+                    self.recent_parts.append({
+                        "id": part["id"],
+                        "category": cat,
+                        "decision": decision,
+                        "time": time.time(),
+                    })
+
+                # Симуляция распределителей: подсветка при сортировке.
+                parts_at_reject = [p for p in self.parts if p["position"] == 7]
+                if parts_at_reject:
+                    part = parts_at_reject[0]
+                    if part["category"] == "BAD":
+                        self.dist1, self.dist2, self.dist_target = 340, 0, "BAD"
+                        self.dist_action = f"СБРОС #{part['id']} → БРАК"
+                    elif part["category"] == "CLEANUP":
+                        self.dist1, self.dist2, self.dist_target = 340, 340, "CLEANUP"
+                        self.dist_action = f"СБРОС #{part['id']} → ОЧИСТКА"
+                    else:
+                        self.dist1 = self.dist2 = 0
                         self.dist_target = "BAD"
-                        self.dist_action = "—"
-                    if self.state == "RUNNING" and self.step % 2 == 1:
-                        target = random.choices(
-                            ["GOOD", "BAD", "CLEANUP"],
-                            weights=[40, 35, 25],
-                        )[0]
-                        self.parts.append({
-                            "id": self.next_part,
-                            "position": 0,
-                            "category": "UNKNOWN",
-                            "target_category": target,
-                        })
-                        self.next_part += 1
-                    if self.state == "STOPPING" and not self.parts:
-                        self.state = "STOPPED"
-                    review_until = now + 5.0
-                    self.process = self._process("STEP_COMPLETE", "Демонстрационный шаг завершён", range(8))
-                    self.publish(frames=True)
+                        self.dist_action = f"ПРОХОД #{part['id']}"
+                    self.dist1_state = self.dist2_state = "IDLE"
+                else:
+                    self.dist1 = self.dist2 = 0
+                    self.dist1_state = self.dist2_state = "IDLE"
+                    self.dist_target = "BAD"
+                    self.dist_action = "—"
+
+                if self.state == "RUNNING" and self.step % 2 == 1:
+                    target = random.choices(
+                        ["GOOD", "BAD", "CLEANUP"], weights=[40, 35, 25]
+                    )[0]
+                    self.parts.append({
+                        "id": self.next_part, "position": 0,
+                        "category": "UNKNOWN", "target_category": target,
+                    })
+                    self.next_part += 1
+                drained = self.state == "STOPPING" and not self.parts
+                if drained:
+                    # Do not leave a completed drain behind a fake review
+                    # phase. The final status must visibly be STOPPED.
+                    self.state = "STOPPED"
+                    self._review_until = 0.0
+                    self.process = self._process(
+                        "STOPPED", "Демонстрационная линия остановлена"
+                    )
+                else:
+                    self._review_until = now + REVIEW_SECONDS
+                    # STEP_COMPLETE is a stable state, not an active camera
+                    # or motion phase. Highlighting all cells here made the
+                    # whole line look permanently selected.
+                    self.process = self._process(
+                        "STEP_COMPLETE", "Демонстрационный шаг завершён"
+                    )
+                self.publish(frames=True)
 
 
 def main():
     demo = UiDemo()
     monitor = demo.monitor
+    # History cards must open the same archive endpoint as production, even
+    # though demo images are synthetic and stored in a temporary directory.
+    monitor.server.archive = demo.archive
     monitor.start_callback = demo.start
     monitor.stop_callback = demo.stop
     monitor.pause_callback = demo.pause
@@ -576,6 +743,7 @@ def main():
         demo.stop_event.set()
         demo.thread.join(2.0)
         monitor.stop_server()
+        demo.archive.close()
 
 
 if __name__ == "__main__":

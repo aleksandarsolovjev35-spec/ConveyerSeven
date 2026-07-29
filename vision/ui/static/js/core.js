@@ -239,6 +239,7 @@ const mainBuffer = new Image();
 let mainBufferLoading = false;
 let mainBufferRequestRole = null;
 let mainBufferRequestView = null;
+let mainBufferRequestVersion = null;
 
 mainBuffer.addEventListener('load', () => {
     const pullMode = (
@@ -249,6 +250,10 @@ mainBuffer.addEventListener('load', () => {
         pullMode
         && mainBufferRequestRole === state.currentCamera
         && mainBufferRequestView === state.mode
+        && (
+            state.mainCamMode === 'live-pull'
+            || mainBufferRequestVersion === state.currentVersion
+        )
     );
     if (requestIsCurrent) {
         els.mainCamera.src = mainBuffer.src;

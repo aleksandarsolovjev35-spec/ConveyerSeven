@@ -237,3 +237,16 @@
     color: var(--warn);
     border-color: var(--warn);
 }
+
+/* The standard operator window is 1280×720.  On a shorter window the
+   fixed preview/history strips must not consume the camera's entire row and
+   push the process line below the clipped body. */
+@media (max-height: 600px) {
+    .preview-strip { height: 48px; }
+    .camera-container { min-height: 150px; }
+}
+
+@media (max-height: 500px) {
+    .preview-strip { height: 40px; }
+    .camera-container { min-height: 110px; }
+}

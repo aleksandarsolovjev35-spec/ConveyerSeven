@@ -85,3 +85,12 @@
     font-family: var(--font-mono);
 }
 
+@media (max-height: 600px) {
+    .history { height: 48px; }
+}
+
+@media (max-height: 500px) {
+    .history { height: 42px; }
+    .history-title { flex-basis: 96px; font-size: 8px; }
+}
+
