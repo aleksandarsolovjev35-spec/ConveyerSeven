@@ -20,6 +20,7 @@ from config.camera_mapping import (
     load_camera_mapping,
     validate_camera_mapping,
 )
+from vision.camera_manager import default_backends as _camera_backends
 
 
 CAMERA_SCAN_LIMIT = 10
@@ -29,6 +30,12 @@ JPEG_QUALITY = 78
 PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
 NEAR_BLACK_P99_MAX = 12.0
+PROBE_READ_INTERVAL = 0.03
+# Сканирование должно давать камере столько же времени на старт, сколько
+# даёт production-preflight, иначе мастер объявит исправную камеру
+# отсутствующей и не соберёт комплект 7/7.
+SCAN_PROBE_ATTEMPTS = 60
+PREVIEW_PROBE_ATTEMPTS = 10
 
 ROLE_ORDER = (
     "INPUT_LEFT",
@@ -54,9 +61,30 @@ ROLE_LABELS = {
 
 
 def _open_capture(camera_id: int):
-    if sys.platform == "win32":
-        return cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
-    return cv2.VideoCapture(camera_id)
+    """Открыть камеру, перебирая backend-ы в том же порядке, что и runtime.
+
+    Мастер обязан находить ровно те камеры, которые потом откроет
+    CameraManager. Если здесь остаётся только DirectShow, а рабочая
+    камера отвечает лишь под Media Foundation, оператор соберёт mapping,
+    который упадёт на первом же запуске линии.
+    """
+    last = None
+    for backend in _camera_backends():
+        capture = None
+        try:
+            capture = (
+                cv2.VideoCapture(camera_id)
+                if backend is None
+                else cv2.VideoCapture(camera_id, backend)
+            )
+        except Exception as exc:
+            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
+            continue
+        if capture is not None and capture.isOpened():
+            return capture
+        _safe_release(capture)
+        last = capture
+    return last
 
 
 def _configure_capture(capture):
@@ -87,15 +115,21 @@ def _frame_error(frame) -> str | None:
     return None
 
 
-def _probe_capture(capture, attempts: int = 5):
+def _probe_capture(capture, attempts: int = SCAN_PROBE_ATTEMPTS):
+    """Дать камере отдать валидный кадр.
+
+    UVC-камера после открытия сначала строит граф и резервирует полосу
+    USB, и только потом отдаёт первый кадр. Пяти чтений подряд для этого
+    мало: исправная камера отбраковывалась как "не вернула кадр".
+    """
     error = "камера не вернула кадр"
-    for _ in range(attempts):
+    for _ in range(max(1, int(attempts))):
         ok, frame = capture.read()
         if ok and frame is not None:
             error = _frame_error(frame)
             if error is None:
                 return frame, None
-        time.sleep(0.03)
+        time.sleep(PROBE_READ_INTERVAL)
     return None, error
 
 
@@ -391,7 +425,9 @@ class CameraCalibrationApi:
                         f"Camera ID {camera_id} больше не открыта"
                     )
                 self._active_camera_id = camera_id
-                frame, error = _probe_capture(capture, attempts=3)
+                frame, error = _probe_capture(
+                    capture, attempts=PREVIEW_PROBE_ATTEMPTS
+                )
                 if error is not None or frame is None:
                     raise RuntimeError(error or "камера не вернула кадр")
                 height, width = frame.shape[:2]

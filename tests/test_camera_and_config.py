@@ -62,6 +62,13 @@ class DelayedExposureCapture(FakeCapture):
         return super().read()
 
 
+class SilentCapture(FakeCapture):
+    """Открывается, но никогда не отдаёт кадр (нет полосы USB)."""
+
+    def read(self):
+        return False, None
+
+
 class BlockingAfterWarmupCapture(FakeCapture):
     def __init__(self, frame, block=False):
         super().__init__(frame)
@@ -313,7 +320,12 @@ class CameraAndConfigTests(unittest.TestCase):
             self.assertTrue(all(capture.released for capture in captures))
 
     def test_cameras_open_in_parallel_instead_of_one_after_another(self):
-        """Семь камер должны открываться одновременно, а не по очереди."""
+        """Камеры открываются волнами, а не строго по очереди.
+
+        Полностью одновременный старт семи камер перегружает USB, но и
+        строго последовательный давал бы задержку, линейно растущую с
+        числом камер.
+        """
         with tempfile.TemporaryDirectory() as temp:
             mapping = self.mapping()
             mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
@@ -340,8 +352,150 @@ class CameraAndConfigTests(unittest.TestCase):
             try:
                 self.assertEqual(set(manager.cameras), set(REQUIRED_ROLES))
                 # Последовательное открытие заняло бы 7 * open_delay.
-                self.assertLess(elapsed, open_delay * len(REQUIRED_ROLES) * 0.6)
+                self.assertLess(elapsed, open_delay * len(REQUIRED_ROLES) * 0.8)
                 self.assertGreater(max(concurrent), 1)
+            finally:
+                manager.release()
+
+    def test_open_is_throttled_so_usb_bus_is_not_flooded_by_seven_cameras(self):
+        """Волны ограничивают число одновременно стартующих камер."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            peak = {"value": 0, "current": 0}
+            lock = threading.Lock()
+
+            def factory(camera_id):
+                with lock:
+                    peak["current"] += 1
+                    peak["value"] = max(peak["value"], peak["current"])
+                time.sleep(0.05)
+                with lock:
+                    peak["current"] -= 1
+                return FakeCapture(bright)
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001),
+                patch("vision.camera_manager._OPEN_CONCURRENCY", 3),
+            ):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                self.assertEqual(set(manager.cameras), set(REQUIRED_ROLES))
+                self.assertLessEqual(peak["value"], 3)
+            finally:
+                manager.release()
+
+    def test_camera_that_needs_a_second_attempt_is_not_declared_broken(self):
+        """Разовый отказ USB лечится повтором, а не остановкой запуска."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            flaky_id = mapping["TOP"]
+            calls = {"count": 0}
+
+            def factory(camera_id):
+                if camera_id != flaky_id:
+                    return FakeCapture(bright)
+                calls["count"] += 1
+                # Первая попытка: устройство занято и кадров не отдаёт.
+                if calls["count"] == 1:
+                    return FakeCapture(bright, opened=False)
+                return FakeCapture(bright)
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001),
+                patch("vision.camera_manager._OPEN_RETRY_DELAY", 0.0),
+            ):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                self.assertEqual(set(manager.cameras), set(REQUIRED_ROLES))
+                self.assertGreaterEqual(calls["count"], 2)
+            finally:
+                manager.release()
+
+    def test_persistently_dead_camera_still_fails_startup_with_details(self):
+        """Повторы не должны прятать действительно нерабочую камеру."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            dead_id = mapping["TOP"]
+            captures = []
+
+            def factory(camera_id):
+                capture = FakeCapture(
+                    bright, opened=camera_id != dead_id,
+                )
+                captures.append(capture)
+                return capture
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001),
+                patch("vision.camera_manager._OPEN_RETRY_DELAY", 0.0),
+                self.assertRaises(RuntimeError) as error,
+            ):
+                CameraManager(mapping_path, capture_factory=factory)
+
+            message = str(error.exception)
+            self.assertIn("TOP", message)
+            self.assertIn("попытка", message)
+            self.assertTrue(all(capture.released for capture in captures))
+
+    def test_preflight_failure_reports_actionable_diagnostics(self):
+        """Сообщение обязано объяснять, почему камера не прошла старт."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            silent_id = mapping["TOP"]
+
+            def factory(camera_id):
+                if camera_id == silent_id:
+                    return SilentCapture(bright)
+                return FakeCapture(bright)
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_TIMEOUT", 0.1),
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.01),
+                patch("vision.camera_manager._OPEN_RETRY_DELAY", 0.0),
+                self.assertRaises(RuntimeError) as error,
+            ):
+                CameraManager(mapping_path, capture_factory=factory)
+
+            message = str(error.exception)
+            self.assertIn("empty_reads=", message)
+            self.assertIn("negotiated=", message)
+
+    def test_windows_open_falls_back_to_a_second_backend(self):
+        """Камера, молчащая под одним backend, пробуется под другим."""
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            picky_id = mapping["TOP"]
+            used_backends = []
+
+            def factory(camera_id, backend=None):
+                used_backends.append((camera_id, backend))
+                if camera_id == picky_id and backend == "dshow":
+                    return SilentCapture(bright)
+                return FakeCapture(bright)
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_TIMEOUT", 0.1),
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.01),
+                patch("vision.camera_manager._OPEN_RETRY_DELAY", 0.0),
+                patch(
+                    "vision.camera_manager._default_backends",
+                    lambda: ("dshow", "msmf"),
+                ),
+            ):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                self.assertEqual(set(manager.cameras), set(REQUIRED_ROLES))
+                self.assertIn((picky_id, "msmf"), used_backends)
             finally:
                 manager.release()
 

@@ -1,4 +1,7 @@
+import inspect
 import json
+import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -6,6 +9,29 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import cv2
 import numpy as np
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        print(f"[CAMERA] {name}={raw!r} не число, используется {default}")
+        return default
+
+
+def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        print(f"[CAMERA] {name}={raw!r} не число, используется {default}")
+        return default
+
 
 CONFIG_FILE = "camera_mapping.json"
 _CAPTURE_TIMEOUT = 5.0
@@ -20,14 +46,89 @@ _REQUIRED_ROLES = (
 )
 _EXPECTED_SIZE = (1280, 720)
 _REQUESTED_FPS = 30.0
-_PREFLIGHT_TIMEOUT = 3.0
-# Общий предел на параллельное открытие: preflight каждой камеры уже
-# ограничен _PREFLIGHT_TIMEOUT, здесь запас на инициализацию драйвера.
-_OPEN_TIMEOUT = 30.0
+# Семь USB-камер стартуют не мгновенно: UVC-драйвер сначала строит граф,
+# затем резервирует полосу шины и только после этого отдаёт первый кадр.
+# Трёх секунд последней в очереди камере не хватало, и старт падал на
+# "read returned no frame" даже на исправном железе.
+_PREFLIGHT_TIMEOUT = _env_float("CAMERA_PREFLIGHT_TIMEOUT", 5.0)
+# Каждая попытка — это полное пересоздание VideoCapture. Разовая
+# неудача резервирования полосы на USB-хабе лечится именно повтором, а
+# не увеличением таймаута.
+_OPEN_ATTEMPTS = _env_int("CAMERA_OPEN_ATTEMPTS", 2)
+_OPEN_RETRY_DELAY = _env_float("CAMERA_OPEN_RETRY_DELAY", 0.4, minimum=0.0)
+# Одновременный старт всех семи камер перегружает и DirectShow, и
+# USB-контроллер: устройства наперегонки запрашивают полосу, и часть из
+# них остаётся без изохронных слотов. Открываем волнами.
+_OPEN_CONCURRENCY = _env_int("CAMERA_OPEN_CONCURRENCY", 3)
+# Общий предел на открытие набора: preflight каждой попытки уже ограничен
+# _PREFLIGHT_TIMEOUT, здесь запас на инициализацию драйвера и повторы.
+_OPEN_TIMEOUT = _env_float("CAMERA_OPEN_TIMEOUT", 120.0)
 _PREFLIGHT_VALID_FRAMES = 5
 _PREFLIGHT_READ_INTERVAL = 0.05
 _NEAR_BLACK_MEAN_MAX = 5.0
 _NEAR_BLACK_P99_MAX = 12.0
+
+_BACKEND_ALIASES = {
+    "dshow": "CAP_DSHOW",
+    "msmf": "CAP_MSMF",
+    "v4l2": "CAP_V4L2",
+    "avfoundation": "CAP_AVFOUNDATION",
+    "gstreamer": "CAP_GSTREAMER",
+    "any": "CAP_ANY",
+}
+
+
+def _default_backends() -> tuple:
+    """Порядок backend-ов для перебора при открытии камеры.
+
+    На Windows одна и та же камера может молчать под DirectShow и
+    нормально работать под Media Foundation (и наоборот): это зависит от
+    UVC-прошивки, а не от исправности устройства. Перебор backend-ов
+    отличает "камера сломана" от "камера не дружит с этим API".
+    """
+    raw = os.environ.get("CAMERA_BACKENDS")
+    if raw:
+        backends = []
+        for token in raw.split(","):
+            attribute = _BACKEND_ALIASES.get(token.strip().lower())
+            value = getattr(cv2, attribute, None) if attribute else None
+            if value is None:
+                print(f"[CAMERA] Неизвестный backend {token!r}, пропущен")
+                continue
+            backends.append(value)
+        if backends:
+            return tuple(backends)
+    if sys.platform == "win32":
+        return tuple(
+            backend
+            for backend in (
+                getattr(cv2, "CAP_DSHOW", None),
+                getattr(cv2, "CAP_MSMF", None),
+            )
+            if backend is not None
+        )
+    return (getattr(cv2, "CAP_ANY", 0),)
+
+
+def default_backends() -> tuple:
+    """Публичный доступ к порядку backend-ов (используется калибратором)."""
+    return _default_backends()
+
+
+def _backend_label(backend) -> str:
+    if backend is None:
+        return "default"
+    for name in (
+        "CAP_DSHOW",
+        "CAP_MSMF",
+        "CAP_V4L2",
+        "CAP_AVFOUNDATION",
+        "CAP_GSTREAMER",
+        "CAP_ANY",
+    ):
+        if getattr(cv2, name, None) == backend:
+            return name.replace("CAP_", "")
+    return str(backend)
 
 
 class CameraManager:
@@ -41,6 +142,10 @@ class CameraManager:
         self._failed_reason = None
         self._config_file = config_file
         self._capture_factory = capture_factory or self._open_capture
+        self._backends = _default_backends() or (None,)
+        self._factory_takes_backend = self._factory_supports_backend(
+            self._capture_factory
+        )
         self._pool = None
         self.load_config()
         self._role_locks = {
@@ -73,8 +178,43 @@ class CameraManager:
             pool.shutdown(wait=False)
 
     @staticmethod
-    def _open_capture(camera_id):
-        return cv2.VideoCapture(camera_id, cv2.CAP_DSHOW)
+    def _factory_supports_backend(factory) -> bool:
+        """Понять, принимает ли фабрика backend вторым аргументом.
+
+        Тесты и калибровка передают простую ``lambda camera_id``; ломать
+        их сигнатуру перебором backend-ов нельзя.
+        """
+        try:
+            signature = inspect.signature(factory)
+        except (TypeError, ValueError):
+            return False
+        parameters = list(signature.parameters.values())
+        if any(
+            parameter.kind is inspect.Parameter.VAR_POSITIONAL
+            for parameter in parameters
+        ):
+            return True
+        positional = [
+            parameter
+            for parameter in parameters
+            if parameter.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        return len(positional) >= 2
+
+    @staticmethod
+    def _open_capture(camera_id, backend=None):
+        if backend is None:
+            return cv2.VideoCapture(camera_id)
+        return cv2.VideoCapture(camera_id, backend)
+
+    def _create_capture(self, camera_id, backend):
+        if self._factory_takes_backend:
+            return self._capture_factory(camera_id, backend)
+        return self._capture_factory(camera_id)
 
     def load_config(self):
         try:
@@ -110,73 +250,131 @@ class CameraManager:
             print(f"  {role} -> {cam_id}")
 
     def open_cameras(self):
-        """Открыть все камеры параллельно.
+        """Открыть все камеры и убедиться, что каждая отдаёт кадр.
 
-        Preflight каждой камеры ждёт стабилизации экспозиции до
-        ``_PREFLIGHT_TIMEOUT``. Последовательно это давало бы задержку,
-        линейно растущую с числом камер, поэтому роли открываются
-        одновременно, по потоку на камеру. Ошибки собираются по всем
-        камерам сразу: оператор видит полный список проблем, а не первую.
+        Открытие идёт волнами по ``_OPEN_CONCURRENCY`` камер, а не всеми
+        семью сразу: одновременный старт перегружает USB-контроллер, и
+        часть камер остаётся без изохронной полосы, отдавая
+        "read returned no frame" на исправном железе. Внутри волны
+        камеры стартуют параллельно, поэтому preflight не суммируется.
+
+        Каждая камера получает ``_OPEN_ATTEMPTS`` попыток и перебор
+        backend-ов: разовый отказ резервирования полосы лечится
+        пересозданием VideoCapture, а не увеличением таймаута. Ошибки
+        собираются по всем камерам сразу: оператор видит полный список
+        проблем, а не первую.
         """
         started = time.monotonic()
         errors = {}
         opened = {}
-        opened_lock = threading.Lock()
+        state_lock = threading.Lock()
+        finalized = False
+        deadline = started + _OPEN_TIMEOUT
 
-        def _open(role, cam_id):
+        def _publish(role, capture) -> bool:
+            """Отдать открытую камеру менеджеру.
+
+            Поток, признанный зависшим по общему таймауту, может
+            завершиться позже. Его результат уже никому не нужен, и
+            класть его в набор нельзя: handle остался бы навсегда.
+            """
+            with state_lock:
+                if finalized:
+                    return False
+                opened[role] = capture
+                return True
+
+        def _try_once(role, cam_id, backend):
             cap = None
             try:
-                cap = self._capture_factory(cam_id)
-                if not cap.isOpened():
-                    raise RuntimeError(
-                        f"Не удалось открыть камеру {cam_id} ({role})"
-                    )
+                cap = self._create_capture(cam_id, backend)
+                if cap is None or not cap.isOpened():
+                    return None, "устройство не открылось"
                 self._configure_capture(cap)
-                with opened_lock:
-                    opened[role] = cap
-                cap = None
-
-                error = self._wait_for_stable_preflight(opened[role])
+                error = self._wait_for_stable_preflight(cap)
                 if error is not None:
-                    raise RuntimeError(
-                        f"Камера {cam_id} ({role}) не прошла preflight: {error}"
-                    )
+                    self._safe_release(role, cap)
+                    return None, error
+                capture, cap = cap, None
+                return capture, None
             except Exception as exc:
-                with opened_lock:
-                    errors[role] = f"{type(exc).__name__}: {exc}"
+                return None, f"{type(exc).__name__}: {exc}"
             finally:
                 if cap is not None:
-                    try:
-                        cap.release()
-                    except Exception as release_error:
-                        print(
-                            f"[CAMERA] Ошибка освобождения {role}: "
-                            f"{release_error}"
+                    self._safe_release(role, cap)
+
+        def _open(role, cam_id):
+            attempt_errors = []
+            attempt = 0
+            for retry in range(_OPEN_ATTEMPTS):
+                for backend in self._backends:
+                    attempt += 1
+                    if time.monotonic() >= deadline:
+                        attempt_errors.append("общий таймаут открытия камер")
+                        break
+                    capture, error = _try_once(role, cam_id, backend)
+                    if capture is not None:
+                        if attempt > 1:
+                            print(
+                                f"[CAMERA] {role} (id={cam_id}) открыта "
+                                f"с попытки {attempt} "
+                                f"[{_backend_label(backend)}]"
+                            )
+                        if not _publish(role, capture):
+                            self._safe_release(role, capture)
+                        return
+                    attempt_errors.append(
+                        f"попытка {attempt} [{_backend_label(backend)}]: "
+                        f"{error}"
+                    )
+                    print(
+                        f"[CAMERA] {role} (id={cam_id}) попытка {attempt} "
+                        f"[{_backend_label(backend)}]: {error}"
+                    )
+                else:
+                    if retry + 1 < _OPEN_ATTEMPTS and _OPEN_RETRY_DELAY:
+                        # Драйверу нужно время, чтобы отпустить устройство
+                        # перед повторным открытием.
+                        time.sleep(_OPEN_RETRY_DELAY)
+                    continue
+                break
+            with state_lock:
+                errors[role] = (
+                    f"камера {cam_id} не отдала валидный кадр; "
+                    + "; ".join(attempt_errors)
+                )
+
+        roles = list(self.mapping.items())
+        wave_size = max(1, min(_OPEN_CONCURRENCY, len(roles) or 1))
+        for index in range(0, len(roles), wave_size):
+            wave = roles[index : index + wave_size]
+            threads = [
+                threading.Thread(
+                    target=_open,
+                    args=(role, cam_id),
+                    daemon=True,
+                    name=f"open-camera-{role}",
+                )
+                for role, cam_id in wave
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(max(0.0, deadline - time.monotonic()))
+                if thread.is_alive():
+                    with state_lock:
+                        errors.setdefault(
+                            thread.name.replace("open-camera-", ""),
+                            "open timeout",
                         )
 
-        threads = [
-            threading.Thread(
-                target=_open,
-                args=(role, cam_id),
-                daemon=True,
-                name=f"open-camera-{role}",
-            )
-            for role, cam_id in self.mapping.items()
-        ]
-        for thread in threads:
-            thread.start()
-        deadline = time.monotonic() + _OPEN_TIMEOUT
-        for thread in threads:
-            thread.join(max(0.0, deadline - time.monotonic()))
-            if thread.is_alive():
-                with opened_lock:
-                    errors.setdefault(thread.name, "open timeout")
-
-        # Порядок ролей задан camera_mapping.json и не должен зависеть
-        # от того, какой поток завершился первым.
-        self.cameras = {
-            role: opened[role] for role in self.mapping if role in opened
-        }
+        with state_lock:
+            # Порядок ролей задан camera_mapping.json и не должен зависеть
+            # от того, какой поток завершился первым.
+            finalized = True
+            self.cameras = {
+                role: opened[role] for role in self.mapping if role in opened
+            }
 
         if errors:
             self.release()
@@ -193,6 +391,13 @@ class CameraManager:
         )
 
     @staticmethod
+    def _safe_release(role, capture):
+        try:
+            capture.release()
+        except Exception as exc:
+            print(f"[CAMERA] Ошибка освобождения {role}: {exc}")
+
+    @staticmethod
     def _configure_capture(cap):
         # MJPG существенно снижает USB-нагрузку семи камер. Не все
         # драйверы подтверждают set(), поэтому реальный результат
@@ -204,14 +409,41 @@ class CameraManager:
         if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+    @staticmethod
+    def _negotiated_format(capture) -> str:
+        """Что драйвер реально согласовал после set().
+
+        Молчаливый откат MJPG -> YUY2 поднимает поток одной камеры
+        1280x720@30 примерно с 25 Мбит/с до ~440 Мбит/с. На общем
+        USB-контроллере это ровно та ситуация, когда часть камер
+        открывается, а последняя не получает полосу и не отдаёт кадры.
+        """
+        try:
+            fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+        except Exception:
+            return "формат недоступен"
+        codec = (
+            "".join(chr((fourcc >> shift) & 0xFF) for shift in (0, 8, 16, 24))
+            if fourcc
+            else "----"
+        )
+        codec = "".join(char if char.isprintable() else "?" for char in codec)
+        return f"{codec} {width}x{height}@{fps:.0f}"
+
     @classmethod
     def _wait_for_stable_preflight(cls, capture) -> str | None:
         """Дождаться серии валидных кадров после запуска экспозиции камеры."""
 
         deadline = time.monotonic() + _PREFLIGHT_TIMEOUT
         consecutive_valid = 0
+        empty_reads = 0
+        total_reads = 0
         last_error = "read returned no frame"
         while time.monotonic() < deadline:
+            total_reads += 1
             try:
                 ok, frame = capture.read()
             except Exception as exc:
@@ -221,6 +453,7 @@ class CameraManager:
                 continue
             if not ok or frame is None:
                 consecutive_valid = 0
+                empty_reads += 1
                 last_error = "read returned no frame"
                 time.sleep(_PREFLIGHT_READ_INTERVAL)
                 continue
@@ -234,7 +467,9 @@ class CameraManager:
             time.sleep(_PREFLIGHT_READ_INTERVAL)
         return (
             f"{last_error}; stable_valid={consecutive_valid}/"
-            f"{_PREFLIGHT_VALID_FRAMES}; timeout={_PREFLIGHT_TIMEOUT:.1f}s"
+            f"{_PREFLIGHT_VALID_FRAMES}; empty_reads={empty_reads}/"
+            f"{total_reads}; negotiated={cls._negotiated_format(capture)}; "
+            f"timeout={_PREFLIGHT_TIMEOUT:.1f}s"
         )
 
     def capture_all(self) -> dict:
