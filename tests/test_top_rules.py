@@ -361,9 +361,9 @@ class TopRuleTests(unittest.TestCase):
         )
         # Вышедшая за границу область закрашена красным.
         self.assertGreater(int(np.count_nonzero(rendered[:, :, 2])), 0)
-        # Сама область выделена заметным пурпурным прямоугольником.
+        # Сама область выделена чистой тонкой зелёной пунктирной линией.
         self.assertGreater(int(np.count_nonzero(np.all(
-            rendered == np.asarray([255, 0, 255], dtype=np.uint8),
+            rendered == np.asarray([0, 255, 0], dtype=np.uint8),
             axis=2,
         ))), 0)
 

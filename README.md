@@ -411,7 +411,7 @@ Renderer показывает нейтральный contour platform, rectangle
 
 Если платформа пересекает границы построенного прямоугольника, срабатывает правило пересечения. Пиксели platform mask снаружи границы разбиваются на 8-связные компоненты: компоненты из 1–2 пикселей считаются шумом, связный выход от `top_platform_overlap_excess_component_min_px = 3 px` бракует деталь как заплыв платформы.
 
-Renderer показывает нейтральный contour platform и заметную сплошную пурпурную `(255, 0, 255)` рамку области толщиной 3 px, а также пурпурные точки опорных контактов, по которым область построена. Вышедшая за границу область выделяется полупрозрачной красной заливкой с красным контуром. Рамка области не меняет цвет при браке, надпись `PLATFORM OVERFLOW` отсутствует. Используются короткие сообщения `NO PLATFORM`, `NO ORIENTATION`, `NO CONTACT RECT`. Справа остаются boundary size, component min, largest component, confirmed pixels и число контактов области; raw/ignored metrics, anchor center и angle не публикуются.
+Renderer показывает нейтральный contour platform и чистую тонкую пунктирную зелёную `(0, 255, 0)` рамку области. Точки опорных контактов остаются в diagnostics/details, но на оверлее не рисуются, чтобы не закрывать контакты. Вышедшая за границу область выделяется полупрозрачной красной заливкой с красным контуром. Рамка области не меняет цвет при браке, надпись `PLATFORM OVERFLOW` отсутствует. Используются короткие сообщения `NO PLATFORM`, `NO ORIENTATION`, `NO CONTACT RECT`. Справа остаются boundary size, component min, largest component, confirmed pixels и число контактов области; raw/ignored metrics, anchor center и angle не публикуются.
 
 ### TOP shells внутри case_central
 
