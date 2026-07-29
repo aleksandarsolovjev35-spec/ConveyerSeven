@@ -274,12 +274,10 @@ class CameraAndConfigTests(unittest.TestCase):
             "TOP.top_platform_overlap_boundary_width_px": 305,
             "TOP.top_platform_overlap_boundary_height_px": 140,
             "TOP.top_platform_overlap_excess_component_min_px": 3,
+            "TOP.top_platform_overlap_contacts_min_confidence": 0.3,
         }
         for key, value in expected.items():
             self.assertAlmostEqual(thresholds[key], value)
-        self.assertNotIn(
-            "TOP.top_platform_overlap_contacts_min_confidence", thresholds,
-        )
         self.assertNotIn("TOP.top_platform_overlap_min_px", thresholds)
         self.assertGreaterEqual(
             thresholds["TOP.top_platform_overlap_boundary_width_px"],
@@ -749,6 +747,62 @@ class CameraAndConfigTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "settle_time"):
                 load_calibration(path)
+
+    def test_camera_manager_recovers_from_near_black_frame_after_idle_with_warmup(self):
+        """После простоя камера может выдать тёмные кадры до стабилизации экспозиции.
+
+        При срабатывании near-black ошибки _grab обязан запустить прогрев
+        и вычитать кадры, не объявляя камеру сломанной.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            black = np.zeros((720, 1280, 3), dtype=np.uint8)
+            target_id = mapping["INPUT_LEFT"]
+
+            class IdleRecoveryCapture(FakeCapture):
+                def __init__(self, frame):
+                    super().__init__(frame)
+                    self.idle = False
+                    self.dark_left = 0
+
+                def simulate_idle(self, dark_frames):
+                    self.idle = True
+                    self.dark_left = int(dark_frames)
+
+                def read(self):
+                    if self.idle and self.dark_left > 0:
+                        self.dark_left -= 1
+                        return True, black.copy()
+                    return super().read()
+
+            captures = {}
+
+            def factory(camera_id):
+                cap = IdleRecoveryCapture(bright)
+                captures[camera_id] = cap
+                return cap
+
+            with (
+                patch("vision.camera_manager._PREFLIGHT_TIMEOUT", 1.0),
+                patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.01),
+                patch("vision.camera_manager._WARMUP_FRAMES", 5),
+            ):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+                try:
+                    target_cap = captures[target_id]
+                    target_cap.simulate_idle(dark_frames=3)
+                    manager.warmup_cameras(frames=4)
+                    self.assertEqual(target_cap.dark_left, 0)
+                    frame = manager.capture_single("INPUT_LEFT")
+                    self.assertGreater(float(frame.mean()), 10.0)
+
+                    target_cap.simulate_idle(dark_frames=2)
+                    frame2 = manager.capture_single("INPUT_LEFT")
+                    self.assertGreater(float(frame2.mean()), 10.0)
+                finally:
+                    manager.release()
 
 
 if __name__ == "__main__":

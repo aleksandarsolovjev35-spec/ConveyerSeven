@@ -13,11 +13,12 @@ from domain.defect_rules.top_geometry import (
 
 
 class TopPlatformOverlapRule(BaseRule):
-    """Контроль заплыва platform mask за настраиваемую внешнюю границу."""
+    """Контроль заплыва контактов за настраиваемую внешнюю границу платформы."""
 
     name = "platform_contacts_overlap"
     ROLES = ("TOP",)
     PLATFORM_CLASS = "platform"
+    CONTACTS_CLASS = "contacts"
 
     def check(self, vision_results: dict, **kwargs) -> RuleResult:
         if not self.enabled:
@@ -30,6 +31,11 @@ class TopPlatformOverlapRule(BaseRule):
                 continue
             min_confidence = self._get(
                 "top_platform_overlap_platform_min_confidence", 0.3,
+                role=role,
+            )
+            min_confidence_contacts = self._get(
+                "top_platform_overlap_contacts_min_confidence",
+                self._get("top_contacts_min_confidence", 0.3, role=role),
                 role=role,
             )
             inner_width = self._get(
@@ -58,9 +64,16 @@ class TopPlatformOverlapRule(BaseRule):
                 and float(detection.get("confidence", 0.0))
                 >= min_confidence
             ]
+            contacts = [
+                detection for detection in vision_results[role]
+                if detection.get("class") == self.CONTACTS_CLASS
+                and float(detection.get("confidence", 0.0))
+                >= min_confidence_contacts
+            ]
             result = self._check_role(
                 role=role,
                 platforms=platforms,
+                contacts=contacts,
                 inner_width=float(inner_width),
                 inner_height=float(inner_height),
                 boundary_width=float(boundary_width),
@@ -83,6 +96,7 @@ class TopPlatformOverlapRule(BaseRule):
         *,
         role,
         platforms,
+        contacts,
         inner_width,
         inner_height,
         boundary_width,
@@ -103,6 +117,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "reason": "no_valid_platform",
                 "found": len(platforms),
                 "ignored": 0,
+                "contacts_found": len(contacts),
             }
 
         angle = mask_orientation(platform)
@@ -127,6 +142,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "reason": "invalid_platform_orientation",
                 "found": len(platforms),
                 "ignored": max(0, len(platforms) - 1),
+                "contacts_found": len(contacts),
             }
 
         drawings.append({
@@ -166,6 +182,7 @@ class TopPlatformOverlapRule(BaseRule):
                 "reason": "inner_platform_reference_not_fitted",
                 "found": len(platforms),
                 "ignored": max(0, len(platforms) - 1),
+                "contacts_found": len(contacts),
                 "inner_rect_width_px": inner_width,
                 "inner_rect_height_px": inner_height,
             }
@@ -177,16 +194,19 @@ class TopPlatformOverlapRule(BaseRule):
             height_px=boundary_height,
             angle_deg=angle,
         )
-        shape = infer_shape([platform])
-        platform_raster = rasterize_mask(platform, shape)
+        shape = infer_shape([platform] + list(contacts))
         boundary_raster = np.zeros(shape, dtype=np.uint8)
         cv2.fillPoly(
             boundary_raster,
             [np.rint(boundary).astype(np.int32)],
             255,
         )
+        contacts_raster = np.zeros(shape, dtype=np.uint8)
+        for contact in contacts:
+            raster = rasterize_mask(contact, shape)
+            contacts_raster = cv2.bitwise_or(contacts_raster, raster)
         outside = cv2.bitwise_and(
-            platform_raster,
+            contacts_raster,
             cv2.bitwise_not(boundary_raster),
         )
         measurement = cls._measure_components(outside, component_min)
@@ -216,6 +236,7 @@ class TopPlatformOverlapRule(BaseRule):
             "reason": None,
             "found": len(platforms),
             "ignored": max(0, len(platforms) - 1),
+            "contacts_found": len(contacts),
             "anchor": "top_platform_inscribed_rect",
             "boundary_center": [round(float(value), 3) for value in center],
             "angle_deg": round(float(angle), 3),

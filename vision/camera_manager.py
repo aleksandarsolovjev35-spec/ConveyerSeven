@@ -50,7 +50,7 @@ _REQUESTED_FPS = 30.0
 # затем резервирует полосу шины и только после этого отдаёт первый кадр.
 # Трёх секунд последней в очереди камере не хватало, и старт падал на
 # "read returned no frame" даже на исправном железе.
-_PREFLIGHT_TIMEOUT = _env_float("CAMERA_PREFLIGHT_TIMEOUT", 5.0)
+_PREFLIGHT_TIMEOUT = _env_float("CAMERA_PREFLIGHT_TIMEOUT", 10.0)
 # Каждая попытка — это полное пересоздание VideoCapture. Разовая
 # неудача резервирования полосы на USB-хабе лечится именно повтором, а
 # не увеличением таймаута.
@@ -63,6 +63,7 @@ _OPEN_CONCURRENCY = _env_int("CAMERA_OPEN_CONCURRENCY", 3)
 # Общий предел на открытие набора: preflight каждой попытки уже ограничен
 # _PREFLIGHT_TIMEOUT, здесь запас на инициализацию драйвера и повторы.
 _OPEN_TIMEOUT = _env_float("CAMERA_OPEN_TIMEOUT", 120.0)
+_WARMUP_FRAMES = _env_int("CAMERA_WARMUP_FRAMES", 15)
 _PREFLIGHT_VALID_FRAMES = 5
 _PREFLIGHT_READ_INTERVAL = 0.05
 _NEAR_BLACK_MEAN_MAX = 5.0
@@ -434,8 +435,16 @@ class CameraManager:
         return f"{codec} {width}x{height}@{fps:.0f}"
 
     @classmethod
-    def _wait_for_stable_preflight(cls, capture) -> str | None:
+    def _wait_for_stable_preflight(
+        cls, capture, warmup_frames: int | None = None,
+    ) -> str | None:
         """Дождаться серии валидных кадров после запуска экспозиции камеры."""
+        warmup_count = _WARMUP_FRAMES if warmup_frames is None else warmup_frames
+        for _ in range(max(0, warmup_count)):
+            try:
+                capture.read()
+            except Exception:
+                break
 
         deadline = time.monotonic() + _PREFLIGHT_TIMEOUT
         consecutive_valid = 0
@@ -471,6 +480,24 @@ class CameraManager:
             f"{total_reads}; negotiated={cls._negotiated_format(capture)}; "
             f"timeout={_PREFLIGHT_TIMEOUT:.1f}s"
         )
+
+    def warmup_cameras(self, frames: int | None = None):
+        """Прогрев камер (вычитка кадров для стабилизации экспозиции после простоя)."""
+        pool = self._require_pool()
+        warmup_count = _WARMUP_FRAMES if frames is None else int(frames)
+
+        def _warmup_role(role):
+            with self._role_locks[role]:
+                cap = self.cameras.get(role)
+                if cap is None:
+                    return
+                for _ in range(max(1, warmup_count)):
+                    try:
+                        cap.read()
+                    except Exception:
+                        break
+
+        list(pool.map(_warmup_role, list(self.cameras)))
 
     def capture_all(self) -> dict:
         """Одновременный захват полного production-набора камер."""
@@ -509,9 +536,19 @@ class CameraManager:
                 if cap is None:
                     raise RuntimeError(f"Камера {role} не найдена")
                 ok, frame = cap.read()
-            if not ok or frame is None:
-                raise RuntimeError("read returned no frame")
-            error = self._frame_error(frame)
+                if not ok or frame is None:
+                    raise RuntimeError("read returned no frame")
+                error = self._frame_error(frame)
+                if error is not None and "near-black" in error:
+                    # Прогрев после простоя: если камера отдала тёмный кадр,
+                    # даём автоэкспозиции подстроиться на серии кадров
+                    for _ in range(_WARMUP_FRAMES):
+                        ok, next_frame = cap.read()
+                        if ok and next_frame is not None:
+                            frame = next_frame
+                            error = self._frame_error(frame)
+                            if error is None:
+                                break
             if error is not None:
                 raise RuntimeError(error)
             return frame

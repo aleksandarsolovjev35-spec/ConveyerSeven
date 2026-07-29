@@ -95,6 +95,7 @@
         "top_contacts_edge_rect_width_px": 30,
         "top_contacts_edge_rect_height_px": 28,
         "top_platform_overlap_platform_min_confidence": 0.3,
+        "top_platform_overlap_contacts_min_confidence": 0.3,
         "top_platform_overlap_boundary_width_px": 305,
         "top_platform_overlap_boundary_height_px": 140,
         "top_platform_overlap_excess_component_min_px": 3,
