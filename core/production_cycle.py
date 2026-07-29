@@ -226,12 +226,6 @@ class ProductionCycle:
                         "rules": [],
                         "updated_at": None,
                     }
-                # Прогрев камер после возможного простоя линии перед запуском цикла
-                try:
-                    if hasattr(self.cameras, "warmup_cameras"):
-                        self.cameras.warmup_cameras()
-                except Exception as exc:
-                    print(f"[CAMERA] Предупреждение при прогреве камер перед стартом: {exc}")
                 # Оператор видит поток всё время, пока линия работает;
                 # на статических этапах шага он приостанавливается.
                 self.live.start()
@@ -337,11 +331,6 @@ class ProductionCycle:
                 return False
             self._set_diagnostic_running("CAMERAS", "Проверка семи камер")
             self._set_process("CAMERA_DIAGNOSTIC", "Проверка семи камер")
-            try:
-                if hasattr(self.cameras, "warmup_cameras"):
-                    self.cameras.warmup_cameras()
-            except Exception as exc:
-                print(f"[CAMERA] Предупреждение при прогреве камер в диагностике: {exc}")
             frames = self.cameras.capture_all()
             camera_rows = []
             for role, frame in frames.items():
