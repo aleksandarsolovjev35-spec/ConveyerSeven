@@ -65,6 +65,7 @@ def main() -> int:
     print()
     print("--- 1. Каждая камера отдельно (полная полоса USB) ---")
     isolated_ok: dict[str, list[str]] = {}
+    negotiated_ok: dict[str, str] = {}
     for role, camera_id in mapping.items():
         working = []
         for backend in backends:
@@ -79,6 +80,7 @@ def main() -> int:
             )
             if ok:
                 working.append(label)
+                negotiated_ok.setdefault(role, negotiated)
             # Драйверу нужно время отпустить устройство.
             time.sleep(0.3)
         isolated_ok[role] = working
@@ -117,6 +119,8 @@ def main() -> int:
         print("  - развести камеры по разным USB-контроллерам,")
         print("    не через один хаб;")
         print("  - использовать порты USB 3.0 (разные корневые хабы);")
+        print("  - снизить суммарную полосу (делит нагрузку пополам):")
+        print("      set CAMERA_FPS=15")
         print("  - при необходимости увеличить паузы старта:")
         print("      set CAMERA_OPEN_CONCURRENCY=1")
         print("      set CAMERA_PREFLIGHT_TIMEOUT=8")
@@ -130,6 +134,24 @@ def main() -> int:
                 f"Примечание: {role} работает только под "
                 f"{', '.join(working)}."
             )
+
+    # Молчаливый откат MJPG -> YUY2 поднимает поток камеры 1280x720@30
+    # примерно с 25 до ~440 Мбит/с: на общем контроллере одна такая
+    # камера лишает изохронной полосы все остальные.
+    not_mjpg = {
+        role: negotiated
+        for role, negotiated in negotiated_ok.items()
+        if not negotiated.startswith("MJPG")
+    }
+    if not_mjpg:
+        print()
+        print("--- ВНИМАНИЕ: есть камеры НЕ в MJPG ---")
+        for role, negotiated in sorted(not_mjpg.items()):
+            print(f"  {role:<13} {negotiated}")
+        print("Каждая несжатая камера съедает полосу нескольких сжатых.")
+        print("Что сделать: выставить MJPG в фирменной утилите драйвера,")
+        print("снизить нагрузку (set CAMERA_FPS=15) или жёстко запретить")
+        print("несжатый захват (set CAMERA_REQUIRE_MJPG=1) и чинить камеру.")
 
     print()
     print("CAMERA OPEN DIAGNOSTIC COMPLETED")

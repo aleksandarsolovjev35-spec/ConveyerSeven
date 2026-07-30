@@ -1,10 +1,12 @@
 import json
+import os
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
 
+import cv2
 import numpy as np
 from unittest.mock import patch
 
@@ -729,6 +731,136 @@ class CameraAndConfigTests(unittest.TestCase):
             started = time.monotonic()
             manager.release()
             self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_configure_capture_retries_format_order_until_mjpg_sticks(self):
+        class OrderSensitiveCapture(FakeCapture):
+            """FOURCC применяется только ПОСЛЕ смены разрешения."""
+
+            def __init__(self, frame):
+                super().__init__(frame)
+                self.codec = "YUY2"
+                self._resolution_set = False
+
+            def set(self, prop, value):
+                if prop in (
+                    cv2.CAP_PROP_FRAME_WIDTH,
+                    cv2.CAP_PROP_FRAME_HEIGHT,
+                ):
+                    self._resolution_set = True
+                elif prop == cv2.CAP_PROP_FOURCC:
+                    self.codec = "MJPG" if self._resolution_set else "YUY2"
+                return True
+
+            def get(self, prop):
+                if prop == cv2.CAP_PROP_FOURCC:
+                    return int.from_bytes(self.codec.encode("ascii"), "little")
+                return 0
+
+        bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        capture = OrderSensitiveCapture(bright)
+        CameraManager._configure_capture(capture)
+        self.assertEqual(capture.codec, "MJPG")
+
+    def test_configure_capture_flags_silent_fallback_to_uncompressed(self):
+        class Yuy2OnlyCapture(FakeCapture):
+            """Драйвер молча откатывает MJPG -> YUY2 любом порядке set()."""
+
+            def get(self, prop):
+                if prop == cv2.CAP_PROP_FOURCC:
+                    return int.from_bytes(b"YUY2", "little")
+                return 0
+
+        bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        capture = Yuy2OnlyCapture(bright)
+        # По умолчанию — предупреждение, захват продолжается.
+        CameraManager._configure_capture(capture)
+        # С CAMERA_REQUIRE_MJPG=1 это ошибка: несжатый поток топит шину.
+        with patch.dict(os.environ, {"CAMERA_REQUIRE_MJPG": "1"}):
+            with self.assertRaisesRegex(RuntimeError, "YUY2"):
+                CameraManager._configure_capture(capture)
+
+    def test_stream_dropout_reopens_role_without_latching_manager(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            calls = {}
+            flaky_id = mapping["INPUT_LEFT"]
+
+            class DropoutCapture(FakeCapture):
+                """Отдаёт budget кадров, затем поток умирает (отвал USB)."""
+
+                def __init__(self, frame, budget):
+                    super().__init__(frame)
+                    self.budget = budget
+
+                def read(self):
+                    if self.budget <= 0:
+                        return False, None
+                    self.budget -= 1
+                    return super().read()
+
+            def factory(camera_id):
+                calls[camera_id] = calls.get(camera_id, 0) + 1
+                if camera_id == flaky_id and calls[camera_id] == 1:
+                    # Первый handle переживает открытие и умирает на захвате.
+                    return DropoutCapture(bright, budget=5)
+                return FakeCapture(bright)
+
+            manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                frames = manager.capture_all()
+                self.assertEqual(set(frames), set(REQUIRED_ROLES))
+                # Поток отвалившейся роли пересоздан фабрикой повторно.
+                self.assertGreaterEqual(calls[flaky_id], 2)
+                # Менеджер не залатчен: следующий захват тоже успешен.
+                frames = manager.capture_all()
+                self.assertEqual(set(frames), set(REQUIRED_ROLES))
+            finally:
+                manager.release()
+
+    def test_unrecoverable_stream_latches_manager_with_details(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            calls = {}
+            flaky_id = mapping["INPUT_LEFT"]
+
+            class DropoutCapture(FakeCapture):
+                def __init__(self, frame, budget):
+                    super().__init__(frame)
+                    self.budget = budget
+
+                def read(self):
+                    if self.budget <= 0:
+                        return False, None
+                    self.budget -= 1
+                    return super().read()
+
+            def factory(camera_id):
+                calls[camera_id] = calls.get(camera_id, 0) + 1
+                if camera_id == flaky_id:
+                    if calls[camera_id] == 1:
+                        return DropoutCapture(bright, budget=5)
+                    # Все попытки восстановления упираются в мёртвый поток.
+                    return SilentCapture(bright)
+                return FakeCapture(bright)
+
+            manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                with (
+                    patch("vision.camera_manager._RECOVERY_PREFLIGHT", 0.3),
+                    patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.01),
+                    self.assertRaisesRegex(RuntimeError, "no frame"),
+                ):
+                    manager.capture_all()
+                started = time.monotonic()
+                with self.assertRaisesRegex(RuntimeError, "заблокирован"):
+                    manager.capture_all()
+                self.assertLess(time.monotonic() - started, 0.05)
+            finally:
+                manager.release()
 
     def test_camera_mapping_rejects_duplicates(self):
         with tempfile.TemporaryDirectory() as temp:

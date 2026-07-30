@@ -21,6 +21,8 @@ from config.camera_mapping import (
     validate_camera_mapping,
 )
 from vision.camera_manager import (
+    CameraManager,
+    _REQUESTED_FPS,
     _env_float,
     _env_int,
 )
@@ -29,7 +31,9 @@ from vision.camera_manager import default_backends as _camera_backends
 
 CAMERA_SCAN_LIMIT = 10
 EXPECTED_SIZE = (1280, 720)
-REQUESTED_FPS = 30.0
+# FPS согласуется тот же, что запросит production (CAMERA_FPS): мастер
+# обязан проверять камеры ровно в том режиме, в котором им работать.
+REQUESTED_FPS = _REQUESTED_FPS
 JPEG_QUALITY = 78
 PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
@@ -98,12 +102,10 @@ def _open_capture(camera_id: int):
 
 
 def _configure_capture(capture):
-    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, EXPECTED_SIZE[0])
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, EXPECTED_SIZE[1])
-    capture.set(cv2.CAP_PROP_FPS, REQUESTED_FPS)
-    if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # Мастер и production настраивают камеру одинаково — включая жёсткое
+    # согласование MJPG: камера, молча откатившаяся в YUY2, съедает в разы
+    # больше полосы USB, и собранный с ней mapping упадёт на старте линии.
+    CameraManager._configure_capture(capture)
 
 
 def _frame_error(frame) -> str | None:
