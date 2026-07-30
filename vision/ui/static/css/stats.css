@@ -165,6 +165,9 @@
 .frame-analysis-item.triggered,
 .frame-analysis-item.error { border-left: 2px solid var(--bad); }
 .frame-analysis-item.skipped { border-left: 2px solid var(--warn); }
+/* Решающее правило «деталь не обнаружена» — JS ставит .part-absent. */
+.frame-analysis-item.part-absent { border-left: 2px solid var(--warn); background: var(--warn-bg); }
+.frame-analysis-item.part-absent b { color: var(--warn); }
 .frame-analysis-item.triggered b,
 .frame-analysis-item.error b { color: var(--bad); }
 .frame-analysis-item.skipped b { color: var(--warn); }

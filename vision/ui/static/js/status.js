@@ -112,7 +112,6 @@ function markUiOffline() {
         diagnostic_allowed: false,
         diagnostic_busy: true,
     });
-    disablePrestartDiagnosticButtons();
     if (els.analyzeSelectedFrame) els.analyzeSelectedFrame.disabled = true;
     updateViewModeControls();
     if (els.jogPanel) {
@@ -163,7 +162,6 @@ function updateLineStatus(ls) {
     const process = ls.process || {};
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
-    updatePrestartDiagnostics(ls);
     updateSelectedAnalysisStatus(ls);
     updateFrameAnalysisStatus(ls);
 

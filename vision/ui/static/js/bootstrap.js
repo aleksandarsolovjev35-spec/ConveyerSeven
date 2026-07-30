@@ -133,7 +133,6 @@ function init() {
     setupViewModeControls();
     setupJogControls();
     setupDistributorDiagnostics();
-    setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
 
     fetchBoot();
@@ -155,7 +154,6 @@ function setupForTest() {
     setupViewModeControls();
     setupJogControls();
     setupDistributorDiagnostics();
-    setupPrestartDiagnostics();
     setupSelectedFrameAnalysis();
     state.bootDone = true;
     state.bootDoneAt = Date.now();
@@ -180,8 +178,6 @@ if (window.__TRANSPORTER_UI_TEST__ === true) {
         updateStateOverlay,
         updateMode,
         updateDistributorDiagnosticControls,
-        updatePrestartDiagnostics,
-        runPrestartDiagnostic,
         updateSelectedAnalysisStatus,
         showSelectedAnalysisFrame,
         returnSelectedCameraToLive,

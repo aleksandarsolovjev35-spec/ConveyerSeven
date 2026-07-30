@@ -101,11 +101,9 @@ const state = {
     jogStartPromise:     null,
     distributorDiagnosticPending: false,
     distributorDiagnosticBackendBusy: false,
-    prestartDiagnosticPending: false,
     selectedAnalysisPending: false,
     selectedAnalysisActive: false,
     selectedAnalysisRole: null,
-    lastDiagnosticRenderKey: null,
     lastFrameAnalysisRenderKey: null,
     liveFps:              0.0,
     liveStreaming:        false,
@@ -389,16 +387,6 @@ function categoryLabel(value) {
 function formatFrameRate(value) {
     const number = Number(value || 0).toFixed(1).replace('.', ',');
     return `${number} КАДР/С`;
-}
-
-function diagnosticStatusLabel(value) {
-    const labels = {
-        NOT_RUN: 'НЕ ЗАПУЩЕНО',
-        RUNNING: 'ВЫПОЛНЯЕТСЯ',
-        PASSED: 'ПРОЙДЕНО',
-        ERROR: 'ОШИБКА',
-    };
-    return labels[String(value || '').toUpperCase()] || value || '—';
 }
 
 function distributorTargetLabel(value) {

@@ -97,7 +97,6 @@ async function submitControl(path) {
             button => { button.disabled = true; }
         );
     }
-    disablePrestartDiagnosticButtons();
     disableSelectedAnalysisButton();
     if (els.jogPanel) {
         if (path === '/api/start') {

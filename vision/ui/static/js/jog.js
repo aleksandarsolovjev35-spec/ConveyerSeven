@@ -279,7 +279,6 @@ async function beginJogHold(direction, btn) {
             diagnosticButton => { diagnosticButton.disabled = true; }
         );
     }
-    disablePrestartDiagnosticButtons();
     disableSelectedAnalysisButton();
     btn.classList.add('jog-active');
     clearControlError();

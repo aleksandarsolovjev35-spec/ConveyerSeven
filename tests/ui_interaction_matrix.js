@@ -791,7 +791,35 @@ async function main() {
   await sleep(5);
   assert(calls.some(call => call.url === '/api/exit'), 'splash close calls EXIT');
 
-  console.log('UI INTERACTION MATRIX PASS: 21 groups');
+  // 22. Mode badge survives the per-tick line_status -> mode update order.
+  // fetchStatus calls updateLineStatus (which paints the badge) and then
+  // updateMode; applyModeUI must not re-fade a badge applyLiveBadge just
+  // made visible.
+  const badge = window.document.getElementById('mode-badge');
+  api.updateLineStatus(lineStatus('RUNNING', {
+    live: {running: true, streaming: true, static: false, fps: 25.0, error: null},
+    controls: controls({stop: true, exit: true, pause: true}),
+  }));
+  api.updateMode('RULES');
+  assert(!badge.classList.contains('is-faded'), 'live badge stays visible after mode tick');
+  assert(badge.classList.contains('mode-live'), 'live badge keeps mode-live class');
+  api.updateLineStatus(lineStatus('STOPPING', {
+    live: {running: true, streaming: false, static: true, fps: 0, error: null},
+    controls: controls({exit: true}),
+  }));
+  api.updateMode('RULES');
+  assert(!badge.classList.contains('is-faded')
+    && badge.classList.contains('mode-static')
+    && badge.textContent === 'СТОП-КАДР · ПРАВИЛА',
+    'static badge stays visible after mode tick');
+  api.updateLineStatus(lineStatus('IDLE', {
+    live: {running: false, streaming: false, static: false, fps: 0, error: null},
+    controls: controls({start: true, exit: true}),
+  }));
+  api.updateMode('RULES');
+  assert(badge.classList.contains('is-faded'), 'badge hidden again at rest');
+
+  console.log('UI INTERACTION MATRIX PASS: 22 groups');
   dom.window.close();
 }
 
