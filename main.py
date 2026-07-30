@@ -669,7 +669,13 @@ def _format_warmup_reasons(reasons: dict) -> str:
 
 
 def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict:
-    """Точечно догреть камеры, которые остались пустыми/тёмными."""
+    """Догреть камеры, которые после прогрева всё ещё пустые/тёмные.
+
+    Эскалация в два шага: сначала точечный повторный прогрев (лечит
+    медленный AGC), затем пересоздание потока через ``reopen_roles``
+    (лечит мёртвый UVC-поток, из которого кадры не появятся никогда).
+    RuntimeError выбрасывается, только когда не помогло ни то, ни другое.
+    """
     reasons = _weak_camera_warmup_reasons(stats)
     if not reasons:
         return stats
@@ -686,11 +692,47 @@ def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict
     retry_reasons = _weak_camera_warmup_reasons(retry_stats)
     merged = dict(stats or {})
     merged.update(retry_stats)
-    if retry_reasons:
+    if not retry_reasons:
+        return merged
+
+    # Повторное чтение не помогло: дело не в медленном AGC. Скорее
+    # всего, UVC-поток мёртв (нет изохронной полосы на хабе или backend
+    # собрал битый граф) — такой VideoCapture нужно не читать дальше,
+    # а пересоздать, как это и делает production-захват.
+    reopen = getattr(cameras, "reopen_roles", None)
+    if reopen is None:
         raise RuntimeError(
             f"Камеры не стабилизировались после прогрева ({phase}): "
             f"{_format_warmup_reasons(retry_reasons)}"
         )
+    stuck = tuple(retry_reasons)
+    print(
+        f"[CAMERA] {phase}: повторный прогрев не помог "
+        f"({_format_warmup_reasons(retry_reasons)}); "
+        f"пересоздаём потоки {', '.join(stuck)}"
+    )
+    reopened = reopen(stuck)
+    final_stats = cameras.warmup_roles(stuck, duration=retry_seconds)
+    merged.update(final_stats)
+    final_reasons = _weak_camera_warmup_reasons(final_stats)
+    if final_reasons:
+        not_reopened = ", ".join(
+            role for role in stuck if not reopened.get(role)
+        )
+        hint = (
+            f" (поток не пересоздался: {not_reopened})"
+            if not_reopened
+            else ""
+        )
+        raise RuntimeError(
+            f"Камеры не стабилизировались после прогрева ({phase}): "
+            f"{_format_warmup_reasons(final_reasons)}{hint}"
+        )
+    recovered = ", ".join(role for role in stuck if reopened.get(role))
+    print(
+        f"[CAMERA] {phase}: камеры восстановлены пересозданием "
+        f"потока: {recovered or '—'}"
+    )
     return merged
 
 
