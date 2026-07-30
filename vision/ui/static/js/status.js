@@ -205,7 +205,7 @@ function updateLineStatus(ls) {
         distributorActionLabel(action),
     );
 
-    _updateDistributorColorCoding(ls);
+    _updateDistributorRoute(ls);
 
     updateJogState(ls.jog || null);
     updateStateOverlay(ls);
@@ -254,36 +254,6 @@ function _applyTokenCategory(el, category) {
     else if (category === 'GOOD') el.classList.add('cell-good');
 }
 
-function _updateMechanicalScada(lineParts, process = {}) {
-    const pneumoUnit = document.getElementById('scada-pneumo-unit');
-    const chuteEl = document.getElementById('scada-chute');
-    const chuteLabel = document.getElementById('scada-chute-label');
-    if (!pneumoUnit || !chuteEl || !chuteLabel) return;
-
-    const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
-    const category = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
-    const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
-
-    pneumoUnit.classList.remove('is-actuating');
-    chuteEl.classList.remove('is-rejecting', 'is-cleanup');
-
-    if (category === 'BAD') {
-        pneumoUnit.classList.add('is-actuating');
-        chuteEl.classList.add('is-rejecting');
-        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · БРАК';
-    } else if (category === 'CLEANUP') {
-        pneumoUnit.classList.add('is-actuating');
-        chuteEl.classList.add('is-cleanup');
-        chuteLabel.textContent = '▼ СБРОС В ЛОТОК · ОЧИСТКА';
-    } else if (isDropPhase && partAtReject) {
-        pneumoUnit.classList.add('is-actuating');
-        chuteEl.classList.add('is-rejecting');
-        chuteLabel.textContent = '▼ СБРОС В ЛОТОК';
-    } else {
-        chuteLabel.textContent = '▶ ПРОХОД ЛИНИИ';
-    }
-}
-
 function _updateLineGates(lineParts, process = {}) {
     const gateIn = document.querySelector('.line-gate-in');
     const gateOut = document.querySelector('.line-gate-out');
@@ -313,36 +283,68 @@ function _updateLineGates(lineParts, process = {}) {
     }
 }
 
-function _updateDistributorColorCoding(ls) {
-    const d1Card = document.getElementById('dist1-card');
-    const d2Card = document.getElementById('dist2-card');
-    if (!d1Card || !d2Card) return;
+// ─── Заливка распределителя по маршруту детали ──────────────────────
+// Вся панель заливается полупрозрачным цветом канала, в который уходит
+// деталь: зелёный — годное, красный — брак, жёлтый — очистка. Карточки
+// DIST1/DIST2 лежат внутри этой заливки и остаются читаемыми.
 
-    d1Card.classList.remove('dist-reject', 'dist-cleanup');
-    d2Card.classList.remove('dist-reject', 'dist-cleanup');
+const ROUTE_CATEGORIES = ['GOOD', 'BAD', 'CLEANUP'];
 
-    const d1Pos = Math.max(0, Number(ls.dist1_position || 0));
-    const d1Max = Math.max(1, Number(ls.dist1_max || 340));
-    const d1Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
-        String(ls.dist1_state || '').toUpperCase(),
-    );
-    // DIST1: подсветка только когда вышел из исходного (pos > 0).
-    // В исходном (ПРОХОД, pos=0) и при перемещении — не горит.
-    if (!d1Moving && d1Pos > 0) {
-        if (d1Pos >= d1Max) d1Card.classList.add('dist-reject');
-        else d1Card.classList.add('dist-cleanup');
+function _resolveDistributorRoute(ls) {
+    const parts = Array.isArray(ls.line_parts) ? ls.line_parts : [];
+    const process = ls.process || {};
+    const phaseText = String(process.phase || '').toUpperCase();
+    const routingPhase =
+        phaseText.includes('ROUTE') || phaseText.includes('DROP');
+
+    // В фазах маршрутизации бэкенд называет деталь, для которой готовится
+    // распределитель: её категория — и есть текущий маршрут.
+    let part = null;
+    if (routingPhase && process.part_id != null) {
+        part = parts.find(
+            item => Number(item.id) === Number(process.part_id),
+        ) || null;
+    }
+    // Вне фаз маршрутизации смотрим на деталь, стоящую на сортировке.
+    if (!part) {
+        part = parts.find(item => Number(item.position) === 7) || null;
     }
 
-    const d2Pos = Math.max(0, Number(ls.dist2_position || 0));
-    const d2Max = Math.max(1, Number(ls.dist2_max || 340));
-    const d2Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(
-        String(ls.dist2_state || '').toUpperCase(),
-    );
-    // DIST2: подсветка только когда вышел из исходного (pos > 0).
-    // В исходном (канал БРАК, pos=0) и при перемещении — не горит.
-    if (!d2Moving && d2Pos > 0) {
-        if (d2Pos >= d2Max) d2Card.classList.add('dist-cleanup');
-        else d2Card.classList.add('dist-reject');
+    let category = part ? String(part.category || '').toUpperCase() : '';
+    if (!ROUTE_CATEGORIES.includes(category)) category = '';
+
+    if (!category) {
+        // Без детали маршрут показывает только реально открытая заслонка
+        // сброса (в т.ч. ручная проверка СБРОС): цвет — по каналу DIST2.
+        // Припаркованный селектор сам по себе панель не заливает.
+        const d1State = String(ls.dist1_state || '').toUpperCase();
+        const d1Open = ['OPEN', 'OPENING', 'CLOSING'].includes(d1State)
+            || Number(ls.dist1_position || 0) > 0;
+        if (d1Open) {
+            category =
+                String(ls.dist2_target || '').toUpperCase() === 'CLEANUP'
+                    ? 'CLEANUP'
+                    : 'BAD';
+        }
+    }
+    return category;
+}
+
+function _updateDistributorRoute(ls) {
+    const panel = els.distributorDiagnostics;
+    if (!panel) return;
+
+    panel.classList.remove('route-good', 'route-bad', 'route-cleanup');
+    const category = _resolveDistributorRoute(ls);
+    if (category === 'GOOD') panel.classList.add('route-good');
+    else if (category === 'BAD') panel.classList.add('route-bad');
+    else if (category === 'CLEANUP') panel.classList.add('route-cleanup');
+
+    if (els.distRoute) {
+        setIfChanged(
+            els.distRoute,
+            category ? `→ ${categoryLabel(category)}` : '',
+        );
     }
 }
 
@@ -479,16 +481,10 @@ function updateLineCells(lineParts, process = {}) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
         }
-        if (meta.position === 7 && (meta.category === 'BAD' || meta.category === 'CLEANUP')) {
-            token.el.dataset.atReject = 'true';
-        } else {
-            delete token.el.dataset.atReject;
-        }
         token.el.textContent = `#${id}`;
         token.el.title = `Деталь #${id} · ${categoryLabel(meta.category)}`;
     }
 
-    _updateMechanicalScada(lineParts, process);
     _updateLineGates(lineParts, process);
     _lineSyncDone = true;
 }

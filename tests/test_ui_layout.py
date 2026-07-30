@@ -395,13 +395,26 @@ class UiLayoutTests(unittest.TestCase):
         self.assertNotIn('id="main-camera" class="main-camera" src=""', self.html)
         self.assertIn(".main-camera:not([src])", self.css)
         self.assertIn(".history-card {\n    flex: 1 1 0;", self.css)
+        # «ОЧИСТКА» — самая длинная подпись категории — должна входить в
+        # карточку целиком: компактные паддинги и кегль подписи это
+        # гарантируют, ellipsis остаётся только страховкой.
+        history_card = self.css.split(".history-card {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("padding: 3px 4px", history_card)
+        self.assertIn("max-width: 84px", history_card)
+        history_symbol = self.css.split(".history-card-symbol {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("font-size: 10px", history_symbol)
+        self.assertIn("letter-spacing: 0.3px", history_symbol)
         self.assertIn(".gallery-title {\n    flex: 0 0 auto;", self.css)
         self.assertIn(".gallery-card-img-wrap.image-error", self.css)
         self.assertIn("attachGalleryImageErrorHandlers", self.js)
         self.assertIn("window._galleryImageError", self.js)
         self.assertIn("ИЗОБРАЖЕНИЕ НЕДОСТУПНО", self.js)
         self.assertIn(".axis-route span,", self.css)
-        self.assertIn(".scada-chute-label { min-width: 0; overflow: hidden", self.css)
+        self.assertIn(".dist-route { min-width: 0; overflow: hidden", self.css)
         calibration_css = (
             Path(__file__).resolve().parents[1]
             / "vision/ui/calibration/calibration.css"
@@ -453,6 +466,60 @@ class UiLayoutTests(unittest.TestCase):
         )
         self.assertIn("STATUS_INTERVAL_MOTION = 60", self.js)
         self.assertIn("startStatusPolling()", self.js)
+
+    def test_line_mechanics_block_is_removed_and_gates_stay_opaque(self):
+        for forbidden in (
+            "scada",
+            "pneumo",
+            "механика линии",
+            "data-at-reject",
+        ):
+            self.assertNotIn(forbidden, self.html.lower())
+            self.assertNotIn(forbidden, self.css.lower())
+            self.assertNotIn(forbidden, self.js.lower())
+        cells = self.css.split(".production-line-cells {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("overflow: hidden", cells)
+        gate_block = self.css.split(".line-gate {", 1)[1].split("}", 1)[0]
+        self.assertIn("background: var(--bg-0)", gate_block)
+        self.assertIn("z-index: 10", gate_block)
+        expected_gate_bg = {
+            "active": "--ok-gate",
+            "rejecting": "--bad-gate",
+            "cleanup": "--warn-gate",
+        }
+        for state, token in expected_gate_bg.items():
+            block = self.css.split(f".line-gate.gate-{state} {{", 1)[1].split(
+                "}", 1
+            )[0]
+            # Подложка ворот тонированная, но полностью непрозрачная:
+            # маркеры деталей не должны просвечивать сквозь ВХОД/ВЫХОД.
+            self.assertIn(f"background: var({token})", block)
+            self.assertNotIn("--ok-bg", block)
+            self.assertNotIn("--bad-bg", block)
+            self.assertNotIn("--warn-bg", block)
+        self.assertIn("--ok-gate:", self.css)
+        self.assertIn("--bad-gate:", self.css)
+        self.assertIn("--warn-gate:", self.css)
+
+    def test_distributor_panel_fills_with_route_color_and_stays_readable(self):
+        for route in ("route-good", "route-bad", "route-cleanup"):
+            self.assertIn(f".distributor-panel.{route}", self.css)
+        self.assertIn("--ok-fill:  ", self.css)
+        self.assertIn("--bad-fill: ", self.css)
+        self.assertIn("--warn-fill:", self.css)
+        self.assertIn('id="dist-route"', self.html)
+        self.assertIn("els.distRoute", self.js)
+        self.assertIn("_resolveDistributorRoute", self.js)
+        self.assertIn("ROUTE_CATEGORIES", self.js)
+        self.assertIn("→ ${categoryLabel(category)}", self.js)
+        card = self.css.split(".blade-card {", 1)[1].split("}", 1)[0]
+        self.assertIn("rgba(15, 19, 23, 0.62)", card)
+        marker = self.css.split(".blade-marker {", 1)[1].split("}", 1)[0]
+        self.assertIn("background: var(--accent)", marker)
+        self.assertNotIn("blade-dist1", self.css + self.html)
+        self.assertNotIn("blade-dist2", self.css + self.html)
 
 
 if __name__ == "__main__":

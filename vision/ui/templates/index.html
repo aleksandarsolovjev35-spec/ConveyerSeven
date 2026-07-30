@@ -5,16 +5,16 @@
 <head>
     <meta charset="UTF-8">
     <title>Монитор линии</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=25">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=1">
+    <link rel="stylesheet" href="/static/css/base.css?v=26">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=2">
     <link rel="stylesheet" href="/static/css/camera.css?v=26">
     <link rel="stylesheet" href="/static/css/axis.css?v=27">
-    <link rel="stylesheet" href="/static/css/history-strip.css?v=26">
+    <link rel="stylesheet" href="/static/css/history-strip.css?v=27">
     <link rel="stylesheet" href="/static/css/stats.css?v=27">
     <link rel="stylesheet" href="/static/css/jog.css?v=25">
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
-    <link rel="stylesheet" href="/static/css/process.css?v=27">
+    <link rel="stylesheet" href="/static/css/process.css?v=28">
     <link rel="stylesheet" href="/static/css/motion.css?v=25">
 </head>
 <body>
@@ -72,10 +72,10 @@
                     <div class="process-line-head">
                         <span class="process-line-title">ПУТЬ ДЕТАЛЕЙ</span>
                     </div>
-                    <div class="line-cells-wrapper production-line-wrapper" style="position:relative;">
+                    <div class="line-cells-wrapper production-line-wrapper">
                         <div class="line-conveyor-track">
                             <div class="line-gate line-gate-in" aria-hidden="true">▸ ВХОД</div>
-                            <div id="line-cells" class="line-cells production-line-cells" style="position:relative; overflow:visible;">
+                            <div id="line-cells" class="line-cells production-line-cells">
                                 <div class="line-cell" data-pos="0" data-cell-no="1"></div>
                                 <div class="line-cell" data-pos="1" data-cell-no="2"></div>
                                 <div class="line-cell" data-pos="2" data-cell-no="3"></div>
@@ -96,20 +96,6 @@
                         <span>6</span>
                         <span>7</span>
                         <span class="stage-position">8 · СОРТИРОВКА</span>
-                    </div>
-                    <div id="scada-actuator" class="scada-actuator" aria-hidden="true">
-                        <div class="scada-actuator-track">
-                            <span class="scada-label-text">МЕХАНИКА ЛИНИИ</span>
-                            <div class="scada-pneumo-unit" id="scada-pneumo-unit">
-                                <span class="pneumo-title">DIST2 · ПНЕВМО-ТОЛКАТЕЛЬ</span>
-                                <div class="pneumo-cylinder">
-                                    <div id="pneumo-rod" class="pneumo-rod"></div>
-                                </div>
-                            </div>
-                            <div class="scada-chute" id="scada-chute">
-                                <span id="scada-chute-label" class="scada-chute-label">▶ ПРОХОД ЛИНИИ</span>
-                            </div>
-                        </div>
                     </div>
                     <div id="process-phase-label" class="process-phase-label"></div>
                     </div>
@@ -154,7 +140,10 @@
                 </div>
 
                 <section id="distributor-diagnostics" class="distributor-panel ui-collapse" data-ui-block="distributor">
-                    <div class="distributor-title">РАСПРЕДЕЛИТЕЛЬ</div>
+                    <div class="distributor-head">
+                        <span class="distributor-title">РАСПРЕДЕЛИТЕЛЬ</span>
+                        <span id="dist-route" class="dist-route"></span>
+                    </div>
                     <div id="dist1-card" class="blade-card">
                         <div class="axis-row">
                             <span class="axis-name">DIST1 · ЗАСЛОНКА СБРОСА</span>
@@ -162,7 +151,7 @@
                             <span><b id="dist1-pos">0</b> / <b id="dist1-max">340</b></span>
                         </div>
                         <div class="blade-track">
-                            <div id="dist1-blade" class="blade-marker blade-dist1"></div>
+                            <div id="dist1-blade" class="blade-marker"></div>
                         </div>
                         <div class="axis-route"><span>ТЕКУЩЕЕ ПОЛОЖЕНИЕ</span><b id="dist1-target">ПРОХОД</b></div>
                         <div class="diagnostic-grid blade-diagnostic-grid ui-collapse">
@@ -177,7 +166,7 @@
                             <span><b id="dist2-pos">0</b> / <b id="dist2-max">340</b></span>
                         </div>
                         <div class="blade-track">
-                            <div id="dist2-blade" class="blade-marker blade-dist2"></div>
+                            <div id="dist2-blade" class="blade-marker"></div>
                         </div>
                         <div class="axis-route"><span>ТЕКУЩИЙ КАНАЛ</span><b id="dist2-target">БРАК</b></div>
                         <div class="diagnostic-grid blade-diagnostic-grid ui-collapse">
@@ -274,11 +263,11 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=27"></script>
+    <script src="/static/js/core.js?v=28"></script>
     <script src="/static/js/boot.js?v=25"></script>
     <script src="/static/js/diagnostics.js?v=27"></script>
     <script src="/static/js/rule-summary.js?v=1"></script>
-    <script src="/static/js/status.js?v=27"></script>
+    <script src="/static/js/status.js?v=28"></script>
     <script src="/static/js/controls.js?v=27"></script>
     <script src="/static/js/cameras.js?v=27"></script>
     <script src="/static/js/jog.js?v=27"></script>

@@ -464,6 +464,72 @@ async function main() {
   assert(window.document.getElementById('defects-title').textContent === 'ОСНОВНЫЕ ДЕФЕКТЫ', 'top defects shown while running');
   assert(!window.document.getElementById('defects-section').classList.contains('is-hidden'), 'working defects section visible');
 
+  // 8.1 Вся панель распределителя заливается цветом маршрута детали.
+  const distPanel = window.document.getElementById('distributor-diagnostics');
+  const distRoute = window.document.getElementById('dist-route');
+  const routeClasses = ['route-good', 'route-bad', 'route-cleanup'];
+  assert(!window.document.getElementById('scada-actuator'), 'SCADA-блок «МЕХАНИКА ЛИНИИ» удалён из DOM');
+
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    line_parts: [{id: 9, position: 6, category: 'BAD'}],
+    process: {
+      phase: 'ROUTE_PREPARE', label: 'route', part_id: 9,
+      positions: [7], conveyor: {},
+    },
+  }));
+  assert(distPanel.classList.contains('route-bad'), 'панель красная, когда деталь уходит в брак');
+  assert(distRoute.textContent === '→ БРАК', 'подпись маршрута показывает канал БРАК');
+
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    line_parts: [{id: 10, position: 7, category: 'GOOD'}],
+    process: {
+      phase: 'SETTLE', label: 'settle', part_id: null,
+      positions: [], conveyor: {},
+    },
+  }));
+  assert(distPanel.classList.contains('route-good'), 'панель зелёная, когда деталь уходит в годное');
+  assert(!distPanel.classList.contains('route-bad'), 'красная заливка снята');
+
+  api.updateLineStatus(lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    line_parts: [{id: 11, position: 7, category: 'CLEANUP'}],
+    process: {
+      phase: 'PART_DROP', label: 'drop', part_id: 11,
+      positions: [7], conveyor: {},
+    },
+  }));
+  assert(distPanel.classList.contains('route-cleanup'), 'панель жёлтая, когда деталь уходит на очистку');
+
+  api.updateLineStatus(lineStatus('IDLE', {
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(
+    !routeClasses.some(cls => distPanel.classList.contains(cls)),
+    'без детали на сортировке панель не залита',
+  );
+  assert(distRoute.textContent === '', 'подпись маршрута очищена');
+
+  // Открытая вручную заслонка сброса заливает панель по каналу DIST2.
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 340, dist1_state: 'OPEN', dist2_target: 'CLEANUP',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('route-cleanup'), 'ручной сброс показывает канал очистки');
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 340, dist1_state: 'OPEN', dist2_target: 'BAD',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('route-bad'), 'ручной сброс показывает канал брака');
+  api.updateLineStatus(lineStatus('IDLE', {
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(
+    !routeClasses.some(cls => distPanel.classList.contains(cls)),
+    'закрытая заслонка гасит заливку панели',
+  );
+
   // 9. Actual distributor coordinates map to blade marker positions.
   api.updateLineStatus(lineStatus('IDLE', {
     dist1_position: -2000000,
