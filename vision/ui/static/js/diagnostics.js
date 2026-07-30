@@ -1,182 +1,8 @@
 // diagnostics.js — Line Monitor UI module
 'use strict';
 
-function disablePrestartDiagnosticButtons() {
-    if (!els.prestartDiagnostics) return;
-    els.checkCameras.disabled = true;
-    els.checkVisionRules.disabled = true;
-}
-
 function disableSelectedAnalysisButton() {
     if (els.analyzeSelectedFrame) els.analyzeSelectedFrame.disabled = true;
-}
-
-function updatePrestartDiagnostics(ls) {
-    if (!els.prestartDiagnostics) return;
-    const controls = ls.controls || {};
-    const busy = (
-        state.prestartDiagnosticPending
-        || ls.diagnostic_busy === true
-        || state.controlPending
-    );
-    const cameraAllowed = (
-        controls.camera_diagnostic === true
-        && !busy
-        && !state.offline
-    );
-    const visionAllowed = (
-        controls.vision_rule_diagnostic === true
-        && !busy
-        && !state.offline
-    );
-    els.checkCameras.disabled = !cameraAllowed;
-    els.checkVisionRules.disabled = !visionAllowed;
-    els.checkCameras.classList.toggle('pending', busy);
-    els.checkVisionRules.classList.toggle('pending', busy);
-
-    const report = ls.diagnostics || {};
-    const status = report.status || 'NOT_RUN';
-    els.diagnosticStatus.className = status;
-    setIfChanged(els.diagnosticStatus, diagnosticStatusLabel(status));
-    setIfChanged(els.diagnosticMessage, report.message || '—');
-    const cameras = Array.isArray(report.cameras) ? report.cameras : [];
-    const models = Array.isArray(report.models) ? report.models : [];
-    const rules = Array.isArray(report.rules) ? report.rules : [];
-    setIfChanged(
-        els.diagnosticCameraCount,
-        cameras.length ? `${cameras.filter(item => item.ok).length}/${cameras.length}` : '—',
-    );
-    setIfChanged(
-        els.diagnosticModelCount,
-        models.length ? `${models.filter(item => item.ok).length}/${models.length}` : '—',
-    );
-    setIfChanged(els.diagnosticRuleCount, rules.length || '—');
-    setIfChanged(
-        els.diagnosticTriggeredCount,
-        rules.length ? rules.filter(item => item.triggered).length : '—',
-    );
-    const renderKey = [
-        status,
-        report.kind || '',
-        report.updated_at || '',
-        cameras.length,
-        models.length,
-        rules.length,
-    ].join(':');
-    if (state.lastDiagnosticRenderKey !== renderKey) {
-        state.lastDiagnosticRenderKey = renderKey;
-        renderDiagnosticDetails(cameras, models, rules);
-    }
-}
-
-function renderDiagnosticDetails(cameras, models, rules) {
-    if (!els.diagnosticDetails) return;
-    const rows = [];
-    for (const camera of cameras) {
-        rows.push({
-            left: cameraRoleLabel(camera.role),
-            right: camera.ok
-                ? `${camera.width}×${camera.height}${camera.detections === undefined ? '' : ` · ОБЪЕКТОВ ${camera.detections}`}`
-                : 'ОШИБКА',
-            kind: camera.ok ? '' : 'error',
-        });
-    }
-    for (const model of models) {
-        const name = String(model.model || '').split('/').pop();
-        rows.push({
-            left: `${cameraRoleLabel(model.role)} · ${name}`,
-            right: model.ok
-                ? `${Number(model.elapsed_ms || 0).toFixed(0)} мс · ОБЪЕКТОВ ${model.detections || 0}`
-                : (model.error || 'ОШИБКА'),
-            kind: model.ok ? '' : 'error',
-        });
-    }
-    for (const rule of rules) {
-        rows.push({
-            left: `ПРАВИЛО · ${rule.name}`,
-            right: rule.detail || (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА'),
-            kind: rule.triggered ? 'triggered' : '',
-        });
-    }
-    els.diagnosticDetails.replaceChildren();
-    for (const row of rows) {
-        const element = document.createElement('div');
-        element.className = `diagnostic-detail-row ${row.kind}`.trim();
-        const left = document.createElement('span');
-        const right = document.createElement('b');
-        left.textContent = row.left;
-        right.textContent = row.right;
-        element.append(left, right);
-        els.diagnosticDetails.appendChild(element);
-    }
-}
-
-function setupPrestartDiagnostics() {
-    if (!els.prestartDiagnostics) return;
-    els.checkCameras.addEventListener('click', () => {
-        runPrestartDiagnostic('CAMERAS');
-    });
-    els.checkVisionRules.addEventListener('click', () => {
-        runPrestartDiagnostic('VISION_RULES');
-    });
-}
-
-async function runPrestartDiagnostic(kind) {
-    if (
-        state.prestartDiagnosticPending
-        || state.offline
-        || state.controlPending
-    ) return;
-    const button = kind === 'CAMERAS'
-        ? els.checkCameras
-        : els.checkVisionRules;
-    if (!button || button.disabled) return;
-    state.prestartDiagnosticPending = true;
-    state.backendControls = {
-        ...state.backendControls,
-        start: false,
-        exit: false,
-        jog_hold: false,
-        distributor_diagnostic: false,
-        camera_diagnostic: false,
-        vision_rule_diagnostic: false,
-    };
-    clearControlError();
-    applyButtonsForState(
-        state.lineState,
-        state.serverExitRequested,
-        state.backendControls,
-    );
-    if (els.jogPanel) {
-        els.jogPanel.querySelectorAll('.jog-hold-btn').forEach(
-            jogButton => { jogButton.disabled = true; }
-        );
-    }
-    if (els.distributorDiagnostics) {
-        els.distributorDiagnostics.querySelectorAll('button').forEach(
-            diagnosticButton => { diagnosticButton.disabled = true; }
-        );
-    }
-    disableSelectedAnalysisButton();
-    updatePrestartDiagnostics({
-        controls: {},
-        diagnostic_busy: true,
-        diagnostics: {
-            status: 'RUNNING',
-            message: kind === 'CAMERAS'
-                ? 'Проверка семи камер'
-                : 'Камеры -> модели -> defect rules',
-        },
-    });
-    const endpoint = kind === 'CAMERAS'
-        ? '/api/diagnostics/cameras'
-        : '/api/diagnostics/vision-rules';
-    try {
-        await apiPost(endpoint, true);
-    } finally {
-        state.prestartDiagnosticPending = false;
-        requestImmediateStatus();
-    }
 }
 
 function updateDistributorDiagnosticControls(ls) {
@@ -226,7 +52,6 @@ function setupDistributorDiagnostics() {
                     jogButton => { jogButton.disabled = true; }
                 );
             }
-            disablePrestartDiagnosticButtons();
             disableSelectedAnalysisButton();
             updateDistributorDiagnosticControls({
                 diagnostic_allowed: false,
@@ -541,7 +366,6 @@ function setupSelectedFrameAnalysis() {
             state.serverExitRequested,
             state.backendControls,
         );
-        disablePrestartDiagnosticButtons();
         if (els.distributorDiagnostics) {
             els.distributorDiagnostics.querySelectorAll('button').forEach(
                 button => { button.disabled = true; }

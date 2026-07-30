@@ -70,7 +70,9 @@
 
 .axis-state.axis-moving,
 .axis-state.axis-opening,
-.axis-state.axis-closing {
+.axis-state.axis-closing,
+.axis-state.axis-waiting,
+.axis-state.axis-homing {
     color: var(--warn);
     background: var(--warn-bg);
 }

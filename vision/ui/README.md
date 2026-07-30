@@ -2,11 +2,13 @@
 
 UI uses ordered classic browser modules and does not require a production bundler.
 
+Визуальная карта DOM ↔ JS ↔ FastAPI ↔ ProductionCycle: `docs/ui_architecture_map_ru.svg`.
+
 ## JavaScript load order
 
 1. `core.js` — constants, state, DOM cache, API and shared helpers.
 2. `boot.js` — splash, boot polling and readiness.
-3. `diagnostics.js` — pre-start checks and distributor diagnostics.
+3. `diagnostics.js` — distributor diagnostics and selected-frame (3 кадра) analysis.
 4. `status.js` — backend status, OFFLINE, process telemetry and part path.
 5. `controls.js` — START/STOP/EXIT, errors and state overlay.
 6. `cameras.js` — camera selection, RAW/RULES and frame refresh.

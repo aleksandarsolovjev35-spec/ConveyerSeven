@@ -50,7 +50,6 @@ function viewModeAllowed() {
         && !state.jogBusy
         && !state.distributorDiagnosticPending
         && !state.distributorDiagnosticBackendBusy
-        && !state.prestartDiagnosticPending
         && !state.selectedAnalysisPending
     );
 }
@@ -74,6 +73,14 @@ function updateViewModeControls() {
 
 function applyModeUI() {
     updateViewModeControls();
+    // Единственный источник истины для бейджа — applyLiveBadge: поток,
+    // стоп-кадр, анализ или скрытие. Иначе is-faded, добавленный здесь на
+    // каждом тике updateMode(status.mode), перекрывал видимый бейдж,
+    // который только что выставила applyLiveBadge в updateLineStatus.
+    if (typeof applyLiveBadge === 'function') {
+        applyLiveBadge(state.jogActive);
+        return;
+    }
     if (state.jogActive || state.selectedAnalysisActive) return;
     els.modeBadge.classList.add('is-faded');
 }

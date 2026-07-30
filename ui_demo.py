@@ -309,6 +309,19 @@ class UiDemo:
                 "active": self.selected_analysis,
                 "role": self.selected_role,
             },
+            # Тот же контракт, что и у ProductionCycle: без блока live
+            # фронт считал поток навсегда выключенным, поэтому бейдж
+            # «СТОП-КАДР · ПРАВИЛА» в демо никогда не показывался.
+            # Как и в рабочем цикле, статичные кадры принадлежат анализу
+            # только в активном цикле; в IDLE бейдж скрыт.
+            "live": {
+                "running": self.state in {"RUNNING", "PAUSED", "STOPPING"},
+                "streaming": False,
+                "static": self.state in {"RUNNING", "PAUSED", "STOPPING"},
+                "stage": self.process.get("phase", "IDLE"),
+                "fps": 0.0,
+                "error": None,
+            },
             "frame_analysis": frame_analysis,
             "diagnostics": dict(self.diagnostics),
             "jog": {
