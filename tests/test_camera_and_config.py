@@ -732,6 +732,54 @@ class CameraAndConfigTests(unittest.TestCase):
             manager.release()
             self.assertLess(time.monotonic() - started, 0.5)
 
+    def test_reopen_roles_replaces_dead_stream(self):
+        """Стартовое восстановление: мёртвый поток пересоздаётся.
+
+        Повторное чтение того же VideoCapture мёртвый UVC-поток не
+        оживляет; reopen_roles собирает новый handle и проверяет его
+        preflight-ом ещё до подмены в наборе камер.
+        """
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            created = []
+
+            def factory(camera_id):
+                capture = FakeCapture(bright)
+                created.append(capture)
+                return capture
+
+            with patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001):
+                manager = CameraManager(mapping_path, capture_factory=factory)
+            try:
+                role = sorted(mapping)[0]
+                manager.cameras[role] = SilentCapture(bright)
+                result = manager.reopen_roles((role,), timeout=5.0)
+                self.assertTrue(result[role])
+                self.assertIs(manager.cameras[role], created[-1])
+                # После подмены поток сразу годится для production-захвата.
+                frame = manager.capture_single(role)
+                self.assertEqual(frame.shape, (720, 1280, 3))
+            finally:
+                manager.release()
+
+    def test_reopen_roles_rejects_unknown_role(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mapping = self.mapping()
+            mapping_path = self.write_json(temp, "camera_mapping.json", mapping)
+            bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+            with patch("vision.camera_manager._PREFLIGHT_READ_INTERVAL", 0.001):
+                manager = CameraManager(
+                    mapping_path,
+                    capture_factory=lambda camera_id: FakeCapture(bright),
+                )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "Неизвестные камеры"):
+                    manager.reopen_roles(("NO_SUCH_ROLE",), timeout=1.0)
+            finally:
+                manager.release()
+
     def test_configure_capture_retries_format_order_until_mjpg_sticks(self):
         class OrderSensitiveCapture(FakeCapture):
             """FOURCC применяется только ПОСЛЕ смены разрешения."""

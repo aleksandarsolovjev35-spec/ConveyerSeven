@@ -104,6 +104,12 @@ _RECOVERY_ATTEMPTS = _env_int("CAMERA_RECOVERY_ATTEMPTS", 2, minimum=0)
 _RECOVERY_PREFLIGHT = _env_float(
     "CAMERA_RECOVERY_PREFLIGHT", 2.0, minimum=0.2
 )
+# Бюджет на пересоздание одного потока при стартовом восстановлении
+# (reopen_roles). Мёртвый поток повторным чтением не оживить, но и
+# виснуть на семи мёртвых камерах подряд старт не должен.
+_RECOVERY_REOPEN_SECONDS = _env_float(
+    "CAMERA_RECOVERY_REOPEN_SECONDS", 6.0, minimum=1.0
+)
 
 _BACKEND_ALIASES = {
     "dshow": "CAP_DSHOW",
@@ -871,6 +877,50 @@ class CameraManager:
                 if capture is not None:
                     self._safe_release(role, capture)
         return False
+
+    def reopen_roles(self, roles, timeout: float | None = None) -> dict:
+        """Пересоздать потоки выбранных ролей (стартовое восстановление).
+
+        Повторное чтение того же VideoCapture помогает только против
+        медленного перехода автоэкспозиции. Если UVC-поток мёртв
+        (драйвер не зарезервировал изохронную полосу или backend собрал
+        битый граф), кадры из него не появятся никогда — нужен новый
+        handle. Production уже делает это через ``_reopen_role`` в
+        ``capture_roles``; метод даёт тот же механизм прогреву на
+        старте, возвращая ``{role: успех}``.
+
+        Роли пересоздаются последовательно: параллельный перезапуск
+        нескольких камер повторяет гонку за полосу USB, которая чаще
+        всего и является причиной мёртвого потока. Метод не латчит
+        менеджер: неудача по роли отражается только в результате.
+        """
+        requested = tuple(dict.fromkeys(roles))
+        if not requested:
+            return {}
+        unknown = set(requested) - set(self.cameras)
+        if unknown:
+            raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
+        self._ensure_usable()
+        budget = (
+            float(timeout)
+            if timeout is not None
+            else float(_RECOVERY_REOPEN_SECONDS)
+        )
+        results = {}
+        for role in requested:
+            deadline = time.monotonic() + budget
+            try:
+                reopened = self._reopen_role(role, deadline)
+            except Exception as exc:
+                print(
+                    f"[CAMERA] {role}: ошибка пересоздания потока: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                reopened = False
+            results[role] = reopened
+            if not reopened:
+                print(f"[CAMERA] {role}: поток пересоздать не удалось")
+        return results
 
     def release(self):
         # Менеджер не открывает окна OpenCV, поэтому destroyAllWindows()
