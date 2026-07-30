@@ -140,119 +140,6 @@ def main():
             calib = load_calibration()
             _ensure_initialization_active()
 
-            # Serial (автопоиск)
-            monitor.boot_step_start(
-                "serial", "Поиск контроллера",
-            )
-            serial_baud = int(os.environ.get(
-                "SERIAL_BAUD", "115200",
-            ))
-            preferred_port = os.environ.get("SERIAL_PORT")
-
-            try:
-                found_port, port_message = find_controller(
-                    baudrate=serial_baud,
-                    preferred_port=preferred_port,
-                )
-
-                if found_port is None:
-                    monitor.boot_step_error(
-                        "serial", port_message,
-                    )
-                    _report_startup_failure()
-                    return
-
-                transport = SerialTransport(
-                    port=found_port, baudrate=serial_baud,
-                )
-                # Start from a stopped controller before any configuration.
-                transport.send("G1")
-                transport.send("G25")
-            except Exception as e:
-                monitor.boot_step_error(
-                    "serial",
-                    f"Ошибка последовательного порта: {e}",
-                )
-                _report_startup_failure()
-                return
-
-            monitor.boot_step_done(
-                "serial",
-                f"Контроллер: {found_port} @ {serial_baud}",
-            )
-            _ensure_initialization_active()
-
-            # Hardware
-            monitor.boot_step_start(
-                "hardware", "Инициализация оборудования",
-            )
-            try:
-                conveyor = Conveyor(
-                    transport,
-                    speed=calib["conveyor_speed"],
-                    accel=calib["conveyor_accel"],
-                    steps_per_division=calib["normal_steps"],
-                    divisions_per_movement=2,
-                )
-                dist1_axis = Axis(
-                    transport,
-                    axis_id=0,
-                    minimum=0,
-                    maximum=calib["dist1_open_position"],
-                    speed=calib["axis_speed"],
-                    accel=calib["axis_accel"],
-                )
-                dist2_axis = Axis(
-                    transport,
-                    axis_id=1,
-                    minimum=0,
-                    maximum=max(
-                        calib["dist2_bad_position"],
-                        calib["dist2_cleanup_position"],
-                    ),
-                    speed=calib["axis_speed"],
-                    accel=calib["axis_accel"],
-                )
-                distributor = Distributor(
-                    dist1_axis=dist1_axis,
-                    dist2_axis=dist2_axis,
-                    dist1_open_position=calib[
-                        "dist1_open_position"
-                    ],
-                    dist2_bad_position=calib[
-                        "dist2_bad_position"
-                    ],
-                    dist2_cleanup_position=calib[
-                        "dist2_cleanup_position"
-                    ],
-                    drop_time=calib["drop_time"],
-                )
-                if (
-                    distributor.dist1_open_position != calib["dist1_open_position"]
-                    or distributor.dist2_bad_position != calib["dist2_bad_position"]
-                    or distributor.dist2_cleanup_position
-                    != calib["dist2_cleanup_position"]
-                ):
-                    raise RuntimeError(
-                        "Distributor endpoints do not match calibration.json"
-                    )
-                distributor.cancel_check = shutdown_requested.is_set
-                jog = JogController(
-                    transport=transport,
-                    calibration=calib,
-                )
-            except Exception as e:
-                monitor.boot_step_error(
-                    "hardware",
-                    f"Ошибка оборудования: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "hardware", "Лента и две оси инициализированы",
-            )
-            _ensure_initialization_active()
-
             # Cameras
             monitor.boot_step_start(
                 "cameras", "Открытие камер",
@@ -374,6 +261,120 @@ def main():
                 f"Настроено правил: {len(decision.rules)}",
             )
             _ensure_initialization_active()
+
+            # Serial (автопоиск)
+            monitor.boot_step_start(
+                "serial", "Поиск контроллера",
+            )
+            serial_baud = int(os.environ.get(
+                "SERIAL_BAUD", "115200",
+            ))
+            preferred_port = os.environ.get("SERIAL_PORT")
+
+            try:
+                found_port, port_message = find_controller(
+                    baudrate=serial_baud,
+                    preferred_port=preferred_port,
+                )
+
+                if found_port is None:
+                    monitor.boot_step_error(
+                        "serial", port_message,
+                    )
+                    _report_startup_failure()
+                    return
+
+                transport = SerialTransport(
+                    port=found_port, baudrate=serial_baud,
+                )
+                # Start from a stopped controller before any configuration.
+                transport.send("G1")
+                transport.send("G25")
+            except Exception as e:
+                monitor.boot_step_error(
+                    "serial",
+                    f"Ошибка последовательного порта: {e}",
+                )
+                _report_startup_failure()
+                return
+
+            monitor.boot_step_done(
+                "serial",
+                f"Контроллер: {found_port} @ {serial_baud}",
+            )
+            _ensure_initialization_active()
+
+            # Hardware
+            monitor.boot_step_start(
+                "hardware", "Инициализация оборудования",
+            )
+            try:
+                conveyor = Conveyor(
+                    transport,
+                    speed=calib["conveyor_speed"],
+                    accel=calib["conveyor_accel"],
+                    steps_per_division=calib["normal_steps"],
+                    divisions_per_movement=2,
+                )
+                dist1_axis = Axis(
+                    transport,
+                    axis_id=0,
+                    minimum=0,
+                    maximum=calib["dist1_open_position"],
+                    speed=calib["axis_speed"],
+                    accel=calib["axis_accel"],
+                )
+                dist2_axis = Axis(
+                    transport,
+                    axis_id=1,
+                    minimum=0,
+                    maximum=max(
+                        calib["dist2_bad_position"],
+                        calib["dist2_cleanup_position"],
+                    ),
+                    speed=calib["axis_speed"],
+                    accel=calib["axis_accel"],
+                )
+                distributor = Distributor(
+                    dist1_axis=dist1_axis,
+                    dist2_axis=dist2_axis,
+                    dist1_open_position=calib[
+                        "dist1_open_position"
+                    ],
+                    dist2_bad_position=calib[
+                        "dist2_bad_position"
+                    ],
+                    dist2_cleanup_position=calib[
+                        "dist2_cleanup_position"
+                    ],
+                    drop_time=calib["drop_time"],
+                )
+                if (
+                    distributor.dist1_open_position != calib["dist1_open_position"]
+                    or distributor.dist2_bad_position != calib["dist2_bad_position"]
+                    or distributor.dist2_cleanup_position
+                    != calib["dist2_cleanup_position"]
+                ):
+                    raise RuntimeError(
+                        "Distributor endpoints do not match calibration.json"
+                    )
+                distributor.cancel_check = shutdown_requested.is_set
+                jog = JogController(
+                    transport=transport,
+                    calibration=calib,
+                )
+            except Exception as e:
+                monitor.boot_step_error(
+                    "hardware",
+                    f"Ошибка оборудования: {e}",
+                )
+                _report_startup_failure()
+                return
+            monitor.boot_step_done(
+                "hardware", "Лента и две оси инициализированы",
+            )
+            _ensure_initialization_active()
+
 
             # Production cycle
             monitor.boot_step_start(
