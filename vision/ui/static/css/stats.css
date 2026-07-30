@@ -28,6 +28,7 @@
     align-items: center;
     justify-content: space-between;
     min-height: 28px;
+    min-width: 0;
     padding: 5px 7px;
     color: var(--text-dim);
     background: var(--bg-1);
@@ -38,7 +39,10 @@
     letter-spacing: 0.7px;
 }
 
+.accordion-header span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .accordion-chevron {
+    flex: 0 0 auto;
     width: 16px;
     height: 16px;
     fill: none;
@@ -78,16 +82,26 @@
 }
 
 .frame-analysis-header h2 {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
     color: var(--text);
     font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-weight: 700;
     letter-spacing: 0.7px;
 }
 
 .frame-analysis-header span {
+    flex: 0 1 52%;
+    min-width: 0;
+    overflow: hidden;
     color: var(--accent);
     font: 700 8px var(--font-mono);
     text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .frame-analysis-message {
@@ -146,7 +160,7 @@
 .frame-analysis-item.triggered .frame-analysis-reason { color: var(--bad); }
 .frame-analysis-item.skipped .frame-analysis-reason { color: var(--warn); }
 
-.frame-analysis-item b { color: var(--text); white-space: nowrap; }
+.frame-analysis-item b { max-width: 116px; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
 .frame-analysis-item.ok { border-left: 2px solid var(--ok); }
 .frame-analysis-item.triggered,
 .frame-analysis-item.error { border-left: 2px solid var(--bad); }
@@ -407,18 +421,26 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 6px;
+    min-width: 0;
 }
 
 .rule-summary-camera {
+    min-width: 0;
+    overflow: hidden;
     color: var(--text);
     font: 700 8.5px var(--font-mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
     letter-spacing: 0.3px;
     text-transform: uppercase;
 }
 
 .rule-summary-verdict {
+    flex: 0 1 118px;
+    overflow: hidden;
     font: 700 8px var(--font-mono);
     text-transform: uppercase;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
@@ -461,8 +483,12 @@
 }
 
 .rule-summary-metric-value {
+    flex: 0 1 auto;
+    max-width: 55%;
+    overflow: hidden;
     color: var(--text);
     font: 700 8px var(--font-mono);
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 

@@ -350,9 +350,13 @@ function animateUiElement(el, className = 'ui-value-change') {
     setTimeout(() => el.classList.remove(className), 260);
 }
 
+function normalizeOperatorText(value) {
+    return String(value).replace(/\u2116\s*/g, '#');
+}
+
 function setIfChanged(el, value) {
     if (!el) return;
-    const text = String(value);
+    const text = normalizeOperatorText(value);
     if (el.textContent === text) return;
     el.textContent = text;
     if (
@@ -417,7 +421,7 @@ function distributorActionLabel(value) {
         .replace('DIST1_OPEN', 'DIST1 СБРОС')
         .replace('DIST2_BAD', 'DIST2 БРАК')
         .replace('DIST2_CLEANUP', 'DIST2 ОЧИСТКА')
-        .replace(/PART #(\d+)/g, 'ДЕТАЛЬ №$1')
+        .replace(/PART #(\d+)/g, 'ДЕТАЛЬ #$1')
         .replace('PART', 'ДЕТАЛЬ')
         .replace('DROP...', 'СБРОС...')
         .replace('PASS', 'ПРОХОД')

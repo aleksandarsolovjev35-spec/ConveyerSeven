@@ -211,6 +211,10 @@ function updateStateOverlay(ls) {
             ? `На линии осталось деталей: ${remaining}`
             : 'Завершение работы...';
         peekable = true;
+    } else if (state.selectedAnalysisActive) {
+        // Оператор запросил стоп-кадр выбранной камеры: не закрываем его
+        // большим состоянием IDLE/STOPPED поверх изображения.
+        mainText = '';
     } else if (lineState === 'PAUSED') {
         if (state.jogActive) {
             mainText = '';

@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Калибровка камер</title>
     <link rel="stylesheet" href="../static/css/base.css">
+    <link rel="stylesheet" href="../static/css/blocks.css">
     <link rel="stylesheet" href="calibration.css">
 </head>
 <body>
     <div class="calibration-app">
-        <header class="calibration-header">
+        <header class="calibration-header" data-ui-block="calibration-header">
             <div id="state-box" class="calibration-state state-waiting">
                 <span id="state-dot" class="calibration-state-dot"></span>
                 <span id="state-label">ПОДГОТОВКА</span>
@@ -25,7 +26,7 @@
         </header>
 
         <main class="calibration-main">
-            <section class="preview-panel">
+            <section class="preview-panel" data-ui-block="calibration-preview">
                 <div class="panel-heading">
                     <div>
                         <span class="eyebrow">ТЕКУЩИЙ ШАГ</span>
@@ -55,7 +56,7 @@
                 </div>
             </section>
 
-            <aside class="assignment-panel">
+            <aside class="assignment-panel" data-ui-block="calibration-assignment">
                 <div class="panel-heading compact">
                     <div>
                         <span class="eyebrow">КОНФИГУРАЦИЯ</span>
@@ -93,7 +94,7 @@
             </aside>
         </main>
 
-        <footer class="calibration-footer">
+        <footer class="calibration-footer" data-ui-block="calibration-footer">
             <span>camera_mapping.json создаётся только после полного назначения 7/7</span>
             <span id="config-path" class="config-path">—</span>
             <button id="cancel-calibration" class="footer-exit" type="button">ВЫХОД</button>

@@ -1,0 +1,110 @@
+/* blocks.css — named UI block containment and text safety */
+
+[data-ui-block] {
+    min-width: 0;
+    min-height: 0;
+    isolation: isolate;
+}
+
+[data-ui-block] :where(h1, h2, h3, strong, span, b, small, button) {
+    min-width: 0;
+}
+
+[data-ui-block] :where(
+    .ui-text-clip,
+    .title,
+    .state-label,
+    .metrics > span,
+    .preview-cam-label,
+    .camera-label,
+    .mode-badge,
+    .process-line-title,
+    .history-title,
+    .history-card-id,
+    .history-card-symbol,
+    .accordion-header span,
+    .stats-label,
+    .stats-service-label,
+    .stats-service-value,
+    .distributor-title,
+    .axis-name,
+    .axis-state,
+    .axis-route span,
+    .axis-route b,
+    .axis-action,
+    .jog-title,
+    .jog-action,
+    .jog-hint,
+    .frame-analysis-header h2,
+    .frame-analysis-header span,
+    .frame-analysis-item > span,
+    .frame-analysis-item > b,
+    .rule-summary-camera,
+    .rule-summary-verdict,
+    .rule-summary-metric-label,
+    .rule-summary-metric-value,
+    .scada-label-text,
+    .pneumo-title,
+    .scada-chute,
+    .scada-chute-label,
+    .hotkeys,
+    .gallery-title,
+    .gallery-meta > span,
+    .gallery-card-label,
+    .gallery-defects-items,
+    .calibration-title-block h1,
+    .calibration-title-block span,
+    .calibration-state,
+    .calibration-counter span,
+    .panel-heading h2,
+    .step-counter,
+    .assigned-count,
+    .candidate-position span,
+    .role-name strong,
+    .role-name span,
+    .role-camera,
+    .config-path,
+    .calibration-footer > span
+) {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+[data-ui-block] :where(
+    .camera-overlay-sub,
+    .control-error,
+    .frame-analysis-message,
+    .frame-analysis-reason,
+    .frame-analysis-human-cause,
+    .rule-summary-found,
+    .review-message,
+    .fatal-error,
+    .saved-message,
+    .preview-error,
+    .gallery-defects
+) {
+    overflow-wrap: anywhere;
+}
+
+[data-ui-block="right-panel"],
+[data-ui-block="calibration-assignment"] {
+    scrollbar-gutter: stable;
+}
+
+[data-ui-block="main-camera"] {
+    contain: layout paint;
+}
+
+[data-ui-block="process-line"] {
+    contain: layout paint style;
+}
+
+[data-ui-block="operator-footer"] .buttons,
+[data-ui-block="camera-controls"],
+[data-ui-block="gallery"] .gallery-header,
+[data-ui-block="calibration-header"],
+[data-ui-block="calibration-footer"] {
+    min-width: 0;
+}

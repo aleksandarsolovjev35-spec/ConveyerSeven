@@ -511,3 +511,35 @@ button {
         grid-template-columns: 130px minmax(0, 1fr) 130px;
     }
 }
+
+/* Compact viewport anti-overlap guards. */
+.calibration-state,
+.calibration-title-block,
+.calibration-counter,
+.panel-heading,
+.role-row,
+.calibration-footer { min-width: 0; }
+#state-label,
+.calibration-title-block h1,
+.calibration-title-block span,
+.calibration-counter span,
+.panel-heading h2,
+.step-counter,
+.assigned-count,
+.candidate-position span,
+.role-name span,
+.role-camera,
+.calibration-footer > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#state-label,
+.panel-heading h2,
+.role-camera { min-width: 0; }
+.preview-error { overflow-wrap: anywhere; }
+.review-message,
+.fatal-error,
+.saved-message { overflow-wrap: anywhere; }
+
+@media (max-width: 1120px) {
+    .calibration-header { grid-template-columns: 170px minmax(0, 1fr) 140px; gap: 10px; }
+    .role-row { grid-template-columns: 22px minmax(0, 1fr) 74px; gap: 6px; }
+    .button { padding-inline: 8px; }
+}
