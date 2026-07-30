@@ -29,6 +29,7 @@
         saveMapping: document.getElementById('save-mapping'),
         fatalError: document.getElementById('fatal-error'),
         closeError: document.getElementById('close-error'),
+        rescan: document.getElementById('rescan'),
         configPath: document.getElementById('config-path'),
         cancel: document.getElementById('cancel-calibration'),
     };
@@ -260,6 +261,9 @@
     });
     elements.saveMapping.addEventListener('click', () => {
         void runAction(() => api().save());
+    });
+    elements.rescan.addEventListener('click', () => {
+        void runAction(() => api().rescan());
     });
     elements.closeError.addEventListener('click', () => {
         void api().cancel();

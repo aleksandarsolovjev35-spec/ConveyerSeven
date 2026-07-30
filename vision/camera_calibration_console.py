@@ -20,6 +20,10 @@ from config.camera_mapping import (
     load_camera_mapping,
     validate_camera_mapping,
 )
+from vision.camera_manager import (
+    _env_float,
+    _env_int,
+)
 from vision.camera_manager import default_backends as _camera_backends
 
 
@@ -34,8 +38,14 @@ PROBE_READ_INTERVAL = 0.03
 # Сканирование должно давать камере столько же времени на старт, сколько
 # даёт production-preflight, иначе мастер объявит исправную камеру
 # отсутствующей и не соберёт комплект 7/7.
-SCAN_PROBE_ATTEMPTS = 60
+SCAN_PROBE_ATTEMPTS = _env_int("CAMERA_SCAN_PROBE_ATTEMPTS", 60, minimum=1)
 PREVIEW_PROBE_ATTEMPTS = 10
+# Разовый отказ резервирования полосы на USB-хабе лечится пересозданием
+# VideoCapture, а не увеличением таймаута чтения. Без повторных попыток
+# исправная камера случайно выпадала из сканирования, и мастер находил
+# то 5, то 6 камер из семи на одном и том же железе.
+SCAN_OPEN_ATTEMPTS = _env_int("CAMERA_SCAN_OPEN_ATTEMPTS", 3, minimum=1)
+SCAN_RETRY_DELAY = _env_float("CAMERA_SCAN_RETRY_DELAY", 0.4, minimum=0.0)
 
 ROLE_ORDER = (
     "INPUT_LEFT",
@@ -143,58 +153,112 @@ def _safe_release(capture) -> None:
         print(f"[CAMERA CALIBRATION] Ошибка освобождения камеры: {exc}")
 
 
+def _probe_camera(camera_id: int, factory, *, keep: bool = False):
+    """Проверить камеру с повторными открытиями.
+
+    Каждая попытка — это полное пересоздание VideoCapture: разовая
+    неудача резервирования изохронной полосы на USB контроллере лечится
+    именно повтором. Между попытками драйверу даётся
+    ``SCAN_RETRY_DELAY`` на освобождение устройства, но только если
+    драйвер был реально задействован: несуществующий индекс отклоняется
+    сразу и без пауз, чтобы сканирование пустых ID не растягивалось.
+
+    При ``keep=True`` успешный handle возвращается вызывающему (пул
+    предпросмотра), иначе освобождается здесь же.
+    """
+
+    last_error = "устройство не открылось"
+    for attempt in range(1, SCAN_OPEN_ATTEMPTS + 1):
+        capture = None
+        engaged_driver = False
+        try:
+            capture = factory(camera_id)
+            if capture is None or not capture.isOpened():
+                last_error = "устройство не открылось"
+            else:
+                engaged_driver = True
+                _configure_capture(capture)
+                _frame, error = _probe_capture(capture)
+                if error is None:
+                    if attempt > 1:
+                        print(
+                            f"[CAMERA CALIBRATION] Camera {camera_id}: OK "
+                            f"с попытки {attempt}"
+                        )
+                    if keep:
+                        opened, capture = capture, None
+                        return opened, None
+                    return None, None
+                last_error = error
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            _safe_release(capture)
+        if (
+            engaged_driver
+            and attempt < SCAN_OPEN_ATTEMPTS
+            and SCAN_RETRY_DELAY
+        ):
+            # Драйверу нужно время отпустить устройство перед повтором.
+            time.sleep(SCAN_RETRY_DELAY)
+    print(
+        f"[CAMERA CALIBRATION] Camera {camera_id}: не отвечает "
+        f"за {SCAN_OPEN_ATTEMPTS} поп. ({last_error})"
+    )
+    return None, last_error
+
+
+def _scan_working_cameras(max_tested, factory):
+    """Фаза 1: изолированно проверить каждый Camera ID.
+
+    Каждая камера открывается, проверяется и сразу освобождается: во
+    время проверки индекса N не стримят N-1 уже найденных соседей, и
+    исправная камера не проигрывает гонку за полосу USB уже открытым.
+    Результат детерминирован: список ID, которые отвечают в production-
+    формате, будучи предоставленными сами себе. Это ответ на вопрос
+    "сколько камер исправны вообще", а не "кто успел первым".
+    """
+
+    working = []
+    for camera_id in range(int(max_tested)):
+        _capture, error = _probe_camera(camera_id, factory)
+        if error is None:
+            working.append(camera_id)
+            print(f"[CAMERA CALIBRATION] Camera {camera_id}: OK")
+    return working
+
+
 def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None):
     """Найти Camera ID, которые дают валидный production-кадр."""
 
     factory = capture_factory or _open_capture
-    available = []
-    for camera_id in range(int(max_tested)):
-        capture = None
-        try:
-            capture = factory(camera_id)
-            if capture is None or not capture.isOpened():
-                continue
-            _configure_capture(capture)
-            _frame, error = _probe_capture(capture)
-            if error is None:
-                available.append(camera_id)
-        except Exception as exc:
-            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
-        finally:
-            _safe_release(capture)
-    return available
+    return _scan_working_cameras(max_tested, factory)
 
 
-def _open_camera_pool(
-    max_tested=CAMERA_SCAN_LIMIT,
-    required_count=None,
-    capture_factory=None,
-):
-    """Открыть только необходимое число камер и оставить handles живыми."""
+def _open_preview_pool(working, required_count, factory):
+    """Фаза 2: одновременно открыть проверенные камеры для предпросмотра.
 
-    if required_count is None:
-        required_count = REQUIRED_CAMERA_COUNT
-    factory = capture_factory or _open_capture
+    На этой фазе камеры остаются стримить одновременно, ровно как в
+    production: мастер обязан собрать тот набор, который потом откроет
+    CameraManager. Камера, исправная поодиночке, но потерянная здесь,
+    недоступна и линии — об этом сообщается отдельно, потому что это
+    симптом нехватки пропускной способности USB-контроллера, а не
+    поломки устройства.
+    """
+
     pool = {}
-    for camera_id in range(int(max_tested)):
-        capture = None
-        try:
-            capture = factory(camera_id)
-            if capture is None or not capture.isOpened():
-                continue
-            _configure_capture(capture)
-            _frame, error = _probe_capture(capture)
-            if error is not None:
-                continue
+    lost = {}
+    for camera_id in list(working)[: int(required_count)]:
+        capture, error = _probe_camera(camera_id, factory, keep=True)
+        if capture is not None:
             pool[camera_id] = capture
-            capture = None
-            if len(pool) >= int(required_count):
-                break
-        except Exception as exc:
-            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
-        finally:
-            _safe_release(capture)
-    return pool
+        else:
+            lost[camera_id] = error
+            print(
+                f"[CAMERA CALIBRATION] Camera {camera_id}: потеряна при "
+                f"одновременном открытии набора ({error})"
+            )
+    return pool, lost
 
 
 def _release_camera_pool(pool):
@@ -253,6 +317,7 @@ class CameraCalibrationApi:
         self._active_camera_id = None
         self._preview_verified_id = None
         self._close_callback = None
+        self._scan_thread = None
 
     def set_close_callback(self, callback):
         with self.lock:
@@ -269,39 +334,104 @@ class CameraCalibrationApi:
             self.candidate_index = 0
             self._release_all_captures_locked()
 
+        pool = {}
+        lost = {}
+        working = []
+        scan_error = None
         try:
-            pool = _open_camera_pool(
-                self.scan_limit,
-                required_count=REQUIRED_CAMERA_COUNT,
-                capture_factory=self.capture_factory,
+            factory = self.capture_factory
+            print(
+                f"[CAMERA CALIBRATION] Фаза 1: изолированная проверка "
+                f"Camera ID 0..{self.scan_limit - 1}"
             )
+            working = _scan_working_cameras(self.scan_limit, factory)
+            print(
+                f"[CAMERA CALIBRATION] Фаза 1: исправны {len(working)}/"
+                f"{len(ROLE_ORDER)}: {working}"
+            )
+            if len(working) >= len(ROLE_ORDER):
+                print(
+                    f"[CAMERA CALIBRATION] Фаза 2: одновременное открытие "
+                    f"{REQUIRED_CAMERA_COUNT} камер (как в production)"
+                )
+                pool, lost = _open_preview_pool(
+                    working,
+                    REQUIRED_CAMERA_COUNT,
+                    factory,
+                )
         except Exception as exc:
             pool = {}
             scan_error = f"Ошибка поиска камер: {type(exc).__name__}: {exc}"
-        else:
-            scan_error = None
 
         with self.lock:
             if self.closed:
                 _release_camera_pool(pool)
                 return self._state_locked()
             self._captures = pool
-            self.available_cameras = list(pool)
+            self.available_cameras = (
+                list(pool) if len(working) >= len(ROLE_ORDER) else list(working)
+            )
             if scan_error is not None:
                 self.status = "ERROR"
                 self.error = scan_error
                 self._release_all_captures_locked()
-            elif len(pool) < len(ROLE_ORDER):
+            elif len(working) < len(ROLE_ORDER):
+                # Камера не отвечает даже наедине с шиной: проблема в
+                # подключении/питании/драйвере, а не в конкуренции за USB.
+                found = len(working)
+                self.status = "ERROR"
+                self.error = (
+                    f"Найдено исправных камер: {found}/{len(ROLE_ORDER)} "
+                    f"при изолированной проверке каждой. Камера не отвечает "
+                    "даже без конкуренции за USB: проверьте подключение, "
+                    "питание, свободна ли она от других программ и режим "
+                    "1280x720 MJPG. Исправьте и нажмите ПОВТОРИТЬ ПОИСК."
+                )
+                self._release_all_captures_locked(keep_available=True)
+            elif lost:
+                # Поодиночке исправны, вместе не влезли: классическая
+                # нехватка пропускной способности одного USB-контроллера.
                 found = len(pool)
                 self.status = "ERROR"
                 self.error = (
-                    f"Найдено исправных камер: {found}/{len(ROLE_ORDER)}. "
-                    "Проверьте USB-подключение, питание и разрешение 1280x720."
+                    f"Одновременно открылось {found}/{len(ROLE_ORDER)}. "
+                    f"Камеры {sorted(lost)} исправны поодиночке, но не "
+                    "работают вместе — не хватает пропускной способности "
+                    "USB-контроллера. Разведите камеры по разным корневым "
+                    "хабам/контроллерам, убедитесь что все работают в MJPG "
+                    "(а не YUY2), затем нажмите ПОВТОРИТЬ ПОИСК."
                 )
                 self._release_all_captures_locked(keep_available=True)
             else:
                 self.status = "READY"
                 self.error = None
+            return self._state_locked()
+
+    def rescan(self):
+        """Повторить поиск камер из состояния ошибки, не закрывая мастер.
+
+        Сканирование длится десятки секунд, поэтому выполняется фоновым
+        потоком: JS-вызов pywebview возвращается сразу, а UI следит за
+        прогрессом через периодический get_state. Повтор безопасен только
+        после завершения предыдущего сканирования: мастер в ERROR ничего
+        не стримит, и USB-шина свободна для нового изолированного прогона.
+        """
+
+        with self.lock:
+            if self.closed or self.status != "ERROR":
+                return self._state_locked()
+            thread = self._scan_thread
+            if thread is not None and thread.is_alive():
+                return self._state_locked()
+            self.status = "SCANNING"
+            self.error = None
+            thread = threading.Thread(
+                target=self.scan,
+                daemon=True,
+                name="calibration-rescan",
+            )
+            self._scan_thread = thread
+            thread.start()
             return self._state_locked()
 
     def get_state(self):
