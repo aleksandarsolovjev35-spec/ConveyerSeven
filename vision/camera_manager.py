@@ -33,6 +33,13 @@ def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
         return default
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 CONFIG_FILE = "camera_mapping.json"
 _CAPTURE_TIMEOUT = 5.0
 _REQUIRED_ROLES = (
@@ -45,7 +52,11 @@ _REQUIRED_ROLES = (
     "TOP",
 )
 _EXPECTED_SIZE = (1280, 720)
-_REQUESTED_FPS = 30.0
+# Частота кадров — прямой множитель полосы USB на камеру. На слабом
+# контроллере (все семь камер на одном корневом хабе) CAMERA_FPS=15
+# делит нагрузку пополам: для статичной инспекции 15 кадров достаточно,
+# а изохронных слотов хватает всем.
+_REQUESTED_FPS = _env_float("CAMERA_FPS", 30.0, minimum=1.0)
 # Семь USB-камер стартуют не мгновенно: UVC-драйвер сначала строит граф,
 # затем резервирует полосу шины и только после этого отдаёт первый кадр.
 # Трёх секунд последней в очереди камере не хватало, и старт падал на
@@ -82,6 +93,16 @@ _WARMUP_READ_INTERVAL = _env_float(
 _DARK_RETRY_ATTEMPTS = _env_int("CAMERA_DARK_RETRY_ATTEMPTS", 30, minimum=0)
 _DARK_RETRY_INTERVAL = _env_float(
     "CAMERA_DARK_RETRY_INTERVAL", 0.08, minimum=0.01
+)
+# Восстановление потока в production: при просадке питания/полосы USB
+# драйвер прекращает отдавать кадры, оставляя устройство "открытым", и
+# единственное лекарство — пересоздать VideoCapture конкретной роли.
+# Раньше любой такой сбой навсегда латчил весь CameraManager; теперь роль
+# пересоздаётся на месте, а латч остаётся только для случаев, когда и
+# пересоздание не помогло.
+_RECOVERY_ATTEMPTS = _env_int("CAMERA_RECOVERY_ATTEMPTS", 2, minimum=0)
+_RECOVERY_PREFLIGHT = _env_float(
+    "CAMERA_RECOVERY_PREFLIGHT", 2.0, minimum=0.2
 )
 
 _BACKEND_ALIASES = {
@@ -509,16 +530,66 @@ class CameraManager:
             print(f"[CAMERA] Ошибка освобождения {role}: {exc}")
 
     @staticmethod
-    def _configure_capture(cap):
-        # MJPG существенно снижает USB-нагрузку семи камер. Не все
-        # драйверы подтверждают set(), поэтому реальный результат
-        # контролируется по фактической частоте, а не по return value.
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, _EXPECTED_SIZE[0])
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _EXPECTED_SIZE[1])
+    def _apply_format(cap, *, fourcc_first: bool):
+        mjpg = cv2.VideoWriter_fourcc(*"MJPG")
+        if fourcc_first:
+            cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, _EXPECTED_SIZE[0])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _EXPECTED_SIZE[1])
+        else:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, _EXPECTED_SIZE[0])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _EXPECTED_SIZE[1])
+            cap.set(cv2.CAP_PROP_FOURCC, mjpg)
         cap.set(cv2.CAP_PROP_FPS, _REQUESTED_FPS)
         if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    @staticmethod
+    def _negotiated_fourcc(capture) -> str | None:
+        """Фактический FOURCC после set(); None, если драйвер не отвечает."""
+        try:
+            fourcc = int(capture.get(cv2.CAP_PROP_FOURCC))
+        except Exception:
+            return None
+        if not fourcc:
+            return None
+        codec = "".join(
+            chr((fourcc >> shift) & 0xFF) for shift in (0, 8, 16, 24)
+        )
+        codec = "".join(char if char.isprintable() else "?" for char in codec)
+        return codec
+
+    @classmethod
+    def _configure_capture(cls, cap):
+        """Запросить MJPG и убедиться, что драйвер действительно согласился.
+
+        Часть UVC-драйверов принимает FOURCC только до смены разрешения,
+        часть — только после, а подтверждение set() ни о чём не говорит.
+        Молчаливый откат MJPG -> YUY2 поднимает поток одной камеры
+        1280x720 примерно с 25 до ~440 Мбит/с: на общем USB-контроллере
+        ровно одна такая камера лишает изохронной полосы все остальные.
+        Поэтому пробуем оба порядка установки и проверяем фактический
+        FOURCC. Откат без CAMERA_REQUIRE_MJPG — громкое предупреждение
+        (связка может жить на быстрой шине), с флагом — ошибка, потому
+        что для семи камер на одном хабе это гарантированный сбой набора.
+        """
+        codec = None
+        for fourcc_first in (True, False, True):
+            cls._apply_format(cap, fourcc_first=fourcc_first)
+            codec = cls._negotiated_fourcc(cap)
+            # None — драйвер не отвечает на get(): проверить нечего,
+            # доверяем запросу и идём дальше (тестовые doubles ведут
+            # себя именно так).
+            if codec is None or codec == "MJPG":
+                return
+        message = (
+            f"драйвер откатился с MJPG на {codec}: поток "
+            f"{_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]}@{_REQUESTED_FPS:.0f} "
+            "займёт в разы больше полосы USB и утопит остальные камеры"
+        )
+        if _env_flag("CAMERA_REQUIRE_MJPG"):
+            raise RuntimeError(message)
+        print(f"[CAMERA] ВНИМАНИЕ: {message}")
 
     @staticmethod
     def _negotiated_format(capture) -> str:
@@ -567,20 +638,29 @@ class CameraManager:
         return reads
 
     @classmethod
-    def _wait_for_stable_preflight(cls, capture) -> str | None:
+    def _wait_for_stable_preflight(
+        cls,
+        capture,
+        timeout: float | None = None,
+        *,
+        warmup: bool = True,
+    ) -> str | None:
         """Дождаться серии валидных кадров после запуска экспозиции камеры.
 
         Сначала выполняется фаза прогрева ``_WARMUP_SECONDS`` для
         исключения ложной ошибки ``near-black`` сразу после простоя.
         После прогрева требуется ``_PREFLIGHT_VALID_FRAMES`` подряд
-        валидных кадров.
+        валидных кадров. ``timeout`` переопределяет
+        ``_PREFLIGHT_TIMEOUT`` — используется восстановлением потока,
+        где бюджет времени ограничен общим дедлайном захвата.
         """
 
         warmup_reads = 0
-        if _WARMUP_SECONDS > 0.0:
+        if warmup and _WARMUP_SECONDS > 0.0:
             warmup_reads = cls._warmup_phase(capture, _WARMUP_SECONDS)
 
-        deadline = time.monotonic() + _PREFLIGHT_TIMEOUT
+        limit = _PREFLIGHT_TIMEOUT if timeout is None else float(timeout)
+        deadline = time.monotonic() + limit
         consecutive_valid = 0
         empty_reads = 0
         total_reads = 0
@@ -613,7 +693,7 @@ class CameraManager:
             f"{_PREFLIGHT_VALID_FRAMES}; empty_reads={empty_reads}/"
             f"{total_reads}; warmup_reads={warmup_reads}; "
             f"negotiated={cls._negotiated_format(capture)}; "
-            f"timeout={_PREFLIGHT_TIMEOUT:.1f}s"
+            f"timeout={limit:.1f}s"
         )
 
     def capture_all(self) -> dict:
@@ -649,41 +729,55 @@ class CameraManager:
         if unknown:
             raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
         self._ensure_usable()
+        deadline = time.monotonic() + _CAPTURE_TIMEOUT
 
         def _grab(role):
-            cap = self.cameras.get(role)
-            if cap is None:
-                raise RuntimeError(f"Камера {role} не найдена")
-            last_error = None
-            for attempt in range(max(1, _DARK_RETRY_ATTEMPTS + 1)):
+            last_error = RuntimeError("read returned no frame")
+            recoveries = 0
+            attempt = 0
+            while True:
+                cap = self.cameras.get(role)
+                if cap is None:
+                    raise RuntimeError(f"Камера {role} не найдена")
                 with self._role_locks[role]:
                     self._ensure_usable()
                     ok, frame = cap.read()
                 if not ok or frame is None:
-                    last_error = RuntimeError("read returned no frame")
-                    if attempt < _DARK_RETRY_ATTEMPTS:
-                        time.sleep(_DARK_RETRY_INTERVAL)
-                        continue
-                    raise last_error
-                err = self._frame_error(frame)
-                if err is None:
+                    frame_error = "read returned no frame"
+                else:
+                    frame_error = self._frame_error(frame)
+                if frame_error is None:
                     return frame
-                # near-black → попробовать ещё раз, это может быть AGC
-                if "near-black" in err and attempt < _DARK_RETRY_ATTEMPTS:
-                    last_error = RuntimeError(err)
+                last_error = RuntimeError(frame_error)
+                recoverable = (
+                    frame_error == "read returned no frame"
+                    or "near-black" in frame_error
+                )
+                if not recoverable:
+                    raise last_error
+                if attempt < _DARK_RETRY_ATTEMPTS:
+                    # near-black → попробовать ещё раз, это может быть AGC
+                    attempt += 1
                     time.sleep(_DARK_RETRY_INTERVAL)
                     continue
-                raise RuntimeError(err)
-            if last_error is not None:
+                # Чтения исчерпаны: USB-поток мог отвалиться на слабом
+                # контроллере. Пересоздаём VideoCapture роли вместо того,
+                # чтобы латчить весь менеджер из-за одной просадки.
+                if (
+                    recoveries < _RECOVERY_ATTEMPTS
+                    and time.monotonic() < deadline - 0.2
+                ):
+                    recoveries += 1
+                    if self._reopen_role(role, deadline):
+                        attempt = 0
+                        continue
                 raise last_error
-            raise RuntimeError("read returned no frame")
 
         pool = self._require_pool()
         futures = {role: pool.submit(_grab, role) for role in requested}
 
         errors = {}
         results = {}
-        deadline = time.monotonic() + _CAPTURE_TIMEOUT
         for role, future in futures.items():
             timeout = max(0.0, deadline - time.monotonic())
             try:
@@ -706,6 +800,77 @@ class CameraManager:
     def capture_single(self, role: str):
         """Прочитать одну камеру, не блокируя другие роли."""
         return self.capture_roles((role,))[role]
+
+    def _reopen_role(self, role: str, deadline: float) -> bool:
+        """Пересоздать поток роли после сбоя чтения, не латча менеджер.
+
+        При просадке питания или нехватке изохронной полосы USB-драйвер
+        перестаёт отдавать кадры, оставляя устройство формально открытым;
+        единственный способ вернуть поток — закрыть и заново построить
+        граф захвата. Новый handle проверяется preflight-ом ещё до того,
+        как попадёт в набор: читатели других ролей затронуты не будут,
+        а читатели этой роли увидят только валидный поток.
+
+        Замена делается под role-lock с таймаутом: если предыдущее
+        чтение зависло внутри драйвера, handle трогать нельзя — общий
+        таймаут захвата залатчит менеджер, как и раньше.
+        """
+
+        cam_id = self.mapping.get(role)
+        if cam_id is None:
+            return False
+        for backend in self._backends:
+            remaining = deadline - time.monotonic()
+            if remaining < 0.3:
+                return False
+            capture = None
+            try:
+                capture = self._create_capture(cam_id, backend)
+                if capture is None or not capture.isOpened():
+                    continue
+                self._configure_capture(capture)
+                error = self._wait_for_stable_preflight(
+                    capture,
+                    timeout=min(_RECOVERY_PREFLIGHT, remaining - 0.1),
+                    warmup=False,
+                )
+                if error is not None:
+                    continue
+                lock = self._role_locks.get(role)
+                if lock is None:
+                    return False
+                if not lock.acquire(timeout=0.5):
+                    # Поток роли завис в read(): освобождать handle из-под
+                    # заблокированного драйвера небезопасно.
+                    return False
+                try:
+                    if self._closed:
+                        return False
+                    old = self.cameras.get(role)
+                    self.cameras[role] = capture
+                    capture = None
+                finally:
+                    lock.release()
+                if old is not None:
+                    # release() драйвера может блокироваться: старый handle
+                    # никто больше не читает, поэтому закрываем его фоново.
+                    threading.Thread(
+                        target=self._safe_release,
+                        args=(role, old),
+                        daemon=True,
+                        name=f"release-stale-{role}",
+                    ).start()
+                print(
+                    f"[CAMERA] {role} (id={cam_id}): поток пересоздан "
+                    f"[{_backend_label(backend)}]"
+                )
+                return True
+            except Exception:
+                continue
+            finally:
+                if capture is not None:
+                    self._safe_release(role, capture)
+        return False
 
     def release(self):
         # Менеджер не открывает окна OpenCV, поэтому destroyAllWindows()

@@ -115,6 +115,78 @@ class CameraCalibratorTests(unittest.TestCase):
             ))
             api.shutdown()
 
+    def test_scan_retries_open_after_transient_failure(self):
+        """Разовый отказ открытия не выкидывает камеру из сканирования."""
+        frame = np.full((720, 1280, 3), 110, dtype=np.uint8)
+        attempts = {}
+
+        def factory(camera_id):
+            count = attempts.get(camera_id, 0) + 1
+            attempts[camera_id] = count
+            # Первая попытка — драйвер занят, повторная успешна.
+            opened = count > 1
+            return FakeCapture(frame if opened else None, opened=opened)
+
+        found = detect_available_cameras(2, capture_factory=factory)
+        self.assertEqual(found, [0, 1])
+        self.assertEqual(attempts[0], 2)
+        self.assertEqual(attempts[1], 2)
+
+    def test_scan_distinguishes_isolated_health_from_bus_bandwidth(self):
+        """Потеря камеры только при одновременном открытии — это полоса USB."""
+
+        class PoolLossFactory:
+            def __init__(self):
+                self.calls = {}
+                self.frame = np.full((720, 1280, 3), 110, dtype=np.uint8)
+
+            def __call__(self, camera_id):
+                count = self.calls.get(camera_id, 0) + 1
+                self.calls[camera_id] = count
+                # Фаза 1 (первый вызов) — исправна, фаза 2 — полоса
+                # контроллера кончилась, камера id=5 больше не открывается.
+                opened = camera_id != 5 or count == 1
+                return FakeCapture(self.frame if opened else None, opened=opened)
+
+        api = CameraCalibrationApi(
+            "unused.json",
+            scan_limit=8,
+            capture_factory=PoolLossFactory(),
+        )
+        state = api.scan()
+        self.assertEqual(state["status"], "ERROR")
+        self.assertEqual(state["found"], 6)
+        self.assertIn("6/7", state["error"])
+        self.assertIn("[5]", state["error"])
+        self.assertIn("USB-контроллера", state["error"])
+        self.assertNotIn("изолированной", state["error"])
+        api.shutdown()
+
+    def test_rescan_recovers_after_operator_fixes_hardware(self):
+        """Из ERROR мастер повторяет поиск без перезапуска окна."""
+        frame = np.full((720, 1280, 3), 110, dtype=np.uint8)
+        healthy = set(range(6))
+
+        def factory(camera_id):
+            opened = camera_id in healthy
+            return FakeCapture(frame if opened else None, opened=opened)
+
+        api = CameraCalibrationApi(
+            "unused.json",
+            scan_limit=7,
+            capture_factory=factory,
+        )
+        self.assertEqual(api.scan()["status"], "ERROR")
+        # Оператор устранил проблему: седьмая камера появилась.
+        healthy.add(6)
+        state = api.rescan()
+        self.assertEqual(state["status"], "SCANNING")
+        api._scan_thread.join(timeout=60)
+        self.assertEqual(api.get_state()["status"], "READY")
+        # Повторный rescan вне ERROR игнорируется.
+        self.assertEqual(api.rescan()["status"], "READY")
+        api.shutdown()
+
     def test_step_wizard_saves_only_complete_unique_mapping(self):
         with tempfile.TemporaryDirectory() as temp:
             destination = Path(temp) / "camera_mapping.json"
@@ -127,10 +199,19 @@ class CameraCalibratorTests(unittest.TestCase):
             state = api.scan()
             self.assertEqual(state["status"], "READY")
             self.assertFalse(destination.exists())
-            self.assertEqual(len(factory.instances), 7)
+            # Две фазы сканирования: изолированная проверка открывает и
+            # сразу закрывает каждую камеру, затем пул предпросмотра
+            # повторно открывает семь проверенных и держит их живыми.
+            alive = [
+                capture for _, capture in factory.instances
+                if capture.opened and not capture.released
+            ]
+            self.assertEqual(len(alive), 7)
             self.assertTrue(all(
-                not capture.released for _, capture in factory.instances
+                capture.released or capture in alive
+                for _, capture in factory.instances
             ))
+            instances_after_scan = len(factory.instances)
 
             for index, role in enumerate(ROLE_ORDER):
                 state = api.get_state()
@@ -143,7 +224,7 @@ class CameraCalibratorTests(unittest.TestCase):
                 self.assertFalse(destination.exists())
                 self.assertEqual(
                     len(factory.instances),
-                    7,
+                    instances_after_scan,
                     "переключение не должно повторно открывать камеры",
                 )
 
