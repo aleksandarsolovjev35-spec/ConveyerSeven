@@ -218,11 +218,14 @@ function renderGalleryImages() {
                         <img class="gallery-img-fade-in"
                              src="${url}"
                              alt="${r.role}"
+                             onload="window._galleryImageLoaded(this)"
+                             onerror="window._galleryImageError(this)"
                              onclick="window._galleryFullscreen(this.src)">
                     </div>
                 </div>
             `;
         }).join('');
+        attachGalleryImageErrorHandlers();
         return;
     }
 
@@ -256,6 +259,31 @@ function renderGalleryImages() {
         oldImg.classList.add('gallery-img-fade-in');
         oldImg.src = newUrl;
     });
+    attachGalleryImageErrorHandlers();
+}
+
+function attachGalleryImageErrorHandlers() {
+    if (!els.galleryGrid) return;
+    els.galleryGrid.querySelectorAll('.gallery-card-img-wrap img').forEach(img => {
+        if (img.dataset.errorHandlerAttached === '1') return;
+        img.dataset.errorHandlerAttached = '1';
+        img.addEventListener('load', () => markGalleryImageLoaded(img));
+        img.addEventListener('error', () => markGalleryImageError(img));
+    });
+}
+
+function markGalleryImageLoaded(img) {
+    const wrap = img && img.closest('.gallery-card-img-wrap');
+    if (!wrap) return;
+    wrap.classList.remove('image-error');
+    wrap.removeAttribute('data-error-label');
+}
+
+function markGalleryImageError(img) {
+    const wrap = img && img.closest('.gallery-card-img-wrap');
+    if (!wrap) return;
+    wrap.classList.add('image-error');
+    wrap.dataset.errorLabel = 'ИЗОБРАЖЕНИЕ НЕДОСТУПНО';
 }
 
 function getGalleryUrl(roleData) {
@@ -284,6 +312,9 @@ function closeGallery() {
 window._openPartGallery = function(partId) {
     openGallery(partId);
 };
+
+window._galleryImageLoaded = markGalleryImageLoaded;
+window._galleryImageError = markGalleryImageError;
 
 window._galleryFullscreen = function(src) {
     const existing = document.querySelector('.gallery-fullscreen');

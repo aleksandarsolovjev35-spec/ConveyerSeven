@@ -49,7 +49,7 @@
 .camera-view-switch.is-faded {
     opacity: 0;
     visibility: hidden;
-    transform: translate(-50%, 4px);
+    transform: translateY(4px);
     pointer-events: none;
     transition-delay: 0s, 0s, 180ms, 0s, 0s, 0s;
 }

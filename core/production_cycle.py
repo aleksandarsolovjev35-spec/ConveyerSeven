@@ -1170,7 +1170,7 @@ class ProductionCycle:
         candidate_id = self.part_counter + 1
         self._set_process(
             "INPUT_ANALYSIS",
-            f"Вход: голосование 2 из 3 для кандидата №{candidate_id}",
+            f"Вход: голосование 2 из 3 для кандидата #{candidate_id}",
             part_id=candidate_id,
             positions=[self.OFFSET_INPUT],
         )
@@ -1243,7 +1243,7 @@ class ProductionCycle:
 
             self._set_process(
                 "SPIDER_ANALYSIS",
-                f"Контроль 2 из 3 для детали №{part.id}",
+                f"Контроль 2 из 3 для детали #{part.id}",
                 part_id=part.id,
                 positions=[self.OFFSET_SPIDER],
             )
@@ -1366,7 +1366,7 @@ class ProductionCycle:
 
             self._set_process(
                 "ROUTE_FINALIZE",
-                f"GOOD: завершение детали №{part.id}",
+                f"GOOD: завершение детали #{part.id}",
                 part_id=part.id,
                 positions=[self.OFFSET_REJECT],
             )

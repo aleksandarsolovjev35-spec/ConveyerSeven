@@ -335,7 +335,7 @@ function updateFrameAnalysisStatus(ls) {
     const contextBits = [];
     if (report.stage) contextBits.push(String(report.stage));
     if (report.role) contextBits.push(cameraRoleLabel(report.role));
-    if (report.part_id) contextBits.push(`ДЕТАЛЬ №${report.part_id}`);
+    if (report.part_id) contextBits.push(`ДЕТАЛЬ #${report.part_id}`);
     const context = contextBits.length
         ? contextBits.join(' · ')
         : 'ТЕКУЩИЙ ЦИКЛ';

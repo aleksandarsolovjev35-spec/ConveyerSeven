@@ -162,9 +162,9 @@ class LineMotionAnimationTests(unittest.TestCase):
         self.assertIn("setTimeout(", self.js)
 
     def test_cells_show_only_part_number_no_strange_animations(self):
-        # В маркере только номер детали вида «№1»; старые «летящие»
-        # элементы и циклические keyframes удалены как визуальный баг.
-        self.assertIn("`№${id}`", self.js)
+        # В маркере только короткий ID детали вида «#1»; старые
+        # «летящие» элементы и циклические keyframes удалены как визуальный баг.
+        self.assertIn("`#${id}`", self.js)
         self.assertNotIn("flying-part", self.js)
         self.assertNotIn("entering-with-trail", self.js)
         self.assertNotIn("exiting-flyer", self.js)

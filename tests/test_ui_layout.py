@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -181,6 +182,50 @@ class UiLayoutTests(unittest.TestCase):
         self.assertTrue(all(len(path.read_text(encoding="utf-8").splitlines()) < 600 for path in js))
         self.assertTrue(all(len(path.read_text(encoding="utf-8").splitlines()) < 500 for path in css))
 
+    def test_operator_and_calibration_ui_are_split_into_named_blocks(self):
+        expected_operator_blocks = {
+            "splash",
+            "operator-header",
+            "preview-strip",
+            "main-camera",
+            "camera-controls",
+            "process-line",
+            "history-strip",
+            "right-panel",
+            "cycle-stats",
+            "defects",
+            "service-stats",
+            "distributor",
+            "jog",
+            "frame-analysis",
+            "operator-footer",
+            "gallery",
+        }
+        operator_blocks = set(re.findall(r'data-ui-block="([^"]+)"', self.html))
+        self.assertTrue(expected_operator_blocks.issubset(operator_blocks))
+        self.assertIn('/static/css/blocks.css', self.html)
+        self.assertIn('[data-ui-block] {', self.css)
+        self.assertIn('isolation: isolate', self.css)
+        self.assertIn('overflow-wrap: anywhere', self.css)
+
+        root = Path(__file__).resolve().parents[1]
+        calibration_html = (
+            root / "vision/ui/calibration/index.html"
+        ).read_text(encoding="utf-8")
+        calibration_blocks = set(
+            re.findall(r'data-ui-block="([^"]+)"', calibration_html)
+        )
+        self.assertEqual(
+            calibration_blocks,
+            {
+                "calibration-header",
+                "calibration-preview",
+                "calibration-assignment",
+                "calibration-footer",
+            },
+        )
+        self.assertIn('../static/css/blocks.css', calibration_html)
+
     def test_strict_theme_has_no_rainbow_fills_or_cycle_animations(self):
         self.assertNotIn("gradient(", self.css)
         root = Path(__file__).resolve().parents[1]
@@ -218,7 +263,7 @@ class UiLayoutTests(unittest.TestCase):
             "СТОП",
             "ВЫХОД",
             "Пустые лотки",
-            "Деталь №",
+            "Деталь #",
             "Дефекты:",
         ):
             self.assertIn(label, self.html)
@@ -328,6 +373,41 @@ class UiLayoutTests(unittest.TestCase):
         )
         self.assertIn('"test:ui"', package)
         self.assertIn('"jsdom": "24.1.3"', package)
+
+    def test_labels_clip_or_wrap_instead_of_overlapping(self):
+        for selector in (
+            ".state-label",
+            ".camera-label",
+            ".mode-badge",
+            ".axis-name",
+            ".hotkeys",
+            ".gallery-meta > span",
+        ):
+            block = self.css.split(selector + " {", 1)[1].split("}", 1)[0]
+            self.assertIn("overflow: hidden", block)
+            self.assertIn("text-overflow: ellipsis", block)
+            self.assertIn("white-space: nowrap", block)
+        self.assertIn("grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)", self.css)
+        self.assertIn(".frame-analysis-item b { max-width: 116px", self.css)
+        self.assertNotIn(chr(0x2116), self.html + self.css + self.js)
+        self.assertIn("Деталь #", self.html)
+        self.assertIn("normalizeOperatorText", self.js)
+        self.assertNotIn('id="main-camera" class="main-camera" src=""', self.html)
+        self.assertIn(".main-camera:not([src])", self.css)
+        self.assertIn(".history-card {\n    flex: 1 1 0;", self.css)
+        self.assertIn(".gallery-title {\n    flex: 0 0 auto;", self.css)
+        self.assertIn(".gallery-card-img-wrap.image-error", self.css)
+        self.assertIn("attachGalleryImageErrorHandlers", self.js)
+        self.assertIn("window._galleryImageError", self.js)
+        self.assertIn("ИЗОБРАЖЕНИЕ НЕДОСТУПНО", self.js)
+        self.assertIn(".axis-route span,", self.css)
+        self.assertIn(".scada-chute-label { min-width: 0; overflow: hidden", self.css)
+        calibration_css = (
+            Path(__file__).resolve().parents[1]
+            / "vision/ui/calibration/calibration.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Compact viewport anti-overlap guards", calibration_css)
+        self.assertIn(".calibration-footer > span", calibration_css)
 
     def test_ui_uses_backend_permissions_pending_lock_and_offline_lockout(self):
         for token in (

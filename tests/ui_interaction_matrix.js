@@ -438,9 +438,9 @@ async function main() {
   const tokenById = id => tokens.find(token => token.dataset.partId === String(id));
   assert(tokens.length === 3, 'по одному маркеру на каждую деталь линии');
   assert(cells.every(cell => cell.textContent === ''), 'ячейки не содержат своего текста');
-  assert(tokenById(1).textContent === '№1' && tokenById(1).style.left === '0px', 'INPUT part ID rendered at first cell');
-  assert(tokenById(2).textContent === '№2' && tokenById(2).style.left === '416px' && tokenById(2).classList.contains('cell-bad'), 'SPIDER token carries its category');
-  assert(tokenById(3).textContent === '№3' && tokenById(3).classList.contains('cell-cleanup'), 'ROUTE cleanup rendered');
+  assert(tokenById(1).textContent === '#1' && tokenById(1).style.left === '0px', 'INPUT part ID rendered at first cell');
+  assert(tokenById(2).textContent === '#2' && tokenById(2).style.left === '416px' && tokenById(2).classList.contains('cell-bad'), 'SPIDER token carries its category');
+  assert(tokenById(3).textContent === '#3' && tokenById(3).classList.contains('cell-cleanup'), 'ROUTE cleanup rendered');
   assert(cells[4].classList.contains('process-camera'), 'SPIDER cell highlighted');
 
   // Шаг линии: маркеры сдвигаются ровно на одну ячейку вправо, как лента.
@@ -456,7 +456,7 @@ async function main() {
     },
   }));
   assert(tokenById(1).style.left === '104px', 'маркер детали сдвинулся на одну ячейку вместе с лентой');
-  assert(tokenById(2).style.left === '520px', 'маркер №2 повторяет движение конвейера');
+  assert(tokenById(2).style.left === '520px', 'маркер #2 повторяет движение конвейера');
   assert(lineCellsEl.querySelector('.conveyor-belt').classList.contains('moving'), 'лента подсвечена во время проезда');
   await sleep(620);
   assert(!lineCellsEl.querySelector('.line-token[data-part-id="3"]'), 'сошедшая с линии деталь удалена после проезда');
@@ -585,6 +585,8 @@ async function main() {
   assert(calls.some(call => call.url.endsWith('/api/diagnostics/selected/SPIDER_IN')), 'selected model endpoint');
   assert(analyzeSelected.textContent === 'ВЕРНУТЬ ПОТОК', 'analysis button becomes return-live');
   assert(window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ', 'live badge is replaced during analysis');
+  assert(window.document.getElementById('camera-label').textContent === 'ВНУТРЕННИЙ ВИД · АНАЛИЗ', 'camera label names the frozen analysis frame');
+  assert(window.document.getElementById('camera-overlay').classList.contains('is-hidden'), 'idle/stop overlay does not cover frozen analysis frame');
   assert(window.document.getElementById('main-camera').src.includes('mode=RULES'), 'selected rule overlay shown');
   assert(!window.document.getElementById('frame-analysis-panel').classList.contains('is-collapsed'), 'selected frame analysis replaces right panel');
   assert(window.document.getElementById('stats-summary').classList.contains('is-collapsed'), 'statistics hidden while selected frame is frozen');
@@ -608,6 +610,7 @@ async function main() {
   assert(calls.some(call => call.url === '/api/diagnostics/selected/release'), 'return LIVE endpoint');
   assert(analyzeSelected.textContent === 'АНАЛИЗ 3 КАДРОВ', 'analysis button restored');
   assert(window.document.getElementById('mode-badge').textContent.includes('ПОТОК'), 'live badge restored');
+  assert(window.document.getElementById('camera-label').textContent === 'ВНУТРЕННИЙ ВИД', 'camera label restored after returning to live');
   assert(window.document.getElementById('frame-analysis-panel').classList.contains('is-collapsed'), 'selected analysis is cleared after returning to live');
   assert(!window.document.getElementById('stats-summary').classList.contains('is-collapsed'), 'statistics restored after selected analysis');
   assert(!window.document.getElementById('distributor-diagnostics').classList.contains('is-collapsed'), 'distributor restored after selected analysis');
@@ -695,6 +698,11 @@ async function main() {
   assert(window.document.getElementById('gallery-category').textContent === 'КАТЕГОРИЯ: БРАК', 'gallery metadata');
   window.document.getElementById('gallery-mode-raw').click();
   assert(window.document.querySelector('.gallery-card img').src.includes('raw-overlay.jpg'), 'gallery raw mode');
+  const firstGalleryImg = window.document.querySelector('.gallery-card img');
+  window._galleryImageError(firstGalleryImg);
+  assert(firstGalleryImg.closest('.gallery-card-img-wrap').classList.contains('image-error'), 'gallery missing image placeholder');
+  window._galleryImageLoaded(firstGalleryImg);
+  assert(!firstGalleryImg.closest('.gallery-card-img-wrap').classList.contains('image-error'), 'gallery image placeholder clears after load');
   window._galleryFullscreen('/debug.jpg');
   assert(window.document.querySelector('.gallery-fullscreen'), 'fullscreen opens');
   window.document.querySelector('.gallery-fullscreen').click();

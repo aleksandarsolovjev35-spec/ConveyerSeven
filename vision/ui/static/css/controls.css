@@ -8,12 +8,15 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     padding: 0 var(--margin);
 }
 
 .buttons {
     display: flex;
+    flex: 0 0 auto;
     gap: 8px;
+    min-width: 0;
 }
 
 /* ─── Buttons ─────────────────────────────────────────────────────── */
@@ -104,9 +107,20 @@
 .btn-exit:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
 
 .hotkeys {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: 9px;
     letter-spacing: 0.25px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+    .btn { min-width: 96px; padding-inline: 12px; }
+    .hotkeys { font-size: 8px; }
 }
 

@@ -219,7 +219,7 @@ function updateLineStatus(ls) {
 // Детали показаны отдельными маркерами поверх статичной сетки из восьми
 // ячеек. На каждом шаге линии маркеры плавно сдвигаются на одну позицию
 // вправо, поэтому панель наглядно повторяет движение конвейера. Никаких
-// эффектов внутри самих ячеек нет: только номер детали в виде «№1».
+// эффектов внутри самих ячеек нет: только короткий ID детали в виде «#1».
 
 const _lineTokens = new Map(); // partId -> {el, position, category}
 let _lineSyncDone = false;
@@ -486,8 +486,8 @@ function updateLineCells(lineParts, process = {}) {
         } else {
             delete token.el.dataset.atReject;
         }
-        token.el.textContent = `№${id}`;
-        token.el.title = `Деталь №${id} · ${categoryLabel(meta.category)}`;
+        token.el.textContent = `#${id}`;
+        token.el.title = `Деталь #${id} · ${categoryLabel(meta.category)}`;
     }
 
     _updateMechanicalScada(lineParts, process);

@@ -251,6 +251,7 @@ html, body {
     min-width: 190px;
     min-height: 34px;
     padding: 5px 11px;
+    overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--border-strong);
     border-left: 3px solid var(--text-dim);
@@ -296,16 +297,24 @@ html, body {
 }
 
 .state-label {
+    min-width: 0;
+    overflow: hidden;
     font-size: 11px;
     font-weight: 650;
     letter-spacing: 0.7px;
     text-transform: uppercase;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--text);
     transition: color var(--t-normal);
 }
 
 .title {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     text-align: center;
     color: var(--text);
     font-size: 16px;
@@ -320,17 +329,22 @@ html, body {
 
 .metrics {
     display: flex;
+    flex: 0 1 340px;
     gap: 6px;
+    min-width: 240px;
     color: var(--text-dim);
-    min-width: 290px;
     justify-content: flex-end;
     font-family: var(--font-mono);
     font-size: 10px;
 }
 
 .metrics > span {
+    min-width: 0;
     min-height: 34px;
     padding: 7px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -370,3 +384,12 @@ html, body {
     grid-row: 1;
 }
 
+
+
+@media (max-width: 1040px) {
+    .header { gap: 8px; padding: 0 10px; }
+    .state-section { min-width: 160px; padding-inline: 8px; }
+    .metrics { flex-basis: 270px; min-width: 210px; }
+    .metrics > span { padding-inline: 7px; }
+    .title { font-size: 14px; letter-spacing: 1px; }
+}

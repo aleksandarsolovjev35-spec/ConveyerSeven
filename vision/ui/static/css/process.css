@@ -73,7 +73,7 @@
 }
 
 .production-line-cells .line-cell::before {
-    content: "№" attr(data-cell-no);
+    content: "#" attr(data-cell-no);
     position: absolute;
     top: 2px;
     left: 4px;
@@ -347,7 +347,7 @@
 /* Маркер детали (создаётся в status.js, класс .line-token): абсолютно
    позиционирован поверх сетки ячеек и на каждом шаге линии плавно
    скользит ровно на одну ячейку вправо — панель наглядно повторяет
-   движение конвейера. Внутри маркера только номер детали «№1». */
+   движение конвейера. Внутри маркера только короткий ID детали «#1». */
 .line-token {
     position: absolute;
     z-index: 5;
@@ -385,8 +385,11 @@
 
 /* === Human-readable defect cause (simple & bold) === */
 .frame-analysis-item.has-human-cause .frame-analysis-human-cause {
+    grid-column: 1 / -1;
     display: block;
+    min-width: 0;
     margin-top: 3px;
+    overflow-wrap: anywhere;
     font-size: 10px;
     font-weight: 800;
     color: #ff6b6b;
@@ -482,3 +485,15 @@
     .scada-label-text { display: none; }
     .pneumo-title { max-width: 34vw; }
 }
+
+/* Anti-overlap guards for compact Russian captions. */
+.axis-route span,
+.axis-route b,
+.scada-chute,
+.scada-chute-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scada-pneumo-unit { flex: 1 1 auto; }
+.scada-chute { flex: 0 1 40%; }
+.line-token { overflow: hidden; padding: 0 10px 0 3px; text-overflow: ellipsis; white-space: nowrap; }
+.process-phase-label { position: static; max-width: 100%; margin-top: 3px; overflow: hidden; text-align: right; text-overflow: ellipsis; }
+.axis-route span { flex: 1 1 auto; }
+.axis-route b, .scada-chute-label { display: block; }

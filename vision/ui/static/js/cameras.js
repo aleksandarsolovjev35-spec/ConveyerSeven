@@ -211,6 +211,7 @@ function updateMainCameraLabel() {
 
 function showSelectedAnalysisFrame(role) {
     if (!role) return;
+    setIfChanged(els.cameraLabel, `${cameraRoleLabel(role)} · АНАЛИЗ`);
     clearLivePullTimer();
     const analysisKey = `${role}|${state.mode}|${state.currentVersion}`;
     if (
@@ -232,12 +233,13 @@ function showSelectedAnalysisFrame(role) {
 }
 
 function returnSelectedCameraToLive() {
+    updateMainCameraLabel();
     state.mainCamMode = 'pull';
     state.mainCamStreamRole = null;
     state.mainCamStreamView = null;
     state.mainCamAnalysisKey = null;
     mainBufferLoading = false;
-    els.mainCamera.src = '';
+    els.mainCamera.removeAttribute('src');
     applyMainCameraSource();
 }
 
@@ -305,7 +307,7 @@ function applyMainCameraSource() {
         state.mainCamStreamView = null;
         state.mainCamAnalysisKey = null;
 
-        els.mainCamera.src = '';
+        els.mainCamera.removeAttribute('src');
         maybeRequestMainFrame();
     }
 }

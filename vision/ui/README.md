@@ -19,6 +19,7 @@ Functions may call functions from later modules only after all scripts have load
 ## CSS modules
 
 - `base.css` — tokens, reset, splash and global layout.
+- `blocks.css` — named UI block containment, text clipping and wrap rules.
 - `camera.css` — preview strip, main camera and state overlay.
 - `axis.css` — common axis widgets.
 - `history-strip.css` — recent part strip.
@@ -28,6 +29,24 @@ Functions may call functions from later modules only after all scripts have load
 - `gallery.css` — archive modal and fullscreen.
 - `process.css` — process line, distributor, diagnostics and OFFLINE/error additions.
 - `motion.css` — non-blocking fades, panel collapse/expand and frame/content transitions.
+
+## Блочная карта UI
+
+Каждая крупная зона имеет `data-ui-block`, чтобы её можно было отдельно проверять, ограничивать и не допускать наложения динамических надписей:
+
+- `splash` — экран запуска и ошибка инициализации.
+- `operator-header` — статус линии, заголовок и метрики.
+- `preview-strip` — семь миниатюр камер.
+- `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ 3 кадров.
+- `process-line` — путь деталей, ворота входа/выхода и SCADA-мнемосхема.
+- `history-strip` — последние детали.
+- `right-panel` — прокручиваемая правая колонка.
+- `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
+- `operator-footer` — кнопки ПУСК/СТОП/ВЫХОД и горячие клавиши.
+- `gallery` — архивная галерея детали.
+- `calibration-header`, `calibration-preview`, `calibration-assignment`, `calibration-footer` — отдельные блоки мастера калибровки.
+
+Правило для новых зон: сначала добавить `data-ui-block`, затем проверить, что длинные русские подписи либо обрезаются через `ellipsis`, либо переносятся через `overflow-wrap: anywhere`.
 
 ## Профессиональная HMI-компоновка
 

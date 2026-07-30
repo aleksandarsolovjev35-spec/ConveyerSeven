@@ -84,10 +84,18 @@
     transition: opacity 0.05s;
 }
 
+.main-camera:not([src]) {
+    visibility: hidden;
+}
+
 .camera-label {
     position: absolute;
     top: 10px;
     left: 10px;
+    max-width: min(52%, calc(100% - 190px));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     background: rgba(15, 19, 23, 0.94);
     color: var(--text);
     padding: 5px 10px;
@@ -104,6 +112,10 @@
     position: absolute;
     top: 10px;
     right: 10px;
+    max-width: min(45%, calc(100% - 190px));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     background: rgba(15, 19, 23, 0.94);
     color: var(--ok);
     padding: 5px 10px;
@@ -190,19 +202,18 @@
     right: 10px;
     bottom: 10px;
     z-index: 15;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     pointer-events: none;
 }
 .camera-view-switch {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
     display: grid;
+    grid-column: 2;
     grid-template-columns: 68px 92px;
     gap: 4px;
+    justify-self: center;
     pointer-events: auto;
 }
 .camera-live-controls button {
@@ -232,7 +243,14 @@
     background: var(--accent-glow);
     color: var(--text);
 }
-#analyze-selected-frame { margin-left: auto; }
+#analyze-selected-frame {
+    grid-column: 3;
+    justify-self: end;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .camera-live-controls button.analysis-active {
     color: var(--warn);
     border-color: var(--warn);
@@ -249,4 +267,13 @@
 @media (max-height: 500px) {
     .preview-strip { height: 40px; }
     .camera-container { min-height: 110px; }
+}
+
+
+@media (max-width: 720px) {
+    .camera-label,
+    .mode-badge { max-width: calc(50% - 16px); }
+    .camera-live-controls { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+    .camera-view-switch,
+    #analyze-selected-frame { grid-column: 1; justify-self: center; }
 }
