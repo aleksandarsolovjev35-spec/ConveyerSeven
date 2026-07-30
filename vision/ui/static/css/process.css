@@ -59,6 +59,10 @@
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 3px;
+    /* Маркеры деталей въезжают из-под ворота ВХОД и уезжают под ворота
+       ВЫХОД: всё, что выходит за пределы сетки ячеек, обрезается, поэтому
+       проезжающие маркеры никогда не накладываются на ворота и подписи. */
+    overflow: hidden;
 }
 .production-line-cells .line-cell {
     min-height: 30px;
@@ -107,36 +111,45 @@
     font-weight: 700;
 }
 
-.line-cell.process-active {
-    border-color: var(--ok);
-    box-shadow: inset 0 0 0 1px var(--ok);
-}
+.line-cell.process-active { border-color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
+.line-cell.process-camera { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.line-cell.process-route { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
 
-.line-cell.process-camera {
-    border-color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.line-cell.process-route {
-    border-color: var(--warn);
-    box-shadow: inset 0 0 0 1px var(--warn);
-}
-
-/* ─── Persistent distributor panel in right column ────────────── */
+/* ─── Persistent distributor panel in right column ──────────────
+   Вся панель — единый блок-индикатор маршрута детали: она целиком
+   заливается полупрозрачным цветом того канала, куда сейчас уходит
+   деталь (годное/брак/очистка). Карточки DIST1/DIST2 внутри остаются
+   тёмными и читаемыми. */
 .distributor-panel {
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    padding: 7px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 8px;
     display: flex;
     flex-direction: column;
     gap: 6px;
+    transition:
+        background-color var(--t-slow) var(--ease),
+        border-color var(--t-slow) var(--ease);
 }
+
+.distributor-panel.route-good { background: var(--ok-fill); border-color: var(--ok); }
+.distributor-panel.route-bad { background: var(--bad-fill); border-color: var(--bad); }
+.distributor-panel.route-cleanup { background: var(--warn-fill); border-color: var(--warn); }
+
+.distributor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.dist-route { min-width: 0; font: 700 9px var(--font-mono); letter-spacing: 0.45px; }
+
+.distributor-panel.route-good .distributor-title, .distributor-panel.route-good .dist-route { color: var(--ok); }
+.distributor-panel.route-bad .distributor-title, .distributor-panel.route-bad .dist-route { color: var(--bad); }
+.distributor-panel.route-cleanup .distributor-title, .distributor-panel.route-cleanup .dist-route { color: var(--warn); }
 
 .blade-card {
     display: flex;
     flex-direction: column;
     min-height: 108px;
-    background: var(--bg-1);
+    /* Полупрозрачная тёмная подложка: заливка панели просвечивает
+       сквозь карточку, а текст и ползунок остаются контрастными. */
+    background: rgba(15, 19, 23, 0.62);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 6px;
@@ -174,10 +187,11 @@
     will-change: left;
     transition: left 100ms linear;
     box-shadow: none;
+    /* Оба ползунка одного цвета: маршрут детали показывает заливка всей
+       панели, а не раскраска маркеров. */
+    color: var(--accent);
+    background: var(--accent);
 }
-
-.blade-dist1 { color: var(--accent); background: var(--accent); }
-.blade-dist2 { color: var(--warn); background: var(--warn); }
 .axis-route {
     display: flex;
     flex: 0 0 18px;
@@ -417,22 +431,11 @@
     letter-spacing: 0.5px;
 }
 
-/* ─── Механическая мнемосхема пневмо-сброса DIST2 (SCADA) ──────── */
-.scada-actuator { margin-top: 5px; padding: 4px 8px; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; font: 600 9px var(--font-mono); color: var(--text-muted); }
-.scada-actuator-track { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.scada-label-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; font-weight: 700; color: var(--text-dim); }
-.scada-pneumo-unit { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; padding: 2px 6px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-strong); transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease); }
-.pneumo-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: var(--text-dim); }
-.pneumo-cylinder { position: relative; width: 32px; height: 8px; background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 2px; overflow: hidden; }
-.pneumo-rod { width: 6px; height: 100%; background: var(--ok); transition: width 220ms cubic-bezier(0.25, 0.1, 0.25, 1), background-color 220ms var(--ease); }
-.scada-pneumo-unit.is-actuating { border-color: var(--bad); background: var(--bad-bg); }
-.scada-pneumo-unit.is-actuating .pneumo-rod { width: 28px; background: var(--bad); box-shadow: 0 0 6px var(--bad); }
-.scada-chute { padding: 2px 8px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-strong); font-weight: 700; color: var(--ok); transition: all var(--t-fast) var(--ease); }
-.scada-chute.is-rejecting { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
-.scada-chute.is-cleanup { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
-.line-token[data-at-reject="true"] { transform: translateY(6px) scale(0.95); box-shadow: 0 4px 10px rgba(235, 75, 75, 0.45); }
-
-/* ─── Вход / Выход линии (порталы-туннели) ─────────────────────── */
+/* ─── Вход / Выход линии (порталы-туннели) ───────────────────────
+   Ворота всегда непрозрачные: маркеры деталей въезжают из-под ВХОДА
+   и уезжают под ВЫХОД, поэтому сквозь ворота ничего не просвечивает
+   и ничего на них не накладывается. Состояние показано цветом
+   подписи, рамки и непрозрачной тонированной подложкой. */
 .line-gate {
     display: flex;
     align-items: center;
@@ -452,17 +455,9 @@
     box-shadow: inset 0 2px 6px rgba(0,0,0,0.45);
     transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
 }
-.line-gate.gate-active { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
-.line-gate.gate-rejecting { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
-.line-gate.gate-cleanup { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
-
-/* ─── Цветовая индикация распределителей ───────────────────────
-   Подсветка только когда распределитель занял рабочее положение
-   (не в исходном). При возврате в исходное — гаснет.           */
-.blade-card.dist-reject { border-color: var(--bad); box-shadow: inset 0 0 0 1px var(--bad); }
-.blade-card.dist-cleanup { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
-.blade-card.dist-reject .axis-route b { color: var(--bad); }
-.blade-card.dist-cleanup .axis-route b { color: var(--warn); }
+.line-gate.gate-active { color: var(--ok); border-color: var(--ok); background: var(--ok-gate); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
+.line-gate.gate-rejecting { color: var(--bad); border-color: var(--bad); background: var(--bad-gate); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
+.line-gate.gate-cleanup { color: var(--warn); border-color: var(--warn); background: var(--warn-gate); box-shadow: inset 0 1px 4px rgba(0,0,0,0.25); }
 
 /* Keep the line legible when the window is resized below the normal
    1280px operator viewport.  The middle track remains fluid while the
@@ -481,19 +476,13 @@
         margin-left: 45px;
         margin-right: 45px;
     }
-    .scada-actuator-track { gap: 4px; }
-    .scada-label-text { display: none; }
-    .pneumo-title { max-width: 34vw; }
 }
 
 /* Anti-overlap guards for compact Russian captions. */
 .axis-route span,
 .axis-route b,
-.scada-chute,
-.scada-chute-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scada-pneumo-unit { flex: 1 1 auto; }
-.scada-chute { flex: 0 1 40%; }
+.dist-route { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line-token { overflow: hidden; padding: 0 10px 0 3px; text-overflow: ellipsis; white-space: nowrap; }
 .process-phase-label { position: static; max-width: 100%; margin-top: 3px; overflow: hidden; text-align: right; text-overflow: ellipsis; }
 .axis-route span { flex: 1 1 auto; }
-.axis-route b, .scada-chute-label { display: block; }
+.axis-route b, .dist-route { display: block; }

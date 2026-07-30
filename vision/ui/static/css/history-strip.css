@@ -39,11 +39,15 @@
     min-width: 0;
     border: 1px solid;
     border-radius: var(--radius-sm);
-    padding: 3px 7px;
+    /* Самая длинная подпись «ОЧИСТКА» должна входить целиком даже при
+       десяти карточках в штатном окне 1280px: компактные боковые
+       паддинги освобождают место под текст, а max-width оставляет
+       запас на широких окнах. */
+    padding: 3px 4px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    max-width: 72px;
+    max-width: 84px;
     background: rgba(0, 0, 0, 0.3);
     transition:
         background-color var(--t-normal) var(--ease),
@@ -75,9 +79,11 @@
 
 .history-card-symbol {
     overflow: hidden;
-    font-size: 11px;
+    /* 10px + узкий трекинг: «ОЧИСТКА» помещается в карточку без
+       обрезки, а ellipsis остаётся страховкой на узких окнах. */
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }

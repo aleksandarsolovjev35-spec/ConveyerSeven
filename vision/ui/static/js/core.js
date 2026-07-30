@@ -172,6 +172,7 @@ const els = {
     dist2Blade:       $('dist2-blade'),
     dist2Target:      $('dist2-target'),
     distAction:       $('dist-action'),
+    distRoute:        $('dist-route'),
     distributorDiagnostics: $('distributor-diagnostics'),
     controlError:      $('control-error'),
 

@@ -32,7 +32,7 @@
 <rect x="30" y="533" width="400" height="128" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="551" font-size="13" font-weight="bold" fill="#e6c07b">process-line</text>
 <text x="40" y="569" font-size="11" fill="#c9d1d9">#line-cells 8 ячеек + .line-token (маркеры деталей)</text>
-<text x="40" y="584" font-size="11" fill="#c9d1d9">.line-gate-in/out · #scada-actuator (DIST2, пневмо)</text>
+<text x="40" y="584" font-size="11" fill="#c9d1d9">.line-gate-in/out — непрозрачные ворота ВХОД/ВЫХОД</text>
 <text x="40" y="599" font-size="11" fill="#c9d1d9">#process-phase-label</text>
 <rect x="30" y="671" width="400" height="60" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="689" font-size="13" font-weight="bold" fill="#e6c07b">history-strip</text>
@@ -68,8 +68,8 @@
 <text x="465" y="311" font-size="13" font-weight="bold" fill="#e6c07b">status.js — главный рендер-цикл</text>
 <text x="465" y="329" font-size="11" fill="#c9d1d9">fetchStatus() → updateLineStatus(ls):</text>
 <text x="465" y="344" font-size="11" fill="#c9d1d9">кнопки · оверлей · статистика · распределитель</text>
-<text x="465" y="359" font-size="11" fill="#c9d1d9">updateLineCells() — токены деталей; SCADA-ворота</text>
-<text x="465" y="374" font-size="11" fill="#c9d1d9">_updateDistributorColorCoding()</text>
+<text x="465" y="359" font-size="11" fill="#c9d1d9">updateLineCells() — токены деталей; ворота линии</text>
+<text x="465" y="374" font-size="11" fill="#c9d1d9">_updateDistributorRoute() — заливка по маршруту</text>
 <text x="465" y="389" font-size="11" fill="#d29922">updateSelectedAnalysisStatus / FrameAnalysisStatus</text>
 <rect x="455" y="421" width="420" height="92" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="465" y="439" font-size="13" font-weight="bold" fill="#e6c07b">cameras.js — кадры и режимы</text>

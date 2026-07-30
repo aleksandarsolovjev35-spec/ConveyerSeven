@@ -40,7 +40,7 @@ Functions may call functions from later modules only after all scripts have load
 - `operator-header` — статус линии, заголовок и метрики.
 - `preview-strip` — семь миниатюр камер.
 - `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ 3 кадров.
-- `process-line` — путь деталей, ворота входа/выхода и SCADA-мнемосхема.
+- `process-line` — путь деталей: непрозрачные ворота входа/выхода, из-под которых появляются и уезжают маркеры деталей.
 - `history-strip` — последние детали.
 - `right-panel` — прокручиваемая правая колонка.
 - `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
