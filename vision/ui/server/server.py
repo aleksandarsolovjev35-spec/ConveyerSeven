@@ -24,13 +24,13 @@ _STATIC_DIR    = _UI_DIR / "static"
 
 
 BOOT_STEPS = [
-    ("serial",        "Контроллер"),
-    ("hardware",      "Оборудование"),
     ("cameras",       "Камеры"),
     ("camera_warmup", "Прогрев камер"),
     ("models_load",   "Загрузка моделей"),
     ("models_warm",   "Прогрев моделей"),
     ("inspection",    "Система контроля"),
+    ("serial",        "Контроллер"),
+    ("hardware",      "Оборудование"),
     ("cycle",         "Производственный цикл"),
     ("preview",       "Начальные кадры"),
     ("ready",         "Готовность"),
