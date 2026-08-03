@@ -928,7 +928,7 @@ class ProductionCycle:
             self._await_initial_inspection = False
             self._set_process(
                 "INITIAL_INSPECTION",
-                "Деталь уже под камерами: контроль без движения ленты",
+                "Корпус уже под камерами: контроль без движения ленты",
                 positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
             )
             self._check_motion_cancelled()

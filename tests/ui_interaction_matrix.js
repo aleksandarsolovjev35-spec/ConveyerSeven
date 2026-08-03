@@ -785,7 +785,7 @@ async function main() {
   assert(modal.classList.contains('is-hidden'), 'backdrop closes gallery');
   archiveFound = false;
   await api.openGallery(5);
-  assert(window.document.getElementById('gallery-grid').textContent.includes('Деталь не найдена'), 'missing archive shown');
+  assert(window.document.getElementById('gallery-grid').textContent.includes('Корпус не найден'), 'missing archive shown');
   api.closeGallery();
 
   // 17. API command error is visible and a later explicit action may clear it.

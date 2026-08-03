@@ -199,7 +199,7 @@ function updateStateOverlay(ls) {
         const remaining = ls.in_line || 0;
         const reason = ls.fault_reason || 'Произошла ошибка';
         subText = remaining > 0
-            ? `${reason}. Деталей на линии: ${remaining}.`
+            ? `${reason}. Корпусов на линии: ${remaining}.`
             : reason;
         peekable = false;
     } else if (exitRequested && lineState === 'STOPPING') {
