@@ -156,10 +156,16 @@ function updateFrameAnalysisStatus(ls) {
 
     const models = Array.isArray(report.models) ? report.models : [];
     const rules = Array.isArray(report.rules) ? report.rules : [];
-    // Контекст панели: этап линии, выбранная оператором камера и деталь.
+    // Контекст панели: этап линии, выбранная оператором камера и корпус.
+    // Этап не дублируется, если уже прозвучал в названии камеры
+    // (например, «ВХОД» + «ВХОД · СЛЕВА» → «ВХОД · СЛЕВА»).
     const contextBits = [];
-    if (report.stage) contextBits.push(String(report.stage));
-    if (report.role) contextBits.push(cameraRoleLabel(report.role));
+    const stageText = report.stage ? String(report.stage) : '';
+    const roleText = report.role ? cameraRoleLabel(report.role) : '';
+    const stageFirst = String(stageText.split(' ')[0] || '');
+    const roleFirst = String(roleText.split(' ')[0] || '');
+    if (stageText && roleFirst !== stageFirst) contextBits.push(stageText);
+    if (roleText) contextBits.push(roleText);
     if (report.part_id) contextBits.push(`КОРПУС #${report.part_id}`);
     const context = contextBits.length
         ? contextBits.join(' · ')
@@ -168,7 +174,9 @@ function updateFrameAnalysisStatus(ls) {
     setIfChanged(els.frameAnalysisContext, context);
     setIfChanged(
         els.frameAnalysisMessage,
-        report.message || 'Ожидание результатов анализа',
+        frameAnalysisVerdict(report, ls)
+            || report.message
+            || 'Ожидание результатов анализа',
     );
     setIfChanged(els.frameAnalysisModelsTitle, `МОДЕЛИ · ${models.length}`);
     const decisive = decisiveRules(rules);
@@ -227,6 +235,41 @@ function renderFrameAnalysisModels(models) {
         item.append(name, result);
         els.frameAnalysisModels.appendChild(item);
     }
+}
+
+function frameAnalysisVerdict(report, ls) {
+    // Однострочный итог для оператора: что произошло с корпусом на этапе.
+    // Только для производственного цикла; ручной анализ кадра не трогаем.
+    if (!report || report.kind !== 'CYCLE') return '';
+    const rules = Array.isArray(report.rules) ? report.rules : [];
+    const partId = report.part_id;
+
+    if (partId == null) {
+        // Пустой лоток: корпус не создавался, решать нечего.
+        return rules.some(rule => rule.part_absent === true)
+            ? 'КОРПУС НЕ ОБНАРУЖЕН'
+            : '';
+    }
+
+    const parts = Array.isArray(ls.line_parts) ? ls.line_parts : [];
+    const part = parts.find(p => Number(p.id) === Number(partId));
+    const category = part ? String(part.category || '').toUpperCase() : '';
+    const triggered = rules.some(rule => rule.triggered === true);
+    const stage = String(report.stage || '').toUpperCase();
+
+    // КОНТРОЛЬ +4: категория корпуса уже окончательная.
+    if (stage.includes('КОНТРОЛЬ')) {
+        if (category === 'BAD' || category === 'CLEANUP') {
+            return `РЕШЕНИЕ: ${categoryLabel(category)}`;
+        }
+        return triggered ? 'РЕШЕНИЕ: ЕСТЬ ДЕФЕКТЫ' : 'РЕШЕНИЕ: ГОДНО';
+    }
+
+    // Стадия ВХОД: корпус принят, входные правила уже проголосовали.
+    if (category === 'BAD') return 'ВХОД: РЕШЕНИЕ — БРАК';
+    if (category === 'CLEANUP') return 'ВХОД: РЕШЕНИЕ — НА ОЧИСТКУ';
+    if (triggered) return 'ВХОД: ЕСТЬ СРАБОТАВШИЕ ПРАВИЛА';
+    return 'ВХОД: КОРПУС ПРИНЯТ, ДЕФЕКТОВ НЕТ';
 }
 
 function decisiveRules(rules) {

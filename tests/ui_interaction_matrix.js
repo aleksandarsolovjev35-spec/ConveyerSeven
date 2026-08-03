@@ -358,6 +358,32 @@ async function main() {
   assert(!window.document.getElementById('stats-service').classList.contains('is-collapsed'), 'RUNNING service statistics expanded');
   assert([...window.document.querySelectorAll('.blade-diagnostic-grid')].every(grid => grid.classList.contains('is-collapsed')), 'RUNNING distributor buttons collapsed');
   assert(!viewModeToggle.disabled, 'RUNNING view-mode toggle enabled');
+  assert(window.document.getElementById('frame-analysis-message').textContent === 'ВХОД: КОРПУС ПРИНЯТ, ДЕФЕКТОВ НЕТ', 'cycle panel shows operator verdict');
+  assert(window.document.getElementById('frame-analysis-context').textContent.includes('КОРПУС #2'), 'cycle panel names the analyzed case');
+
+  // 4b. INPUT stage with a rejected case: verdict and context must be unambiguous
+  // (no duplicated «ВХОД · ВХОД» when the role label already starts with the stage).
+  currentStatus = lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    process: {phase: 'INPUT_ANALYSIS', label: 'input', positions: [0], conveyor: {}},
+    line_parts: [{id: 3, position: 0, category: 'BAD'}],
+    frame_analysis: {
+      available: true,
+      kind: 'CYCLE',
+      active: true,
+      title: 'АНАЛИЗ ТЕКУЩЕГО КАДРА',
+      stage: 'ВХОД',
+      role: 'INPUT_LEFT',
+      part_id: 3,
+      message: 'Результаты текущего кадра',
+      models: [],
+      rules: [{name: 'presence', triggered: true, skipped: false, detail: 'Сработало'}],
+      updated_at: 2,
+    },
+  });
+  api.updateLineStatus(currentStatus);
+  assert(window.document.getElementById('frame-analysis-message').textContent === 'ВХОД: РЕШЕНИЕ — БРАК', 'input rejection verdict shown');
+  assert(window.document.getElementById('frame-analysis-context').textContent === 'ВХОД · СЛЕВА · КОРПУС #3', 'context avoids duplicated stage word');
 
   // 5. STOPPING and DRAINING.
   currentStatus = lineStatus('STOPPING', {
@@ -880,6 +906,10 @@ async function main() {
     && badge.classList.contains('mode-static')
     && badge.textContent === 'СТОП-КАДР · ПРАВИЛА',
     'static badge stays visible after mode tick');
+  api.updateMode('RAW');
+  assert(badge.textContent === 'СТОП-КАДР · RAW',
+    'static badge follows the RAW view mode');
+  api.updateMode('RULES');
   api.updateLineStatus(lineStatus('IDLE', {
     live: {running: false, streaming: false, static: false, fps: 0, error: null},
     controls: controls({start: true, exit: true}),

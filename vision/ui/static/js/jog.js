@@ -103,7 +103,9 @@ function applyLiveBadge(active) {
     }
     // Лента стоит: на экране статичные кадры, по которым считались правила.
     if (state.liveStatic) {
-        els.modeBadge.textContent = 'СТОП-КАДР · ПРАВИЛА';
+        els.modeBadge.textContent = state.mode === 'RAW'
+            ? 'СТОП-КАДР · RAW'
+            : 'СТОП-КАДР · ПРАВИЛА';
         els.modeBadge.classList.add('mode-static');
         return;
     }
