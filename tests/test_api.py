@@ -267,6 +267,11 @@ class ThresholdsApiTests(unittest.TestCase):
             payload["values"]["top_contacts_min_confidence"],
             self.thresholds["TOP.top_contacts_min_confidence"],
         )
+        # У каждого параметра есть автоподпись; кастомных названий пока нет.
+        for group in payload["rules"]:
+            for param in group["params"]:
+                self.assertIn("autoLabel", param)
+        self.assertEqual(payload["labels"], {})
 
     def test_get_thresholds_unknown_role_is_not_available(self):
         server = UIServer()
@@ -316,7 +321,7 @@ class ThresholdsApiTests(unittest.TestCase):
 
             applied = {}
 
-            def apply_cb(role, values):
+            def apply_cb(role, values, labels=None):
                 applied.update({role: values})
                 updated = dict(server.thresholds)
                 for key, value in values.items():
@@ -349,6 +354,114 @@ class ThresholdsApiTests(unittest.TestCase):
                 "values": {"nope_parameter": 1},
             })
             self.assertEqual(response.status_code, 400)
+
+    def test_operator_can_rename_thresholds_in_russian(self):
+        """Понятные названия порогов: задаются через UI, сохраняются в файл,
+        возвращаются в GET и подхватываются при автоперечитывании."""
+        asyncio.run(self._run_labels())
+
+    async def _run_labels(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            def apply_cb(role, values, labels):
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                ThresholdLoader.validate(updated)
+                full_labels = dict(server.threshold_labels)
+                for key, name in labels.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if not str(name).strip():
+                        full_labels.pop(full_key, None)
+                    else:
+                        full_labels[full_key] = str(name).strip()
+                ThresholdLoader.save_file(
+                    str(path), updated, labels=full_labels,
+                )
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                # Задаём русские названия двум порогам TOP.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.3},
+                    "labels": {
+                        "top_contacts_min_confidence": "Уверенность контактов сверху",
+                        "top_platform_min_confidence": "Уверенность платформы",
+                    },
+                })
+                self.assertEqual(response.status_code, 200)
+                updated = response.json()["thresholds"]
+                # В ответе кастомное название заменяет автоподпись.
+                contacts = next(
+                    param
+                    for group in updated["rules"]
+                    for param in group["params"]
+                    if param["key"] == "top_contacts_min_confidence"
+                )
+                self.assertEqual(
+                    contacts["label"], "Уверенность контактов сверху",
+                )
+                self.assertIn("autoLabel", contacts)
+                self.assertEqual(
+                    updated["labels"]["top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+
+                # Сохранено в файл как _label.<parameter>.
+                saved = ThresholdLoader(str(path))
+                self.assertEqual(
+                    saved.labels["TOP.top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+                self.assertEqual(
+                    saved.labels["TOP.top_platform_min_confidence"],
+                    "Уверенность платформы",
+                )
+
+                # Автоперечитывание файла подхватывает названия.
+                server.reload_thresholds_from_file()
+                self.assertEqual(
+                    server.threshold_labels["TOP.top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+
+                # Удаление названия (пустая строка) возвращает автоподпись.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.3},
+                    "labels": {"top_contacts_min_confidence": ""},
+                })
+                self.assertEqual(response.status_code, 200)
+                updated = response.json()["thresholds"]
+                self.assertNotIn("top_contacts_min_confidence", updated["labels"])
+                self.assertIn(
+                    "top_platform_min_confidence", updated["labels"],
+                )
 
     def test_threshold_loader_save_round_trip_and_rejects_bad_value(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -460,7 +573,7 @@ class ThresholdsApiTests(unittest.TestCase):
             server.splash_active = False
             server.line_status = {"state": "IDLE"}
 
-            def apply_cb(role, values):
+            def apply_cb(role, values, labels=None):
                 updated = dict(server.thresholds)
                 for key, value in values.items():
                     full_key = (

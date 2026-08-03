@@ -102,6 +102,10 @@ class UIServer:
         self.thresholds_revision = 0
         self.on_thresholds_apply: callable | None = None
 
+        # Понятные названия порогов для оператора: ROLE.parameter -> строка.
+        # Не влияют на логику правил, только на отображение в панели.
+        self.threshold_labels: dict = {}
+
         # Автоподхват порогов из файла: путь и время последней проверки.
         self.thresholds_path: str | None = None
         self.thresholds_file_mtime: float | None = None
@@ -225,13 +229,16 @@ class UIServer:
             return False
         try:
             from domain.threshold_loader import ThresholdLoader
-            fresh = ThresholdLoader(self.thresholds_path).get_all()
+            loader = ThresholdLoader(self.thresholds_path)
+            fresh = loader.get_all()
+            fresh_labels = dict(loader.labels)
         except Exception as exc:
             print(f"[THRESHOLDS] Ошибка перечитывания thresholds.json: {exc}")
             return False
         with self.lock:
             current = dict(self.thresholds or {})
-        if fresh == current:
+            current_labels = dict(self.threshold_labels)
+        if fresh == current and fresh_labels == current_labels:
             # Файл тронут, но содержимое не изменилось (например, после
             # сохранения через UI) — просто запоминаем время проверки.
             with self.lock:
@@ -247,6 +254,7 @@ class UIServer:
                 return False
         with self.lock:
             self.thresholds = dict(fresh)
+            self.threshold_labels = dict(fresh_labels)
             self.thresholds_file_mtime = mtime
             self.thresholds_revision += 1
         print("[THRESHOLDS] thresholds.json перечитан автоматически")
@@ -288,6 +296,7 @@ class UIServer:
                     "editable": False,
                     "rules": [],
                     "values": {},
+                    "labels": {},
                     "revision": revision,
                 }
             rules = describe_role_parameters(role, thresholds)
@@ -296,12 +305,26 @@ class UIServer:
                 for group in rules
                 for param in group["params"]
             }
+            # Понятные названия, заданные оператором: заменяют автоподпись.
+            with self.lock:
+                labels = {
+                    key.split(".", 1)[1]: name
+                    for key, name in self.threshold_labels.items()
+                    if key.startswith(f"{role}.")
+                }
+            for group in rules:
+                for param in group["params"]:
+                    param["autoLabel"] = param["label"]
+                    custom = labels.get(param["key"])
+                    if custom:
+                        param["label"] = custom
             return {
                 "role": role,
                 "available": True,
                 "editable": editable,
                 "rules": rules,
                 "values": values,
+                "labels": labels,
                 "revision": revision,
             }
 
@@ -320,11 +343,14 @@ class UIServer:
             "revision": revision,
         }
 
-    def apply_thresholds(self, role: str, values: dict) -> dict:
+    def apply_thresholds(
+        self, role: str, values: dict, labels: dict | None = None,
+    ) -> dict:
         """Применить изменения порогов через внешний callback.
 
-        Доступно только когда линия остановлена (IDLE/STOPPED). Возвращает
-        обновлённый payload GET /api/thresholds.
+        Доступно только когда линия остановлена (IDLE/STOPPED). ``labels`` —
+        понятные названия порогов роли (parameter -> строка); пустая строка
+        удаляет название. Возвращает обновлённый payload GET /api/thresholds.
         """
         if not self.thresholds_editable():
             raise RuntimeError(
@@ -336,11 +362,22 @@ class UIServer:
         self.reload_thresholds_from_file()
         if self.on_thresholds_apply is None:
             raise RuntimeError("Применение порогов ещё не подключено")
-        updated = self.on_thresholds_apply(role, values)
+        updated = self.on_thresholds_apply(role, values, labels or {})
         if not isinstance(updated, dict):
             raise RuntimeError("Backend не вернул обновлённые пороги")
         with self.lock:
             self.thresholds = dict(updated)
+            self.threshold_labels = dict(self.threshold_labels or {})
+            for key, name in (labels or {}).items():
+                full_key = (
+                    f"{role}.{key}"
+                    if not str(key).startswith(f"{role}.")
+                    else str(key)
+                )
+                if name is None or not str(name).strip():
+                    self.threshold_labels.pop(full_key, None)
+                else:
+                    self.threshold_labels[full_key] = str(name).strip()
             self.thresholds_revision += 1
         return self.build_thresholds_payload(role)
 

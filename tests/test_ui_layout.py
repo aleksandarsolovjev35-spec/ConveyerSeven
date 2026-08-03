@@ -367,6 +367,15 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("M9 5 L16 12 L9 19", self.html)
         self.assertIn("box-shadow: inset 0 0 0 1px var(--accent)", self.css)
 
+    def test_thresholds_panel_supports_operator_friendly_names(self):
+        self.assertIn('id="thresholds-panel"', self.html)
+        self.assertIn("thresholds-rename-btn", self.js)
+        self.assertIn("beginThresholdRename", self.js)
+        self.assertIn("collectThresholdLabels", self.js)
+        self.assertIn("autoLabel", self.js)
+        self.assertIn(".thresholds-rename-btn", self.css)
+        self.assertIn(".thresholds-label-input", self.css)
+
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)
         self.assertIn("window.__TRANSPORTER_UI_TEST_API__", self.js)

@@ -14,6 +14,9 @@ let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
 let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
+// Несохранённые правки названий: parameter -> новое название или null
+// (null = убрать название, вернуть автоподпись).
+let thresholdsLabelEdits = {};
 
 function thresholdsPanelVisible() {
     return (
@@ -67,6 +70,7 @@ function updateThresholdsPanel(force) {
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
         // Смена камеры отбрасывает незаконченный ввод.
         thresholdsDirty = false;
+        thresholdsLabelEdits = {};
         thresholdsData = null;
         thresholdsBodyKey = null;
         setThresholdsStatus('', '');
@@ -141,8 +145,18 @@ function renderThresholdsBody() {
 
             const span = document.createElement('span');
             span.className = 'thresholds-item-label';
-            span.textContent = param.label || param.key;
+            span.textContent = effectiveThresholdLabel(param);
             span.title = param.key;
+
+            const renameBtn = document.createElement('button');
+            renameBtn.type = 'button';
+            renameBtn.className = 'thresholds-rename-btn';
+            renameBtn.textContent = '✎';
+            renameBtn.title = 'Задать понятное название для оператора';
+            renameBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                beginThresholdRename(item, param, renameBtn);
+            });
 
             const input = document.createElement('input');
             input.type = 'number';
@@ -154,6 +168,7 @@ function renderThresholdsBody() {
             input.value = param.value;
 
             item.appendChild(span);
+            item.appendChild(renameBtn);
             item.appendChild(input);
             items.appendChild(item);
         }
@@ -162,6 +177,73 @@ function renderThresholdsBody() {
         fragment.appendChild(groupEl);
     }
     body.appendChild(fragment);
+}
+
+function effectiveThresholdLabel(param) {
+    const edit = thresholdsLabelEdits[param.key];
+    if (edit !== undefined) return edit || param.autoLabel || param.label || param.key;
+    const custom = thresholdsData && thresholdsData.labels && thresholdsData.labels[param.key];
+    return custom || param.autoLabel || param.label || param.key;
+}
+
+// Переименование порога: подпись заменяется полем ввода, Enter — принять,
+// Esc — отменить, щелчок по кнопке «✓» — принять.
+function beginThresholdRename(item, param, renameBtn) {
+    const existing = item.querySelector('.thresholds-label-input');
+    if (existing) {
+        existing.focus();
+        return;
+    }
+    const span = item.querySelector('.thresholds-item-label');
+    if (!span) return;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'thresholds-label-input';
+    input.value = effectiveThresholdLabel(param);
+    input.maxLength = 80;
+
+    let finished = false;
+    const finish = (commit) => {
+        if (finished) return;
+        finished = true;
+        if (commit) {
+            const name = String(input.value).trim();
+            if (!name || name === (param.autoLabel || param.key)) {
+                // Пусто или совпадает с автоподписью — убираем своё название.
+                thresholdsLabelEdits[param.key] = null;
+            } else {
+                thresholdsLabelEdits[param.key] = name;
+            }
+            thresholdsDirty = true;
+        }
+        span.textContent = effectiveThresholdLabel(param);
+        span.style.display = '';
+        input.remove();
+        renameBtn.textContent = '✎';
+        renameBtn.classList.remove('is-active');
+        renameBtn.title = 'Задать понятное название для оператора';
+        updateThresholdsActions();
+    };
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            finish(true);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            finish(false);
+        }
+    });
+    input.addEventListener('blur', () => finish(true));
+
+    span.style.display = 'none';
+    span.after(input);
+    renameBtn.textContent = '✓';
+    renameBtn.classList.add('is-active');
+    renameBtn.title = 'Подтвердить название';
+    input.focus();
+    input.select();
 }
 
 function collectThresholdValues() {
@@ -178,12 +260,45 @@ function collectThresholdValues() {
     return values;
 }
 
+// Итоговый набор названий роли для отправки: по каждому порогу явно указано
+// название (пустая строка = убрать название, вернуть автоподпись).
+function collectThresholdLabels() {
+    const labels = {};
+    if (els.thresholdsBody) {
+        const server = (thresholdsData && thresholdsData.labels) || {};
+        els.thresholdsBody.querySelectorAll('input.thresholds-input').forEach(input => {
+            const key = input.dataset.key;
+            if (thresholdsLabelEdits[key] !== undefined) {
+                labels[key] = thresholdsLabelEdits[key] || '';
+            } else {
+                labels[key] = server[key] || '';
+            }
+        });
+    }
+    return labels;
+}
+
+function hasThresholdLabelChanges() {
+    if (!thresholdsData || !els.thresholdsBody) return false;
+    const server = thresholdsData.labels || {};
+    let changed = false;
+    els.thresholdsBody.querySelectorAll('input.thresholds-input').forEach(input => {
+        const key = input.dataset.key;
+        const requested = thresholdsLabelEdits[key] !== undefined
+            ? (thresholdsLabelEdits[key] || '')
+            : (server[key] || '');
+        if ((server[key] || '') !== requested) changed = true;
+    });
+    return changed;
+}
+
 function hasChangedThresholds() {
     if (!thresholdsData || !thresholdsData.values) return false;
     const current = collectThresholdValues();
-    return Object.entries(current).some(
+    const valuesChanged = Object.entries(current).some(
         ([key, value]) => thresholdsData.values[key] !== value,
     );
+    return valuesChanged || hasThresholdLabelChanges();
 }
 
 function updateThresholdsActions() {
@@ -221,9 +336,11 @@ async function saveThresholds() {
     updateThresholdsActions();
     setThresholdsStatus('Сохранение...', '');
     try {
+        const labels = collectThresholdLabels();
         const result = await apiPostJson('/api/thresholds', {
             role: state.currentCamera,
             values,
+            labels,
         }, true);
         if (!result || !result.thresholds) {
             setThresholdsStatus('Не удалось сохранить пороги', 'error');
@@ -231,6 +348,7 @@ async function saveThresholds() {
         }
         thresholdsData = result.thresholds;
         thresholdsDirty = false;
+        thresholdsLabelEdits = {};
         if (typeof result.thresholds.revision === 'number') {
             state.thresholdsRevision = result.thresholds.revision;
         }
@@ -248,6 +366,7 @@ async function resetThresholds() {
     // Принудительно перестраиваем поля, даже если ревизия не изменилась:
     // нужно сбросить незаконченный ввод оператора.
     thresholdsDirty = false;
+    thresholdsLabelEdits = {};
     thresholdsBodyKey = null;
     thresholdsData = null;
     await fetchThresholds(state.currentCamera);

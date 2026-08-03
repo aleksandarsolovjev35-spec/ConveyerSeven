@@ -733,7 +733,7 @@ def main():
 
     monitor.thresholds_reload_callback = demo_thresholds_reload
 
-    def demo_thresholds_apply(role, values):
+    def demo_thresholds_apply(role, values, labels):
         if demo.state not in ("IDLE", "STOPPED"):
             raise RuntimeError(
                 "Изменение порогов доступно только до пуска "
@@ -754,7 +754,21 @@ def main():
             updated[full_key] = value
             changed.append(full_key)
         ThresholdLoader.validate(updated)
-        ThresholdLoader.save_file("thresholds.json", updated)
+        # Понятные названия порогов для оператора.
+        full_labels = dict(monitor.server.threshold_labels or {})
+        for key, name in (labels or {}).items():
+            full_key = (
+                f"{role}.{key}"
+                if not str(key).startswith(f"{role}.")
+                else str(key)
+            )
+            if name is None or not str(name).strip():
+                full_labels.pop(full_key, None)
+            else:
+                full_labels[full_key] = str(name).strip()
+        ThresholdLoader.save_file(
+            "thresholds.json", updated, labels=full_labels,
+        )
         print(
             "[THRESHOLDS] Демо: применено "
             f"{len(changed)} изменение(й) для {role}"

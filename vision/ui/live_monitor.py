@@ -159,8 +159,8 @@ class LiveMonitor:
             )
         )
         self.server.on_thresholds_apply = (
-            lambda role, values: self._invoke_args(
-                self.thresholds_apply_callback, role, values,
+            lambda role, values, labels: self._invoke_args(
+                self.thresholds_apply_callback, role, values, labels,
             )
         )
         self.server.on_thresholds_reload = (

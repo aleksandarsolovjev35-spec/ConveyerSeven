@@ -124,10 +124,18 @@ def setup_api_routes(app, server):
         payload = payload or {}
         role = payload.get("role")
         values = payload.get("values")
+        labels = payload.get("labels")
         if not isinstance(role, str) or not role:
             raise HTTPException(400, "Роль камеры не указана")
         if not isinstance(values, dict) or not values:
             raise HTTPException(400, "Не указаны значения порогов")
+        if labels is not None:
+            if not isinstance(labels, dict) or any(
+                not isinstance(name, str) for name in labels.values()
+            ):
+                raise HTTPException(
+                    400, "Названия порогов должны быть объектом со строками"
+                )
         if not server.thresholds_editable():
             return JSONResponse(
                 {
@@ -144,7 +152,7 @@ def setup_api_routes(app, server):
             )
         try:
             result = await asyncio.to_thread(
-                server.apply_thresholds, role, values,
+                server.apply_thresholds, role, values, labels,
             )
         except ValueError as exc:
             return JSONResponse(

@@ -217,6 +217,19 @@ class CameraAndConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "конечным числом"):
                 ThresholdLoader(path)
 
+            # Понятные названия порогов для оператора: _label.<parameter>
+            # сохраняются при записи и снова загружаются, значения не портят.
+            flat_base = ThresholdLoader(threshold_path).get_all()
+            labels = {
+                "TOP.top_contacts_min_confidence": "Мин. уверенность контактов",
+                "TOP.top_platform_min_confidence": "Мин. уверенность платформы",
+            }
+            path = Path(temp) / "labeled.json"
+            ThresholdLoader.save_file(str(path), flat_base, labels=labels)
+            loaded_labels = ThresholdLoader(str(path))
+            self.assertEqual(loaded_labels.labels, labels)
+            self.assertEqual(loaded_labels.get_all(), flat_base)
+
             invalid_ratio = dict(raw)
             invalid_ratio["TOP"] = dict(raw["TOP"])
             invalid_ratio["TOP"][

@@ -140,6 +140,9 @@ class ThresholdLoader:
 
     def __init__(self, path: str = "thresholds.json"):
         self.path = path
+        # Понятные названия порогов для оператора: ROLE.parameter -> строка.
+        # Хранятся в thresholds.json как "_label.<parameter>": "Название".
+        self.labels: dict = {}
         self.thresholds = self._load()
 
     def _load(self) -> dict:
@@ -153,12 +156,13 @@ class ThresholdLoader:
             raise RuntimeError(f"Ошибка чтения {self.path}: {exc}") from exc
         if not isinstance(raw_data, dict):
             raise ValueError("thresholds.json должен содержать объект")
-        data = self._flatten_sections(raw_data)
-        self.validate(data)
+        data, labels = self._flatten_sections(raw_data)
+        self.labels = labels
+        self.validate(data, labels)
         return data
 
     @classmethod
-    def validate(cls, data: dict) -> None:
+    def validate(cls, data: dict, labels: dict | None = None) -> None:
         """Проверить плоский словарь порогов (ROLE.parameter -> value).
 
         Используется и при загрузке файла, и перед сохранением изменений,
@@ -171,6 +175,9 @@ class ThresholdLoader:
         при запуске, показываются в панели «Пороги правил» (группа «Прочие
         пороги») и свободно редактируются. Ограничение только одно — значение
         должно быть конечным числом, чтобы редактор мог его отображать.
+
+        ``labels`` — понятные названия порогов для оператора (ROLE.parameter
+        -> строка). Названия не влияют на логику правил, только на отображение.
         """
         for key in cls.REQUIRED_KEYS:
             if key not in data:
@@ -189,6 +196,17 @@ class ThresholdLoader:
                 or not math.isfinite(float(value))
             ):
                 raise ValueError(f"{key} должен быть конечным числом")
+
+        if labels is not None:
+            if not isinstance(labels, dict):
+                raise ValueError("Названия порогов должны быть объектом")
+            for key, name in labels.items():
+                if not isinstance(key, str):
+                    raise ValueError("Ключ названия порога должен быть строкой")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(
+                        f"Название порога {key} должно быть непустой строкой"
+                    )
 
         for key in cls.INPUT_PARAMETER_KEYS:
             value = data[key]
@@ -323,15 +341,20 @@ class ThresholdLoader:
         # конец validate()
 
     @staticmethod
-    def _flatten_sections(raw_data: dict) -> dict:
+    def _flatten_sections(raw_data: dict) -> tuple[dict, dict]:
         """Преобразовать читаемые секции камер в ROLE.parameter.
 
         Ключи `_comment*` являются допустимыми комментариями JSON и полностью
         игнорируются загрузчиком. Дополнительные параметры в секциях камер
         сохраняются: новые пороги подхватываются при запуске и показываются
         в панели «Пороги правил» (группа «Прочие пороги»).
+
+        Ключи `_label.<parameter>` — понятные названия порогов для оператора:
+        они не попадают в значения, а собираются в отдельный словарь
+        ``ROLE.parameter -> название`` (self.labels).
         """
-        flattened = {}
+        flattened: dict = {}
+        labels: dict = {}
         for key, value in raw_data.items():
             if str(key).startswith("_comment"):
                 continue
@@ -341,6 +364,16 @@ class ThresholdLoader:
                 for parameter, parameter_value in value.items():
                     if str(parameter).startswith("_comment"):
                         continue
+                    if str(parameter).startswith("_label."):
+                        param_name = str(parameter)[len("_label."):]
+                        if (
+                            isinstance(parameter_value, str)
+                            and parameter_value.strip()
+                        ):
+                            labels[f"{key}.{param_name}"] = (
+                                parameter_value.strip()
+                            )
+                        continue
                     if isinstance(parameter_value, (dict, list)):
                         raise ValueError(
                             f"{key}.{parameter} должен быть простым значением"
@@ -348,16 +381,19 @@ class ThresholdLoader:
                     flattened[f"{key}.{parameter}"] = parameter_value
                 continue
             flattened[key] = value
-        return flattened
+        return flattened, labels
 
     @staticmethod
-    def save_file(path: str, data: dict) -> None:
+    def save_file(path: str, data: dict, labels: dict | None = None) -> None:
         """Сохранить плоский dict порогов в файл секциями по ролям.
 
         Формат повторяет читаемый вручную вид thresholds.json: секция камеры
         с параметрами и пустая строка между секциями. ``disabled_rules``
         записывается в конец. Перед сохранением вызывающий обязан выполнить
         :meth:`validate`, чтобы в файл не попали некорректные значения.
+
+        ``labels`` — понятные названия порогов (ROLE.parameter -> строка);
+        записываются в секции камеры как ``"_label.<parameter>": "Название"``.
         """
         grouped: dict = {}
         for key, value in data.items():
@@ -386,13 +422,29 @@ class ThresholdLoader:
             needs_comma = index < last_index or has_disabled
             if isinstance(params, dict):
                 lines.append(f"    {json.dumps(role, ensure_ascii=False)}: {{")
-                param_keys = list(params)
-                for p_index, parameter in enumerate(param_keys):
-                    comma = "," if p_index < len(param_keys) - 1 else ""
-                    lines.append(
-                        f"        {json.dumps(parameter, ensure_ascii=False)}: "
-                        f"{json.dumps(params[parameter], ensure_ascii=False)}{comma}"
-                    )
+                role_label_keys = sorted(
+                    key[len(role) + 1:]
+                    for key in (labels or {})
+                    if key.startswith(f"{role}.")
+                )
+                entries = [
+                    (False, parameter) for parameter in params
+                ] + [
+                    (True, parameter) for parameter in role_label_keys
+                ]
+                for p_index, (is_label, parameter) in enumerate(entries):
+                    comma = "," if p_index < len(entries) - 1 else ""
+                    if is_label:
+                        full_key = f"{role}.{parameter}"
+                        lines.append(
+                            f"        {json.dumps('_label.' + parameter, ensure_ascii=False)}: "
+                            f"{json.dumps(labels[full_key], ensure_ascii=False)}{comma}"
+                        )
+                    else:
+                        lines.append(
+                            f"        {json.dumps(parameter, ensure_ascii=False)}: "
+                            f"{json.dumps(params[parameter], ensure_ascii=False)}{comma}"
+                        )
                 lines.append("    }" + ("," if needs_comma else ""))
             else:
                 lines.append(
