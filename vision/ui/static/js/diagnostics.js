@@ -280,7 +280,7 @@ function renderFrameAnalysisRules(rules) {
         if (rule.part_absent) {
             const absent = document.createElement('div');
             absent.className = 'frame-analysis-human-cause';
-            absent.textContent = 'ДЕТАЛЬ НЕ ОБНАРУЖЕНА';
+            absent.textContent = 'КОРПУС НЕ ОБНАРУЖЕН';
             item.appendChild(absent);
             item.classList.add('has-human-cause');
         } else if (rule.triggered && rule.human_cause) {

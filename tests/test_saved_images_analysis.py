@@ -101,7 +101,7 @@ class SavedImagesAnalysisTests(unittest.TestCase):
             },
         )
         row = rule_report_row(result, INPUT_ROLES)
-        self.assertEqual(row["detail"], "ДЕТАЛЬ НЕ ОБНАРУЖЕНА")
+        self.assertEqual(row["detail"], "КОРПУС НЕ ОБНАРУЖЕН")
         self.assertEqual(row["details"], {})
 
     def test_long_contact_omission_tilt_is_visible_in_report(self):

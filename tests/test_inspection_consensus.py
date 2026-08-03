@@ -206,7 +206,7 @@ class InspectionConsensusTests(unittest.TestCase):
         self.assertEqual(len(result.rule_results), 1)
         self.assertEqual(result.rule_results[0].rule_name, "part_presence")
         row = ProductionCycle._rule_report_row(result.rule_results[0])
-        self.assertEqual(row["status_label"], "ДЕТАЛЬ НЕ ОБНАРУЖЕНА · 2/3")
+        self.assertEqual(row["status_label"], "КОРПУС НЕ ОБНАРУЖЕН · 2/3")
         self.assertTrue(row["neutral"])
 
     def test_rule_report_exposes_vote_without_overlay_text(self):

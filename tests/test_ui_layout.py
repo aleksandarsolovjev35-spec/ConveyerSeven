@@ -254,7 +254,7 @@ class UiLayoutTests(unittest.TestCase):
 
     def test_operator_interface_is_russian_and_previews_refresh_frequently(self):
         for label in (
-            "МОНИТОР ЛИНИИ",
+            "РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7",
             "ГОТОВА К ПУСКУ",
             "ШАГ:",
             "ВРЕМЯ РАБОТЫ:",
@@ -263,7 +263,7 @@ class UiLayoutTests(unittest.TestCase):
             "СТОП",
             "ВЫХОД",
             "Пустые лотки",
-            "Деталь #",
+            "Корпус #",
             "Дефекты:",
         ):
             self.assertIn(label, self.html)
@@ -390,7 +390,7 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)", self.css)
         self.assertIn(".frame-analysis-item b { max-width: 116px", self.css)
         self.assertNotIn(chr(0x2116), self.html + self.css + self.js)
-        self.assertIn("Деталь #", self.html)
+        self.assertIn("Корпус #", self.html)
         self.assertIn("normalizeOperatorText", self.js)
         self.assertNotIn('id="main-camera" class="main-camera" src=""', self.html)
         self.assertIn(".main-camera:not([src])", self.css)

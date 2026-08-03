@@ -7,7 +7,7 @@
 <marker id="arr-f85149" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#f85149"/></marker>
 <marker id="arr-bc8cff" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#bc8cff"/></marker>
 </defs>
-<text x="30" y="34" font-size="22" font-weight="bold" fill="#f0f6fc">ConveyerSeven — карта UI (монитор линии)</text>
+<text x="30" y="34" font-size="22" font-weight="bold" fill="#f0f6fc">ConveyerSeven — карта UI (роботехнический комплекс конвейерного типа 7)</text>
 <text x="30" y="56" font-size="12" fill="#8b949e">Браузер (pywebview) → классические JS-модули → FastAPI → ProductionCycle. Шина данных: GET /api/status (адаптивный опрос 60–500 мс).</text>
 <text x="70" y="92" font-size="15" font-weight="bold" fill="#58a6ff">1 · DOM (index.html, data-ui-block)</text>
 <text x="480" y="92" font-size="15" font-weight="bold" fill="#3fb950">2 · JS-модули (порядок загрузки!)</text>
@@ -31,12 +31,12 @@
 <text x="40" y="469" font-size="11" fill="#c9d1d9">#preview-strip — 7 миниатюр, клик = selectCamera</text>
 <rect x="30" y="533" width="400" height="128" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="551" font-size="13" font-weight="bold" fill="#e6c07b">process-line</text>
-<text x="40" y="569" font-size="11" fill="#c9d1d9">#line-cells 8 ячеек + .line-token (маркеры деталей)</text>
+<text x="40" y="569" font-size="11" fill="#c9d1d9">#line-cells 8 ячеек + .line-token (маркеры корпусов)</text>
 <text x="40" y="584" font-size="11" fill="#c9d1d9">.line-gate-in/out — непрозрачные ворота ВХОД/ВЫХОД</text>
 <text x="40" y="599" font-size="11" fill="#c9d1d9">#process-phase-label</text>
 <rect x="30" y="671" width="400" height="60" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="689" font-size="13" font-weight="bold" fill="#e6c07b">history-strip</text>
-<text x="40" y="707" font-size="11" fill="#c9d1d9">#history-cards — последние 10 деталей</text>
+<text x="40" y="707" font-size="11" fill="#c9d1d9">#history-cards — последние 10 корпусов</text>
 <text x="40" y="722" font-size="11" fill="#c9d1d9">клик по карточке → openGallery(partId)</text>
 <rect x="30" y="741" width="400" height="204" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="759" font-size="13" font-weight="bold" fill="#e6c07b">right-panel (stats-panel)</text>
@@ -54,7 +54,7 @@
 <rect x="30" y="955" width="400" height="62" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="40" y="973" font-size="13" font-weight="bold" fill="#e6c07b">operator-footer + gallery-modal</text>
 <text x="40" y="991" font-size="11" fill="#c9d1d9">#btn-start/pause/resume/stop/exit + хоткеи F5–F11</text>
-<text x="40" y="1006" font-size="11" fill="#c9d1d9">#gallery-modal — архив детали (RAW/ПРАВИЛА)</text>
+<text x="40" y="1006" font-size="11" fill="#c9d1d9">#gallery-modal — архив корпуса (RAW/ПРАВИЛА)</text>
 <rect x="455" y="105" width="420" height="96" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
 <text x="465" y="123" font-size="13" font-weight="bold" fill="#e6c07b">core.js — состояние и шина</text>
 <text x="465" y="141" font-size="11" fill="#c9d1d9">state{}, els{} (кэш DOM), apiGet/apiPost</text>
@@ -68,7 +68,7 @@
 <text x="465" y="311" font-size="13" font-weight="bold" fill="#e6c07b">status.js — главный рендер-цикл</text>
 <text x="465" y="329" font-size="11" fill="#c9d1d9">fetchStatus() → updateLineStatus(ls):</text>
 <text x="465" y="344" font-size="11" fill="#c9d1d9">кнопки · оверлей · статистика · распределитель</text>
-<text x="465" y="359" font-size="11" fill="#c9d1d9">updateLineCells() — токены деталей; ворота линии</text>
+<text x="465" y="359" font-size="11" fill="#c9d1d9">updateLineCells() — токены корпусов; ворота линии</text>
 <text x="465" y="374" font-size="11" fill="#c9d1d9">_updateDistributorRoute() — заливка по маршруту</text>
 <text x="465" y="389" font-size="11" fill="#d29922">updateSelectedAnalysisStatus / FrameAnalysisStatus</text>
 <rect x="455" y="421" width="420" height="92" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>

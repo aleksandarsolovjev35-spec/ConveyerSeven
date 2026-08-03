@@ -207,7 +207,7 @@ function updateStateOverlay(ls) {
         mainText = 'ОСТАНОВКА ЛИНИИ';
         const remaining = ls.in_line || 0;
         subText = remaining > 0
-            ? `На линии осталось деталей: ${remaining}`
+            ? `На линии осталось корпусов: ${remaining}`
             : 'Завершение работы...';
         peekable = true;
     } else if (state.selectedAnalysisActive) {
@@ -235,7 +235,7 @@ function updateStateOverlay(ls) {
     } else if (lineState === 'STOPPING') {
         mainCode = 'STOPPING';
         mainText = 'ОСТАНОВКА ЛИНИИ';
-        subText  = `На линии осталось деталей: ${ls.in_line || 0}`;
+        subText  = `На линии осталось корпусов: ${ls.in_line || 0}`;
         peekable = true;
     } else if (lineState === 'IDLE') {
         if (state.jogActive) {

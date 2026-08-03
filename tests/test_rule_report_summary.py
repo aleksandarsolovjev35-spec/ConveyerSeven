@@ -56,7 +56,7 @@ class RuleReportSummaryTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["name"], "part_presence")
         self.assertTrue(rows[0]["part_absent"])
-        self.assertEqual(rows[0]["status_label"], "ДЕТАЛЬ НЕ ОБНАРУЖЕНА")
+        self.assertEqual(rows[0]["status_label"], "КОРПУС НЕ ОБНАРУЖЕН")
 
     def test_present_part_keeps_all_rules(self):
         rows = build_rule_report_rows([_presence(False), _triggered_rule()])
@@ -127,7 +127,7 @@ class RuleReportSummaryTests(unittest.TestCase):
         )
         self.assertIn("function decisiveRules(", js)
         self.assertIn("rule.part_absent === true", js)
-        self.assertIn("ДЕТАЛЬ НЕ ОБНАРУЖЕНА", js)
+        self.assertIn("КОРПУС НЕ ОБНАРУЖЕН", js)
         self.assertIn("rule.summary_lines", js)
 
 

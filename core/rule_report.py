@@ -606,7 +606,7 @@ def _skip_summary(per_role: dict) -> tuple:
 def _status_label(rule_name: str, triggered: bool, details: dict, consensus: dict):
     """Итог правила для правой панели: текст и признак нейтрального статуса."""
     if rule_name == "part_presence" and details.get("empty_tray"):
-        label = "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
+        label = "КОРПУС НЕ ОБНАРУЖЕН"
         if consensus:
             label += (
                 f" · {int(consensus.get('empty_votes') or 0)}/"
@@ -617,7 +617,7 @@ def _status_label(rule_name: str, triggered: bool, details: dict, consensus: dic
         if not consensus:
             return None, False
         return (
-            "ДЕТАЛЬ ОБНАРУЖЕНА · "
+            "КОРПУС ОБНАРУЖЕН · "
             f"{int(consensus.get('present_votes') or 0)}/"
             f"{int(consensus.get('runs') or 0)}"
         ), False
@@ -691,7 +691,7 @@ SUMMARY_LINES_LIMIT = 4
 
 PART_PRESENCE_RULE = "part_presence"
 
-PART_ABSENT_TEXT = "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
+PART_ABSENT_TEXT = "КОРПУС НЕ ОБНАРУЖЕН"
 
 
 def _presence_summary(details: dict) -> list:
@@ -816,9 +816,9 @@ def build_rule_report_row(result) -> dict:
 
     if rule_name == "part_presence":
         detail = (
-            "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
+            "КОРПУС НЕ ОБНАРУЖЕН"
             if details.get("empty_tray")
-            else "Деталь обнаружена"
+            else "Корпус обнаружен"
         )
 
     # === НОВАЯ ПРОСТАЯ ПРИЧИНА ДЛЯ ОПЕРАТОРА ===
