@@ -443,6 +443,128 @@ class ThresholdsApiTests(unittest.TestCase):
                     response.json()["thresholds_revision"], 2,
                 )
 
+    def test_operator_workflow_select_camera_edit_save_run_stop_switch(self):
+        """Полный цикл оператора: выбор камеры → правка → сохранение →
+        запуск анализа → остановка → повторная правка → переключение
+        на другую камеру и тот же цикл для неё."""
+        asyncio.run(self._run_operator_workflow())
+
+    async def _run_operator_workflow(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            def apply_cb(role, values):
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                ThresholdLoader.validate(updated)
+                ThresholdLoader.save_file(str(path), updated)
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                # 1. Выбрали камеру TOP — приходят только пороги её правил.
+                response = await client.get(
+                    "/api/thresholds", params={"role": "TOP"},
+                )
+                self.assertEqual(response.status_code, 200)
+                top = response.json()
+                top_keys = {
+                    param["key"]
+                    for group in top["rules"]
+                    for param in group["params"]
+                }
+                self.assertIn("top_contacts_min_confidence", top_keys)
+                self.assertIn("top_platform_overlap_margin_px", top_keys)
+                # Чужие камеры не подмешиваются.
+                self.assertNotIn("spider_contacts_long_min_confidence", top_keys)
+                self.assertNotIn("input_window_geometry_min_confidence", top_keys)
+
+                # 2. Изменили и сохранили.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.5},
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["thresholds"]["values"][
+                        "top_contacts_min_confidence"
+                    ], 0.5,
+                )
+
+                # 3. Запустили анализ — линия работает, правка недоступна.
+                server.line_status = {"state": "RUNNING"}
+                self.assertFalse(server.thresholds_editable())
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.6},
+                })
+                self.assertEqual(response.status_code, 409)
+
+                # 4. Остановились — значения на месте, можно снова менять.
+                server.line_status = {"state": "STOPPED"}
+                self.assertTrue(server.thresholds_editable())
+                response = await client.get(
+                    "/api/thresholds", params={"role": "TOP"},
+                )
+                self.assertEqual(
+                    response.json()["values"][
+                        "top_contacts_min_confidence"
+                    ], 0.5,
+                )
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.55},
+                })
+                self.assertEqual(response.status_code, 200)
+
+                # 5. Переключились на SPIDER_LEFT — свои пороги, TOP не виден.
+                response = await client.get(
+                    "/api/thresholds", params={"role": "SPIDER_LEFT"},
+                )
+                self.assertEqual(response.status_code, 200)
+                spider = response.json()
+                spider_keys = {
+                    param["key"]
+                    for group in spider["rules"]
+                    for param in group["params"]
+                }
+                self.assertIn("spider_contacts_long_min_confidence", spider_keys)
+                self.assertIn("spider_long_omission_allowed_thickness_px", spider_keys)
+                self.assertNotIn("top_contacts_min_confidence", spider_keys)
+                response = await client.post("/api/thresholds", json={
+                    "role": "SPIDER_LEFT",
+                    "values": {"spider_contacts_long_min_confidence": 0.4},
+                })
+                self.assertEqual(response.status_code, 200)
+
+                # 6. Файл хранит все изменения по обеим камерам.
+                saved = ThresholdLoader(str(path)).get_all()
+                self.assertEqual(
+                    saved["TOP.top_contacts_min_confidence"], 0.55,
+                )
+                self.assertEqual(
+                    saved["SPIDER_LEFT.spider_contacts_long_min_confidence"], 0.4,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
