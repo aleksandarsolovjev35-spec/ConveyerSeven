@@ -25,7 +25,7 @@ DIRECT_PARAMETER_NAMES = {
 
 
 class ThresholdSchemaTests(unittest.TestCase):
-    def test_every_threshold_is_used_and_every_rule_parameter_is_explicit(self):
+    def test_every_rule_parameter_is_explicitly_configured(self):
         root = Path(__file__).resolve().parents[1]
         used = set(DIRECT_PARAMETER_NAMES)
         for path in (root / "domain" / "defect_rules").glob("*.py"):
@@ -48,8 +48,12 @@ class ThresholdSchemaTests(unittest.TestCase):
             for key in thresholds
             if key != "disabled_rules"
         }
-        self.assertEqual(configured - used, set(), "unused threshold parameters")
+        # Параметры правил должны быть явно сконфигурированы в файле —
+        # без скрытых дефолтов в коде.
         self.assertEqual(used - configured, set(), "hidden fallback parameters")
+        # Обратное направление теперь разрешено: в thresholds.json можно
+        # добавлять новые пороги вручную, они подхватываются при запуске и
+        # редактируются в панели «Пороги правил» (группа «Прочие пороги»).
 
 
 if __name__ == "__main__":

@@ -175,7 +175,7 @@ class CameraAndConfigTests(unittest.TestCase):
         self.assertNotIn("input_window_geometry_min_confidence", thresholds)
         self.assertNotIn("input_window_sinks_min_confidence", thresholds)
 
-    def test_threshold_file_is_grouped_clean_and_rejects_unknown_keys(self):
+    def test_threshold_file_is_grouped_clean_and_accepts_extra_parameters(self):
         root = Path(__file__).resolve().parents[1]
         threshold_path = root / "thresholds.json"
         source = threshold_path.read_text(encoding="utf-8")
@@ -199,11 +199,22 @@ class CameraAndConfigTests(unittest.TestCase):
         self.assertFalse(any("contact_long_mm" in key for key in loaded))
 
         with tempfile.TemporaryDirectory() as temp:
-            invalid = dict(raw)
-            invalid["TOP"] = dict(raw["TOP"])
-            invalid["TOP"]["unused_parameter"] = 1
-            path = self.write_json(temp, "thresholds.json", invalid)
-            with self.assertRaisesRegex(ValueError, "Лишние или неизвестные"):
+            # Новый порог, добавленный в файл вручную, подхватывается при
+            # загрузке и доступен для редактирования в панели.
+            extra = dict(raw)
+            extra["TOP"] = dict(raw["TOP"])
+            extra["TOP"]["unused_parameter"] = 1
+            path = self.write_json(temp, "thresholds.json", extra)
+            loaded_extra = ThresholdLoader(path).get_all()
+            self.assertEqual(loaded_extra["TOP.unused_parameter"], 1)
+
+            # Нечисловой дополнительный порог отклоняется: редактор не смог
+            # бы его показать и менять.
+            bad_extra = dict(raw)
+            bad_extra["TOP"] = dict(raw["TOP"])
+            bad_extra["TOP"]["unused_parameter"] = "abc"
+            path = self.write_json(temp, "bad_extra.json", bad_extra)
+            with self.assertRaisesRegex(ValueError, "конечным числом"):
                 ThresholdLoader(path)
 
             invalid_ratio = dict(raw)

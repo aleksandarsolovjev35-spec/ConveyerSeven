@@ -134,6 +134,8 @@ class ThresholdLoader:
         *OMISSION_BOUNDARY_PARAMETER_KEYS,
         *TOP_PARAMETER_KEYS,
     )
+    # Сохранено для обратной совместимости: жёсткого «списка разрешённых
+    # ключей» больше нет, дополнительные пороги в файле разрешены.
     ALLOWED_KEYS = {*REQUIRED_KEYS, "disabled_rules"}
 
     def __init__(self, path: str = "thresholds.json"):
@@ -162,6 +164,13 @@ class ThresholdLoader:
         Используется и при загрузке файла, и перед сохранением изменений,
         сделанных оператором через интерфейс, чтобы в файл не попал ни один
         некорректный порог.
+
+        Обязательные ключи (REQUIRED_KEYS) должны присутствовать — без них
+        правила не могут работать. Дополнительные ключи разрешены: новые
+        пороги можно добавлять в thresholds.json вручную, они подхватываются
+        при запуске, показываются в панели «Пороги правил» (группа «Прочие
+        пороги») и свободно редактируются. Ограничение только одно — значение
+        должно быть конечным числом, чтобы редактор мог его отображать.
         """
         for key in cls.REQUIRED_KEYS:
             if key not in data:
@@ -169,12 +178,17 @@ class ThresholdLoader:
                     f"Отсутствует ключ в thresholds.json: {key}"
                 )
 
-        unknown = sorted(set(data) - cls.ALLOWED_KEYS)
-        if unknown:
-            raise ValueError(
-                "Лишние или неизвестные ключи в thresholds.json: "
-                + ", ".join(unknown)
-            )
+        extra_keys = sorted(
+            set(data) - set(cls.REQUIRED_KEYS) - {"disabled_rules"}
+        )
+        for key in extra_keys:
+            value = data[key]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{key} должен быть конечным числом")
 
         for key in cls.INPUT_PARAMETER_KEYS:
             value = data[key]
@@ -313,8 +327,9 @@ class ThresholdLoader:
         """Преобразовать читаемые секции камер в ROLE.parameter.
 
         Ключи `_comment*` являются допустимыми комментариями JSON и полностью
-        игнорируются загрузчиком. Старый плоский формат также читается, чтобы
-        ошибка миграции была понятной, но неизвестные ключи затем отклоняются.
+        игнорируются загрузчиком. Дополнительные параметры в секциях камер
+        сохраняются: новые пороги подхватываются при запуске и показываются
+        в панели «Пороги правил» (группа «Прочие пороги»).
         """
         flattened = {}
         for key, value in raw_data.items():
