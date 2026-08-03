@@ -132,6 +132,21 @@
         border-color var(--t-slow) var(--ease);
 }
 
+/* Production-ready: распределитель в исходном положении (DIST1 закрыт,
+   оси на месте), линия не работает. Зелёная заливка — сигнал оператору
+   «можно стартовать». При переходе в route-good/bad/cleanup цвет
+   автоматически сменяется, т.к. route-классы стоят ниже. */
+.distributor-panel.production-ready {
+    background: var(--ok-fill);
+    border-color: var(--ok);
+}
+.distributor-panel.production-ready .distributor-title,
+.distributor-panel.production-ready .dist-route { color: var(--ok); }
+.distributor-panel.production-ready .blade-marker {
+    background: var(--ok);
+    color: var(--ok);
+}
+
 .distributor-panel.route-good { background: var(--ok-fill); border-color: var(--ok); }
 .distributor-panel.route-bad { background: var(--bad-fill); border-color: var(--bad); }
 .distributor-panel.route-cleanup { background: var(--warn-fill); border-color: var(--warn); }

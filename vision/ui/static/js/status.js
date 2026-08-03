@@ -160,6 +160,7 @@ function updateLineStatus(ls) {
     setIfChanged(els.statInline, `${inLine} / 8`);
 
     const process = ls.process || {};
+    _updateDistributorRoute(ls);
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
     updateSelectedAnalysisStatus(ls);
@@ -204,8 +205,6 @@ function updateLineStatus(ls) {
         els.distAction,
         distributorActionLabel(action),
     );
-
-    _updateDistributorRoute(ls);
 
     updateJogState(ls.jog || null);
     updateStateOverlay(ls);
@@ -278,8 +277,19 @@ function _updateLineGates(lineParts, process = {}) {
         gateOut.classList.add('gate-rejecting');
         gateOut.textContent = '▼ СБРОС';
     } else {
-        gateOut.classList.add('gate-active');
-        gateOut.textContent = 'ВЫХОД ▸';
+        // Нет детали на сортировке — ворота отражают текущее состояние
+        // распределителя: зелёный (production-ready), красный (BAD),
+        // жёлтый (CLEANUP) или нейтральный (нет категории).
+        if (_currentDistributorCategory === 'BAD') {
+            gateOut.classList.add('gate-rejecting');
+            gateOut.textContent = 'ВЫХОД ▸';
+        } else if (_currentDistributorCategory === 'CLEANUP') {
+            gateOut.classList.add('gate-cleanup');
+            gateOut.textContent = 'ВЫХОД ▸';
+        } else {
+            gateOut.classList.add('gate-active');
+            gateOut.textContent = 'ВЫХОД ▸';
+        }
     }
 }
 
@@ -287,8 +297,12 @@ function _updateLineGates(lineParts, process = {}) {
 // Вся панель заливается полупрозрачным цветом канала, в который уходит
 // деталь: зелёный — годное, красный — брак, жёлтый — очистка. Карточки
 // DIST1/DIST2 лежат внутри этой заливки и остаются читаемыми.
+//
+// Текущая категория распределителя хранится в _currentDistributorCategory
+// и используется воротами «ВЫХОД» для синхронизации цвета.
 
 const ROUTE_CATEGORIES = ['GOOD', 'BAD', 'CLEANUP'];
+let _currentDistributorCategory = '';   // '', 'GOOD', 'BAD', 'CLEANUP'
 
 function _resolveDistributorRoute(ls) {
     const parts = Array.isArray(ls.line_parts) ? ls.line_parts : [];
@@ -334,17 +348,43 @@ function _updateDistributorRoute(ls) {
     const panel = els.distributorDiagnostics;
     if (!panel) return;
 
-    panel.classList.remove('route-good', 'route-bad', 'route-cleanup');
+    panel.classList.remove(
+        'route-good', 'route-bad', 'route-cleanup', 'production-ready',
+    );
     const category = _resolveDistributorRoute(ls);
-    if (category === 'GOOD') panel.classList.add('route-good');
-    else if (category === 'BAD') panel.classList.add('route-bad');
-    else if (category === 'CLEANUP') panel.classList.add('route-cleanup');
+    let effective = '';  // цвет, который реально применён к панели
+
+    if (category === 'GOOD') {
+        panel.classList.add('route-good');
+        effective = 'GOOD';
+    } else if (category === 'BAD') {
+        panel.classList.add('route-bad');
+        effective = 'BAD';
+    } else if (category === 'CLEANUP') {
+        panel.classList.add('route-cleanup');
+        effective = 'CLEANUP';
+    } else {
+        // Нет активного маршрута детали: если распределитель в исходном
+        // положении (DIST1 закрыт, линия не работает), показываем зелёную
+        // заливку — сигнал «можно стартовать».
+        const lineState = (ls.state || state.lineState || '').toUpperCase();
+        const parked = ['IDLE', 'STOPPED'].includes(lineState)
+            && String(ls.dist1_state || '').toUpperCase() === 'IDLE'
+            && Number(ls.dist1_position || 0) === 0;
+        if (parked) {
+            panel.classList.add('production-ready');
+            effective = 'GOOD';   // production-ready = зелёный
+        }
+    }
+
+    _currentDistributorCategory = effective;
 
     if (els.distRoute) {
-        setIfChanged(
-            els.distRoute,
-            category ? `→ ${categoryLabel(category)}` : '',
-        );
+        const ready = panel.classList.contains('production-ready');
+        const label = category
+            ? `→ ${categoryLabel(category)}`
+            : (ready ? 'ПРОИЗВОДСТВО ГОТОВО' : '');
+        setIfChanged(els.distRoute, label);
     }
 }
 
