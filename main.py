@@ -287,6 +287,10 @@ def main():
                             "Изменение порогов доступно только до пуска "
                             "и после полной остановки"
                         )
+                    if cycle.jog is not None and cycle.jog.status.get("busy"):
+                        raise RuntimeError(
+                            "Нельзя менять пороги во время движения ленты"
+                        )
                     if not isinstance(values, dict) or not values:
                         raise ValueError("Нет изменённых порогов")
                     updated = dict(inspector.decision.thresholds)

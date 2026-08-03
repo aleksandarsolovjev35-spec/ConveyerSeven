@@ -741,6 +741,10 @@ def main():
                 "Изменение порогов доступно только до пуска "
                 "и после полной остановки"
             )
+        if demo.jog_busy:
+            raise RuntimeError(
+                "Нельзя менять пороги во время движения ленты"
+            )
         if not isinstance(values, dict) or not values:
             raise ValueError("Нет изменённых порогов")
         updated = dict(monitor.server.thresholds)

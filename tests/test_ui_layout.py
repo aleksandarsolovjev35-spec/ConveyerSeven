@@ -368,6 +368,22 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("M9 5 L16 12 L9 19", self.html)
         self.assertIn("box-shadow: inset 0 0 0 1px var(--accent)", self.css)
 
+    def test_jog_panel_is_its_own_card_block(self):
+        # Кнопки ручного режима собраны в отдельный блок-карточку в правой
+        # колонке — как панель распределителя и пороги правил: подложка,
+        # рамка, скругление, а сами кнопки — во внутренней рамке.
+        embedded = self.css.split(".jog-panel.jog-panel-embedded {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("background: var(--panel)", embedded)
+        self.assertIn("border: 1px solid var(--border)", embedded)
+        self.assertIn("border-radius: var(--radius-sm)", embedded)
+        dpad = self.css.split(".jog-panel-embedded .jog-dpad {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("background: var(--bg-1)", dpad)
+        self.assertIn("border: 1px solid var(--border)", dpad)
+
     def test_thresholds_panel_shows_translated_labels_without_rename_ui(self):
         # Панель показывает русские названия порогов с сервера; ручного
         # переименования через UI больше нет.

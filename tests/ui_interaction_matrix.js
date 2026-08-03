@@ -38,6 +38,37 @@ function controls(overrides = {}) {
   };
 }
 
+// Пороги TOP-камеры для панели «ПОРОГИ ПРАВИЛ». Значения и ревизия
+// меняются моком POST /api/thresholds, как настоящий backend.
+let thresholdsValues = {min_confidence: 0.4, expected_count: 7, false_positive_max_count: 2};
+let thresholdsRevision = 1;
+
+function thresholdsPayload(role, revision, values) {
+  return {
+    role,
+    available: true,
+    editable: true,
+    revision,
+    values: {...values},
+    labels: {},
+    rules: [
+      {
+        rule: 'input_window_geometry', label: 'ГЕОМЕТРИЯ ОКНА',
+        params: [
+          {key: 'min_confidence', label: 'Мин. уверенность', value: values.min_confidence, step: 0.01, min: 0, max: 1},
+          {key: 'expected_count', label: 'Ожидаемое число', value: values.expected_count, step: 1, min: 0, max: 1000},
+        ],
+      },
+      {
+        rule: 'input_part_presence', label: 'НАЛИЧИЕ КОРПУСА',
+        params: [
+          {key: 'false_positive_max_count', label: 'Ложных срабатываний', value: values.false_positive_max_count, step: 1, min: 0, max: 100},
+        ],
+      },
+    ],
+  };
+}
+
 function lineStatus(state, overrides = {}) {
   return {
     state,
@@ -261,18 +292,20 @@ async function main() {
         }],
       });
     }
+    if (target === '/api/thresholds' && (options.method || 'GET') === 'POST') {
+      const body = JSON.parse(options.body || '{}');
+      thresholdsValues = {...thresholdsValues, ...(body.values || {})};
+      thresholdsRevision += 1;
+      return jsonResponse({
+        ok: true,
+        thresholds: thresholdsPayload(body.role || 'TOP', thresholdsRevision, thresholdsValues),
+      });
+    }
     if (target.startsWith('/api/thresholds')) {
       const role = target.includes('role=')
         ? decodeURIComponent(target.split('role=')[1])
         : 'TOP';
-      return jsonResponse({
-        role,
-        available: true,
-        editable: true,
-        revision: 1,
-        values: {},
-        rules: [],
-      });
+      return jsonResponse(thresholdsPayload(role, thresholdsRevision, thresholdsValues));
     }
     return jsonResponse({ok: true});
   };
@@ -545,7 +578,24 @@ async function main() {
     !routeClasses.some(cls => distPanel.classList.contains(cls)),
     'без детали на сортировке панель не залита',
   );
-  assert(distRoute.textContent === '', 'подпись маршрута очищена');
+  assert(distPanel.classList.contains('production-ready'), 'припаркованный распределитель подсвечен зелёным');
+  assert(distRoute.textContent === 'ПРОИЗВОДСТВО ГОТОВО', 'подпись готовности к пуску видна');
+
+  // Команда ПРОХОД (заслонка закрывается к 0) зажигает зелёное сразу,
+  // не дожидаясь фактического прихода ползунка в исходное положение —
+  // как СБРОС зажигает красное в момент команды.
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 340, dist1_state: 'CLOSING',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('production-ready'), 'закрытие к HOME подсвечено зелёным сразу');
+  assert(!distPanel.classList.contains('route-bad'), 'красный не держится во время закрытия');
+  assert(distRoute.textContent === 'ПРОИЗВОДСТВО ГОТОВО', 'подпись готовности видна и при закрытии');
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 0, dist1_state: 'IDLE',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('production-ready'), 'после прихода в 0 зелёный остаётся');
 
   // Открытая вручную заслонка сброса заливает панель по каналу DIST2.
   api.updateLineStatus(lineStatus('IDLE', {
@@ -930,7 +980,93 @@ async function main() {
   api.updateMode('RULES');
   assert(badge.classList.contains('is-faded'), 'badge hidden again at rest');
 
-  console.log('UI INTERACTION MATRIX PASS: 22 groups');
+  // 23. Пороги правил: блоки-карточки, значения — числовым полем,
+  // ползунок прокручивает список, СОХРАНИТЬ реально сохраняет.
+  // JOG-режим (jog.active) в IDLE включается автоматически и не должен
+  // блокировать редактирование — блокирует только реальное движение.
+  currentStatus = lineStatus('IDLE', {
+    diagnostic_allowed: true,
+    jog: {
+      active: true, can_enter: true, busy: false, hold_steps: 1000000,
+      last_action: '-', direction: null, error: null,
+    },
+    controls: controls({
+      start: true, exit: true, jog_hold: true, distributor_diagnostic: true,
+    }),
+  });
+  api.updateLineStatus(currentStatus);
+  api.state.currentCamera = null;
+  api.selectCamera('TOP');
+  await sleep(30);
+  const thresholdsBody = window.document.getElementById('thresholds-body');
+  assert(
+    thresholdsBody.querySelectorAll('.thresholds-card').length === 2,
+    'каждое правило — отдельный блок-карточка',
+  );
+  const thresholdInputs = thresholdsBody.querySelectorAll('input.thresholds-input');
+  assert(thresholdInputs.length === 3, 'у каждого порога есть числовое поле');
+  assert(
+    thresholdsBody.querySelectorAll('.thresholds-item input[type="range"]').length === 0,
+    'внутри строк порогов нет ползунков значений',
+  );
+  const scrollSlider = thresholdsBody.querySelector('input.thresholds-scroll-slider');
+  assert(!!scrollSlider, 'список прокручивается отдельным ползунком');
+
+  // jsdom не делает раскладку: подставляем размеры прокрутки, чтобы
+  // проверить, что ползунок двигает список.
+  const thresholdCardsEl = thresholdsBody.querySelector('.thresholds-cards');
+  const scrollState = {top: 0};
+  Object.defineProperty(thresholdCardsEl, 'scrollHeight', {value: 1000, configurable: true});
+  Object.defineProperty(thresholdCardsEl, 'clientHeight', {value: 400, configurable: true});
+  Object.defineProperty(thresholdCardsEl, 'scrollTop', {
+    configurable: true,
+    get: () => scrollState.top,
+    set: value => { scrollState.top = value; },
+  });
+  thresholdCardsEl.dispatchEvent(new window.Event('scroll'));
+  assert(!scrollSlider.disabled, 'ползунок активен, когда список переполнен');
+  scrollSlider.value = '500';
+  scrollSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
+  assert(scrollState.top === 300, 'ползунок прокручивает список порогов');
+
+  // Значение задаётся числовым полем; при активном JOG-режиме
+  // редактирование остаётся доступным (jog.busy === false).
+  const firstThresholdInput = thresholdInputs[0];
+  firstThresholdInput.value = '0.75';
+  firstThresholdInput.dispatchEvent(new window.Event('input', {bubbles: true}));
+  assert(
+    !window.document.getElementById('thresholds-save').disabled,
+    'после ввода значения СОХРАНИТЬ доступна даже при активном JOG',
+  );
+
+  // СОХРАНИТЬ: POST /api/thresholds с новым значением, ответ применяется,
+  // статус «Сохранено», после сохранения кнопка снова заблокирована.
+  calls.length = 0;
+  window.document.getElementById('thresholds-save').click();
+  await sleep(30);
+  const thresholdsSaveCall = calls.find(call => (
+    call.url === '/api/thresholds'
+    && (call.options.method || 'GET') === 'POST'
+  ));
+  assert(!!thresholdsSaveCall, 'СОХРАНИТЬ отправляет POST /api/thresholds');
+  assert(
+    JSON.parse(thresholdsSaveCall.options.body).values.min_confidence === 0.75,
+    'POST содержит изменённое значение',
+  );
+  assert(
+    window.document.getElementById('thresholds-status').textContent === 'Сохранено',
+    'статус «Сохранено» показывается после ответа backend',
+  );
+  assert(
+    thresholdsBody.querySelector('input.thresholds-input').value === '0.75',
+    'поля перестроены по ответу backend с новым значением',
+  );
+  assert(
+    window.document.getElementById('thresholds-save').disabled,
+    'после сохранения изменений нет — СОХРАНИТЬ снова заблокирована',
+  );
+
+  console.log('UI INTERACTION MATRIX PASS: 23 groups');
   dom.window.close();
 }
 
