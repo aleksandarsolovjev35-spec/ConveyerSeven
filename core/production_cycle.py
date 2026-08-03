@@ -182,7 +182,7 @@ class ProductionCycle:
             conveyor_info["speed"] = 20000
         self._set_process(
             "CONVEYOR_MOVING",
-            "Лента перемещает детали на следующую позицию",
+            "Лента перемещает корпуса на следующую позицию",
             part_id=current.get("part_id"),
             positions=range(self.OFFSET_REJECT + 1),
             conveyor_status=conveyor_info,
@@ -234,7 +234,7 @@ class ProductionCycle:
                     self._diagnostics = {
                         "status": "NOT_RUN",
                         "kind": None,
-                        "message": "Анализ трёх кадров ещё не выполнялся",
+                        "message": "Анализ кадра ещё не выполнялся",
                         "cameras": [],
                         "models": [],
                         "rules": [],
@@ -513,11 +513,11 @@ class ProductionCycle:
             self._selected_analysis_role = role
             self._set_diagnostic_running(
                 "SELECTED_MODEL",
-                f"Анализ трёх кадров выбранной камеры: {role}",
+                f"Анализ кадра выбранной камеры: {role}",
             )
             self._set_process(
                 "SELECTED_MODEL_ANALYSIS",
-                f"Анализ 3 кадров {role}",
+                f"Анализ кадра {role}",
             )
 
             decision = self.inspector.decision
@@ -640,7 +640,7 @@ class ProductionCycle:
             }
             self._set_process(
                 "SELECTED_MODEL_READY",
-                f"Анализ 3 кадров {role} завершён; поток приостановлен",
+                f"Анализ кадра {role} завершён; поток приостановлен",
             )
             self._refresh_monitor(stage_frames)
             return True
@@ -670,7 +670,7 @@ class ProductionCycle:
             self._diagnostics = {
                 "status": "NOT_RUN",
                 "kind": None,
-                "message": "Анализ трёх кадров не выполнялся",
+                "message": "Анализ кадра не выполнялся",
                 "cameras": [],
                 "models": [],
                 "rules": [],
@@ -851,7 +851,7 @@ class ProductionCycle:
             elif time.time() - self._drain_start_time > DRAIN_TIMEOUT:
                 self._handle_fault(
                     f"Превышено время штатной остановки {DRAIN_TIMEOUT} с; "
-                    f"на линии осталось деталей: {len(self.parts)}"
+                    f"на линии осталось корпусов: {len(self.parts)}"
                 )
                 return
 
@@ -928,7 +928,7 @@ class ProductionCycle:
             self._await_initial_inspection = False
             self._set_process(
                 "INITIAL_INSPECTION",
-                "Деталь уже под камерами: контроль без движения ленты",
+                "Корпус уже под камерами: контроль без движения ленты",
                 positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
             )
             self._check_motion_cancelled()
@@ -963,7 +963,7 @@ class ProductionCycle:
         """SETTLE: сброс детали и пауза на затухание вибрации."""
         self._set_process(
             "CONVEYOR_CONFIRMED",
-            "Позиции деталей подтверждены контроллером",
+            "Позиции корпусов подтверждены контроллером",
             part_id=pending_id,
             positions=range(self.OFFSET_REJECT + 1),
         )
@@ -971,7 +971,7 @@ class ProductionCycle:
         if self._pending_drop is not None:
             self._set_process(
                 "PART_DROP",
-                "Сброс детали и возврат лопасти",
+                "Сброс корпуса и возврат лопасти",
                 part_id=pending_id,
                 positions=[self.OFFSET_REJECT],
             )
@@ -1041,7 +1041,7 @@ class ProductionCycle:
         if spider_parts:
             self._set_process(
                 "SPIDER_CHECK",
-                "Проверка детали на +4: три прогона, голосование 2 из 3",
+                "Проверка корпуса на +4: три прогона, голосование 2 из 3",
                 positions=[self.OFFSET_SPIDER],
             )
             spider_result = self._run_spider_inspection(frame_runs)
@@ -1094,7 +1094,7 @@ class ProductionCycle:
 
         self._set_process(
             "ROUTE_CHECK",
-            "Проверка годной детали на позиции +7",
+            "Проверка годного корпуса на позиции +7",
             positions=[self.OFFSET_REJECT],
         )
         self._pass_good_parts()
@@ -1243,7 +1243,7 @@ class ProductionCycle:
 
             self._set_process(
                 "SPIDER_ANALYSIS",
-                f"Контроль 2 из 3 для детали #{part.id}",
+                f"Контроль 2 из 3 для корпуса #{part.id}",
                 part_id=part.id,
                 positions=[self.OFFSET_SPIDER],
             )
@@ -1366,7 +1366,7 @@ class ProductionCycle:
 
             self._set_process(
                 "ROUTE_FINALIZE",
-                f"GOOD: завершение детали #{part.id}",
+                f"GOOD: завершение корпуса #{part.id}",
                 part_id=part.id,
                 positions=[self.OFFSET_REJECT],
             )
@@ -1511,7 +1511,7 @@ class ProductionCycle:
 
     def _on_state_change(self, old, new, action: str):
         if new == State.STOPPING:
-            self._set_process("DRAINING", "Завершение деталей на линии")
+            self._set_process("DRAINING", "Завершение корпусов на линии")
         elif new == State.STOPPED:
             # Линия пуста: последние кадры с разметкой остаются на экране,
             # пока оператор не войдёт в JOG или не запустит цикл заново.
@@ -1682,13 +1682,13 @@ class ProductionCycle:
                 "available": True,
                 "kind": "SELECTED",
                 "active": self._selected_analysis_active,
-                "title": "АНАЛИЗ 3 КАДРОВ",
+                "title": "АНАЛИЗ КАДРА",
                 "role": (
                     report.get("selected_role")
                     or self._selected_analysis_role
                 ),
                 "part_id": None,
-                "message": report.get("message") or "Анализ трёх кадров",
+                "message": report.get("message") or "Анализ кадра",
                 "status": report.get("status"),
                 "cameras": [dict(item) for item in report.get("cameras", [])],
                 "models": [dict(item) for item in report.get("models", [])],

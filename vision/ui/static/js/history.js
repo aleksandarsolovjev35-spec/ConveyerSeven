@@ -16,7 +16,7 @@ function updateRecentParts(parts) {
 
     if (!parts.length) {
         els.historyCards.innerHTML =
-            '<span class="history-empty">Деталей пока нет</span>';
+            '<span class="history-empty">Корпусов пока нет</span>';
         animateUiElement(els.historyCards, 'ui-content-change');
         updateDefects(parts);
         return;
@@ -146,7 +146,7 @@ async function openGallery(partId) {
     const data = await apiGet(`/api/archive/part/${partId}`);
     if (!data) {
         els.galleryGrid.innerHTML =
-            '<div class="gallery-loading">Деталь не найдена в архиве</div>';
+            '<div class="gallery-loading">Корпус не найден в архиве</div>';
         return;
     }
 

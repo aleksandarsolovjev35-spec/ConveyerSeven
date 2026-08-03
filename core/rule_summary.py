@@ -356,8 +356,8 @@ def build_presence_summary(details: dict) -> list:
             "role": role,
             "ok": present,
             "verdict": (
-                "деталь видна" if present
-                else ("деталь не видна" if present is False else _UNKNOWN)
+                "корпус виден" if present
+                else ("корпус не виден" if present is False else _UNKNOWN)
             ),
             "found": [f"flatness: {_number(found)}"],
             "metrics": metrics,

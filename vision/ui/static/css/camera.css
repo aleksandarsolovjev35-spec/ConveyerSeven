@@ -202,19 +202,11 @@
     right: 10px;
     bottom: 10px;
     z-index: 15;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    display: flex;
+    justify-content: flex-end;
     align-items: center;
     gap: 10px;
     pointer-events: none;
-}
-.camera-view-switch {
-    display: grid;
-    grid-column: 2;
-    grid-template-columns: 68px 92px;
-    gap: 4px;
-    justify-self: center;
-    pointer-events: auto;
 }
 .camera-live-controls button {
     min-height: 34px;
@@ -232,20 +224,12 @@
     color: var(--text);
 }
 .camera-live-controls button:disabled { opacity: 0.35; cursor: not-allowed; }
-.camera-view-switch button {
+#view-mode-toggle {
     min-height: 30px;
-    padding: 0 8px;
     border-color: var(--border-strong);
     color: var(--text-dim);
 }
-.camera-view-switch button.active {
-    border-color: var(--accent);
-    background: var(--accent-glow);
-    color: var(--text);
-}
 #analyze-selected-frame {
-    grid-column: 3;
-    justify-self: end;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -273,7 +257,5 @@
 @media (max-width: 720px) {
     .camera-label,
     .mode-badge { max-width: calc(50% - 16px); }
-    .camera-live-controls { grid-template-columns: minmax(0, 1fr); justify-items: center; }
-    .camera-view-switch,
-    #analyze-selected-frame { grid-column: 1; justify-self: center; }
+    .camera-live-controls { justify-content: center; flex-wrap: wrap; }
 }

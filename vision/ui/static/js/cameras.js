@@ -56,17 +56,16 @@ function viewModeAllowed() {
 
 function updateViewModeControls() {
     const visible = viewModeContextVisible() && !state.offline;
-    if (els.cameraViewSwitch) {
-        els.cameraViewSwitch.classList.toggle('is-faded', !visible);
-    }
     const allowed = viewModeAllowed();
-    for (const button of [els.viewModeRaw, els.viewModeRules]) {
-        if (!button) continue;
-        button.disabled = !allowed;
-        button.classList.toggle('active', button.dataset.viewMode === state.mode);
-        button.setAttribute(
+    if (els.viewModeToggle) {
+        els.viewModeToggle.classList.toggle('is-faded', !visible);
+        els.viewModeToggle.disabled = !allowed;
+        els.viewModeToggle.textContent = state.mode === 'RULES'
+            ? 'ВИД: ПРАВИЛА'
+            : 'ВИД: RAW';
+        els.viewModeToggle.setAttribute(
             'aria-pressed',
-            button.dataset.viewMode === state.mode ? 'true' : 'false',
+            state.mode === 'RULES' ? 'true' : 'false',
         );
     }
 }
@@ -121,12 +120,8 @@ async function toggleMode() {
 }
 
 function setupViewModeControls() {
-    for (const button of [els.viewModeRaw, els.viewModeRules]) {
-        if (!button) continue;
-        button.addEventListener('click', () => {
-            setViewMode(button.dataset.viewMode);
-        });
-    }
+    if (!els.viewModeToggle) return;
+    els.viewModeToggle.addEventListener('click', toggleMode);
     updateViewModeControls();
 }
 

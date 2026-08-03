@@ -371,7 +371,7 @@ function updateLineCells(lineParts, process = {}) {
         || document.getElementById('process-phase-label');
     if (phaseEl) {
         phaseEl.textContent = process.phase
-            ? (process.label || process.phase).slice(0, 40).toUpperCase()
+            ? (process.label || process.phase).slice(0, 64).toUpperCase()
             : '';
         phaseEl.style.opacity = process.phase
             ? (isConveyorMoving ? '0.9' : '0.6')
@@ -482,7 +482,7 @@ function updateLineCells(lineParts, process = {}) {
             _applyTokenCategory(token.el, meta.category);
         }
         token.el.textContent = `#${id}`;
-        token.el.title = `Деталь #${id} · ${categoryLabel(meta.category)}`;
+        token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }
 
     _updateLineGates(lineParts, process);

@@ -185,7 +185,7 @@ async function main() {
         available: true,
         kind: 'SELECTED',
         active: true,
-        title: 'АНАЛИЗ 3 КАДРОВ',
+        title: 'АНАЛИЗ КАДРА',
         role,
         message: currentStatus.diagnostics.message,
         models: currentStatus.diagnostics.models,
@@ -279,10 +279,7 @@ async function main() {
   const diagnostics = [...window.document.querySelectorAll('[data-distributor-command]')];
   const jogButtons = [...window.document.querySelectorAll('.jog-hold-btn')];
   const analyzeSelected = window.document.getElementById('analyze-selected-frame');
-  const viewModeButtons = [
-    window.document.getElementById('view-mode-raw'),
-    window.document.getElementById('view-mode-rules'),
-  ];
+  const viewModeToggle = window.document.getElementById('view-mode-toggle');
   const hidden = element => element.classList.contains('is-hidden');
 
   // 1. No backend state: all controls remain fail-closed.
@@ -290,7 +287,7 @@ async function main() {
   assert(diagnostics.every(button => button.disabled), 'initial diagnostics disabled');
   assert(jogButtons.every(button => button.disabled), 'initial JOG disabled');
   assert(analyzeSelected.disabled, 'initial selected-frame analysis disabled');
-  assert(viewModeButtons.every(button => button.disabled), 'initial RAW/RULES controls disabled');
+  assert(viewModeToggle.disabled, 'initial view-mode toggle disabled');
 
   // 2. IDLE permissions.
   currentStatus = lineStatus('IDLE', {
@@ -310,8 +307,8 @@ async function main() {
   assert(!exit.disabled && exit.textContent === 'ВЫХОД', 'IDLE EXIT enabled');
   assert(diagnostics.every(button => !button.disabled), 'IDLE diagnostics enabled');
   assert(jogButtons.every(button => !button.disabled), 'IDLE JOG enabled');
-  assert(viewModeButtons.every(button => button.disabled), 'IDLE RAW/RULES disabled before frame analysis');
-  assert(window.document.getElementById('camera-view-switch').classList.contains('is-faded'), 'IDLE RAW/RULES hidden before frame analysis');
+  assert(viewModeToggle.disabled, 'IDLE view-mode toggle disabled before frame analysis');
+  assert(window.document.getElementById('view-mode-toggle').classList.contains('is-faded'), 'IDLE view-mode toggle hidden before frame analysis');
   assert(!window.document.getElementById('stats-body').classList.contains('is-collapsed'), 'IDLE work statistics visible');
   assert(!window.document.getElementById('stats-service').classList.contains('is-collapsed'), 'IDLE service statistics visible');
   assert([...window.document.querySelectorAll('.blade-diagnostic-grid')].every(grid => !grid.classList.contains('is-collapsed')), 'IDLE distributor buttons expanded');
@@ -360,7 +357,33 @@ async function main() {
   assert(!window.document.getElementById('stats-body').classList.contains('is-collapsed'), 'RUNNING work statistics expanded');
   assert(!window.document.getElementById('stats-service').classList.contains('is-collapsed'), 'RUNNING service statistics expanded');
   assert([...window.document.querySelectorAll('.blade-diagnostic-grid')].every(grid => grid.classList.contains('is-collapsed')), 'RUNNING distributor buttons collapsed');
-  assert(viewModeButtons.every(button => !button.disabled), 'RUNNING RAW/RULES enabled');
+  assert(!viewModeToggle.disabled, 'RUNNING view-mode toggle enabled');
+  assert(window.document.getElementById('frame-analysis-message').textContent === 'ВХОД: КОРПУС ПРИНЯТ, ДЕФЕКТОВ НЕТ', 'cycle panel shows operator verdict');
+  assert(window.document.getElementById('frame-analysis-context').textContent.includes('КОРПУС #2'), 'cycle panel names the analyzed case');
+
+  // 4b. INPUT stage with a rejected case: verdict and context must be unambiguous
+  // (no duplicated «ВХОД · ВХОД» when the role label already starts with the stage).
+  currentStatus = lineStatus('RUNNING', {
+    controls: controls({stop: true, exit: true}),
+    process: {phase: 'INPUT_ANALYSIS', label: 'input', positions: [0], conveyor: {}},
+    line_parts: [{id: 3, position: 0, category: 'BAD'}],
+    frame_analysis: {
+      available: true,
+      kind: 'CYCLE',
+      active: true,
+      title: 'АНАЛИЗ ТЕКУЩЕГО КАДРА',
+      stage: 'ВХОД',
+      role: 'INPUT_LEFT',
+      part_id: 3,
+      message: 'Результаты текущего кадра',
+      models: [],
+      rules: [{name: 'presence', triggered: true, skipped: false, detail: 'Сработало'}],
+      updated_at: 2,
+    },
+  });
+  api.updateLineStatus(currentStatus);
+  assert(window.document.getElementById('frame-analysis-message').textContent === 'ВХОД: РЕШЕНИЕ — БРАК', 'input rejection verdict shown');
+  assert(window.document.getElementById('frame-analysis-context').textContent === 'ВХОД · СЛЕВА · КОРПУС #3', 'context avoids duplicated stage word');
 
   // 5. STOPPING and DRAINING.
   currentStatus = lineStatus('STOPPING', {
@@ -616,8 +639,8 @@ async function main() {
   window.document.getElementById('mode-badge').click();
   await api.setViewMode('RAW');
   assert(!calls.some(call => call.url.startsWith('/api/mode/')), 'mode controls blocked before analysis');
-  assert(viewModeButtons.every(button => button.disabled), 'RAW/RULES disabled before analysis');
-  assert(window.document.getElementById('camera-view-switch').classList.contains('is-faded'), 'RAW/RULES hidden before analysis');
+  assert(viewModeToggle.disabled, 'view-mode toggle disabled before analysis');
+  assert(window.document.getElementById('view-mode-toggle').classList.contains('is-faded'), 'view-mode toggle hidden before analysis');
 
   // 13. Camera list, click, numeric and rapid selection keep latest role.
   calls.length = 0;
@@ -660,11 +683,16 @@ async function main() {
   assert(window.document.getElementById('jog-panel').classList.contains('is-collapsed'), 'manual controls hidden while selected frame is frozen');
   assert(window.document.querySelectorAll('#frame-analysis-models .frame-analysis-item').length === 2, 'selected models listed');
   assert(window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item').length === 2, 'selected rules listed');
-  assert(viewModeButtons.every(button => !button.disabled), 'RAW/RULES enabled during selected analysis');
+  assert(!viewModeToggle.disabled, 'view-mode toggle enabled during selected analysis');
   calls.length = 0;
   await api.setViewMode('RAW');
   assert(calls.some(call => call.url === '/api/mode/RAW'), 'RAW enabled during selected analysis');
   assert(window.document.getElementById('main-camera').src.includes('mode=RAW'), 'selected RAW overlay shown');
+  calls.length = 0;
+  viewModeToggle.click();
+  await sleep(10);
+  assert(calls.some(call => call.url === '/api/mode/RULES'), 'single toggle click switches RAW -> RULES');
+  assert(viewModeToggle.textContent === 'ВИД: ПРАВИЛА', 'toggle label follows current mode');
   assert(window.document.getElementById('defects-section').classList.contains('is-hidden'), 'old statistics analysis summary is not used');
   const frozenCamera = window.document.getElementById('camera-label').textContent;
   api.selectCamera('TOP');
@@ -674,14 +702,14 @@ async function main() {
   analyzeSelected.click();
   await sleep(45);
   assert(calls.some(call => call.url === '/api/diagnostics/selected/release'), 'return LIVE endpoint');
-  assert(analyzeSelected.textContent === 'АНАЛИЗ 3 КАДРОВ', 'analysis button restored');
+  assert(analyzeSelected.textContent === 'АНАЛИЗ КАДРА', 'analysis button restored');
   assert(window.document.getElementById('mode-badge').textContent.includes('ПОТОК'), 'live badge restored');
   assert(window.document.getElementById('camera-label').textContent === 'ВНУТРЕННИЙ ВИД', 'camera label restored after returning to live');
   assert(window.document.getElementById('frame-analysis-panel').classList.contains('is-collapsed'), 'selected analysis is cleared after returning to live');
   assert(!window.document.getElementById('stats-summary').classList.contains('is-collapsed'), 'statistics restored after selected analysis');
   assert(!window.document.getElementById('distributor-diagnostics').classList.contains('is-collapsed'), 'distributor restored after selected analysis');
   assert(!window.document.getElementById('jog-panel').classList.contains('is-collapsed'), 'manual controls restored after selected analysis');
-  assert(window.document.getElementById('camera-view-switch').classList.contains('is-faded'), 'RAW/RULES hidden after selected analysis');
+  assert(window.document.getElementById('view-mode-toggle').classList.contains('is-faded'), 'view-mode toggle hidden after selected analysis');
 
   api.state.jogActive = false;
   window.dispatchEvent(new window.KeyboardEvent('keydown', {key: '1', bubbles: true}));
@@ -783,7 +811,7 @@ async function main() {
   assert(modal.classList.contains('is-hidden'), 'backdrop closes gallery');
   archiveFound = false;
   await api.openGallery(5);
-  assert(window.document.getElementById('gallery-grid').textContent.includes('Деталь не найдена'), 'missing archive shown');
+  assert(window.document.getElementById('gallery-grid').textContent.includes('Корпус не найден'), 'missing archive shown');
   api.closeGallery();
 
   // 17. API command error is visible and a later explicit action may clear it.
@@ -878,6 +906,10 @@ async function main() {
     && badge.classList.contains('mode-static')
     && badge.textContent === 'СТОП-КАДР · ПРАВИЛА',
     'static badge stays visible after mode tick');
+  api.updateMode('RAW');
+  assert(badge.textContent === 'СТОП-КАДР · RAW',
+    'static badge follows the RAW view mode');
+  api.updateMode('RULES');
   api.updateLineStatus(lineStatus('IDLE', {
     live: {running: false, streaming: false, static: false, fps: 0, error: null},
     controls: controls({start: true, exit: true}),

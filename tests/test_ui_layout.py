@@ -64,8 +64,7 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn('id="btn-start" class="btn btn-start" disabled', self.html)
         self.assertIn('id="btn-exit"  class="btn btn-exit" disabled', self.html)
         self.assertIn('id="analyze-selected-frame" disabled', self.html)
-        self.assertIn('id="view-mode-raw" data-view-mode="RAW" disabled', self.html)
-        self.assertIn('id="view-mode-rules" data-view-mode="RULES" disabled', self.html)
+        self.assertIn('id="view-mode-toggle" class="is-faded" disabled', self.html)
         for command in (
             "DIST1_HOME",
             "DIST1_OPEN",
@@ -90,9 +89,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("ПОТОК · ${formatFrameRate(state.liveFps)}", self.js)
         self.assertIn("КАДР/С", self.js)
         self.assertIn("mode-analysis", self.js)
-        self.assertIn('id="view-mode-raw"', self.html)
-        self.assertIn('id="view-mode-rules"', self.html)
+        self.assertIn('id="view-mode-toggle"', self.html)
         self.assertIn("setViewMode", self.js)
+        self.assertIn("toggleMode", self.js)
         self.assertIn("state.mainCamMode       = 'live-pull'", self.js)
         self.assertIn("LIVE_CAM_MIN_GAP     = 1000 / 30", self.js)
         self.assertIn("live=1&t=${Date.now()}", self.js)
@@ -254,7 +253,7 @@ class UiLayoutTests(unittest.TestCase):
 
     def test_operator_interface_is_russian_and_previews_refresh_frequently(self):
         for label in (
-            "МОНИТОР ЛИНИИ",
+            "РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7",
             "ГОТОВА К ПУСКУ",
             "ШАГ:",
             "ВРЕМЯ РАБОТЫ:",
@@ -263,7 +262,7 @@ class UiLayoutTests(unittest.TestCase):
             "СТОП",
             "ВЫХОД",
             "Пустые лотки",
-            "Деталь #",
+            "Корпус #",
             "Дефекты:",
         ):
             self.assertIn(label, self.html)
@@ -347,7 +346,7 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn('motion.css', self.html)
         self.assertIn('.ui-collapse.is-collapsed', self.css)
         self.assertIn('max-height 240ms', self.css)
-        self.assertIn('.camera-view-switch.is-faded', self.css)
+        self.assertIn('#view-mode-toggle.is-faded', self.css)
         self.assertNotIn('.ui-frame-change', self.css)
         self.assertIn('.ui-content-change', self.css)
         self.assertIn('prefers-reduced-motion', self.css)
@@ -387,10 +386,15 @@ class UiLayoutTests(unittest.TestCase):
             self.assertIn("overflow: hidden", block)
             self.assertIn("text-overflow: ellipsis", block)
             self.assertIn("white-space: nowrap", block)
-        self.assertIn("grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)", self.css)
+        self.assertIn(".camera-live-controls {", self.css)
+        self.assertIn("justify-content: flex-end", self.css)
+        analyze_block = self.css.split("#analyze-selected-frame {", 1)[1].split("}", 1)[0]
+        self.assertIn("overflow: hidden", analyze_block)
+        self.assertIn("text-overflow: ellipsis", analyze_block)
+        self.assertIn("white-space: nowrap", analyze_block)
         self.assertIn(".frame-analysis-item b { max-width: 116px", self.css)
         self.assertNotIn(chr(0x2116), self.html + self.css + self.js)
-        self.assertIn("Деталь #", self.html)
+        self.assertIn("Корпус #", self.html)
         self.assertIn("normalizeOperatorText", self.js)
         self.assertNotIn('id="main-camera" class="main-camera" src=""', self.html)
         self.assertIn(".main-camera:not([src])", self.css)

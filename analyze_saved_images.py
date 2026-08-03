@@ -839,9 +839,9 @@ def rule_report_row(result, required_roles=()) -> dict:
 
     if rule_name == PART_PRESENCE_RULE:
         detail = (
-            "ДЕТАЛЬ НЕ ОБНАРУЖЕНА"
+            "КОРПУС НЕ ОБНАРУЖЕН"
             if details.get("empty_tray")
-            else "Деталь обнаружена"
+            else "Корпус обнаружен"
         )
     if not detail:
         detail = "Сработало" if result.triggered else "Норма"
@@ -1075,7 +1075,7 @@ def run_rule_checks(decision, vision_results, frames, provided_roles):
             "name": "part_presence",
             "required_roles": list(INPUT_ROLES),
             "missing_roles": sorted(set(INPUT_ROLES) - set(provided_roles)),
-            "reason": "Для проверки наличия детали нужны обе входные камеры",
+            "reason": "Для проверки наличия корпуса нужны обе входные камеры",
         })
 
     for rule in runnable:

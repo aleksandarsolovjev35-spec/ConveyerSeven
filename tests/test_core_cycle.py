@@ -434,8 +434,8 @@ class CoreCycleTests(unittest.TestCase):
             },
         )
         row = ProductionCycle._rule_report_row(presence)
-        self.assertEqual(row["detail"], "ДЕТАЛЬ НЕ ОБНАРУЖЕНА")
-        self.assertEqual(row["status_label"], "ДЕТАЛЬ НЕ ОБНАРУЖЕНА")
+        self.assertEqual(row["detail"], "КОРПУС НЕ ОБНАРУЖЕН")
+        self.assertEqual(row["status_label"], "КОРПУС НЕ ОБНАРУЖЕН")
         self.assertTrue(row["neutral"])
         self.assertFalse(row["show_detail"])
         self.assertFalse(row["triggered"])
