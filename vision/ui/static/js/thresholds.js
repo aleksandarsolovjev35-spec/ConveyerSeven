@@ -338,7 +338,7 @@ function setupThresholdsControls() {
             if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
         };
-        // ``input`` покрывает набор с клавиатуры, ``change`` — стрелки и
+        // ``input`` покрывает набор с клавиатуры, ``change`` —
         // автозаполнение number-поля в браузерах, где input приходит поздно.
         els.thresholdsBody.addEventListener('input', markThresholdsChanged);
         els.thresholdsBody.addEventListener('change', markThresholdsChanged);

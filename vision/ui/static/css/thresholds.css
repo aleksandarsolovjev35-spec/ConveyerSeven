@@ -140,6 +140,9 @@
     width: 78px;
     height: 25px;
     padding: 0 6px;
+    /* Только прямой ввод: без стрелок increment/decrement. */
+    appearance: textfield;
+    -moz-appearance: textfield;
     background: var(--bg-0);
     color: var(--text);
     border: 1px solid var(--border);
@@ -147,6 +150,12 @@
     font-family: var(--font-mono);
     font-size: 11px;
     user-select: text;
+}
+
+.thresholds-input::-webkit-inner-spin-button,
+.thresholds-input::-webkit-outer-spin-button {
+    margin: 0;
+    appearance: none;
 }
 
 .thresholds-input:focus {
