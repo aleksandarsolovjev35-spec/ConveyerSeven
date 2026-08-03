@@ -117,6 +117,8 @@
     color: var(--text-muted);
     font-size: 8px;
     letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 700;
 }
 
 .frame-analysis-list {
@@ -467,14 +469,10 @@
 }
 
 .rule-summary-metric {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 4px;
-    min-width: 0;
-    padding: 1px 3px;
-    border-radius: 2px;
-    background: var(--bg-1);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: baseline; gap: 5px; min-width: 0; padding: 1px 3px;
+    border-radius: 2px; background: var(--bg-1);
 }
 
 .rule-summary-metric-label {
@@ -486,8 +484,7 @@
 }
 
 .rule-summary-metric-value {
-    flex: 0 1 auto;
-    max-width: 55%;
+    max-width: 90px;
     overflow: hidden;
     color: var(--text);
     font: 700 8px var(--font-mono);
@@ -495,5 +492,8 @@
     white-space: nowrap;
 }
 
-.rule-summary-metric.is-ok .rule-summary-metric-value { color: var(--ok); }
-.rule-summary-metric.is-bad .rule-summary-metric-value { color: var(--bad); }
+.rule-summary-metric.is-ok .rule-summary-metric-value,
+.rule-summary-metric.is-ok .rule-summary-metric-result { color: var(--ok); }
+.rule-summary-metric.is-bad .rule-summary-metric-value,
+.rule-summary-metric.is-bad .rule-summary-metric-result { color: var(--bad); }
+.rule-summary-metric.is-neutral .rule-summary-metric-result { color: var(--text-muted); }

@@ -80,6 +80,11 @@ function updateSelectedAnalysisStatus(ls) {
     const wasLiveStreaming = state.liveStreaming;
     state.selectedAnalysisActive = selected.active === true;
     state.selectedAnalysisRole = selected.role || null;
+    // Во время анализа кадра блок порогов правил скрывается сразу.
+    if (wasActive !== state.selectedAnalysisActive
+        && typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
     const live = ls.live || {};
     // fps публикуется и в live-блоке, и в jog для обратной совместимости.
     state.liveFps = Number(live.fps || (ls.jog || {}).live_fps || 0);
@@ -233,8 +238,10 @@ function renderFrameAnalysisModels(models) {
         const latencyLabel = runCount > 1
             ? `${Number(model.elapsed_ms || 0).toFixed(0)} мс ср.`
             : `${Number(model.elapsed_ms || 0).toFixed(0)} мс`;
+        // Показываем обнаружения по всем трём прогонам (2/2/1), а не один
+        // выбранный результат, чтобы оператор видел разброс по кадрам.
         result.textContent = model.ok
-            ? `${latencyLabel} · ${detectionsByRun}`
+            ? `${latencyLabel} · объекты ${detectionsByRun}`
             : 'ОШИБКА';
         if (model.error) item.title = String(model.error);
         item.append(name, result);
@@ -334,6 +341,36 @@ function ruleSummaryLines(rule) {
     return rule.detail ? [String(rule.detail)] : [];
 }
 
+// Полоса «голосование 2 из 3»: результат каждого из трёх прогонов, чтобы
+// оператор видел, что финальный вердикт — большинство, а не один кадр.
+// Данные приходят с сервера (consensus.states — результат каждого прогона).
+function renderRuleRuns(rule) {
+    const consensus = rule.consensus && typeof rule.consensus === 'object'
+        ? rule.consensus : null;
+    const states = consensus && Array.isArray(consensus.states)
+        ? consensus.states : null;
+    const runs = consensus && consensus.runs ? Number(consensus.runs) : 0;
+    const required = consensus && consensus.required_votes
+        ? Number(consensus.required_votes) : 0;
+    if (!states || !runs) return null;
+
+    const runLabels = states.map(state => {
+        if (typeof state === 'boolean') return state ? 'СРАБОТАЛО' : 'НОРМА';
+        const text = String(state);
+        if (text === 'empty') return 'ПУСТО';
+        if (text === 'present') return 'КОРПУС';
+        return text;
+    });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'frame-analysis-consensus';
+    const voteText = required
+        ? `${required} из ${runs}`
+        : `${runs} прогона`;
+    wrap.textContent = `ПРОГОНЫ (${voteText}): ${runLabels.join(' · ')}`;
+    return wrap;
+}
+
 function renderFrameAnalysisRules(rules) {
     els.frameAnalysisRules.replaceChildren();
     if (!rules.length) {
@@ -363,6 +400,13 @@ function renderFrameAnalysisRules(rules) {
                 : (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА')
         );
         item.append(name, result);
+
+        // Голосование 2 из 3: все три прогона и большинство.
+        const runStrip = renderRuleRuns(rule);
+        if (runStrip) {
+            item.classList.add('has-detail');
+            item.appendChild(runStrip);
+        }
 
         if (rule.part_absent) {
             const absent = document.createElement('div');
@@ -417,6 +461,18 @@ function appendFrameAnalysisEmpty(container, text) {
     container.appendChild(item);
 }
 
+// Блок «какие модели сработали» свёрнут по умолчанию; по клику на заголовок
+// его можно развернуть и уточнить детали.
+function setupFrameAnalysisModelsCollapse() {
+    const toggle = els.frameAnalysisModelsToggle;
+    const list = els.frameAnalysisModels;
+    if (!toggle || !list) return;
+    toggle.addEventListener('click', () => {
+        const collapsed = list.classList.toggle('frame-analysis-list-collapsed');
+        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+}
+
 function showPendingSelectedFrameAnalysis() {
     if (!els.frameAnalysisPanel) return;
     els.frameAnalysisPanel.classList.remove('is-collapsed');
@@ -437,6 +493,7 @@ function showPendingSelectedFrameAnalysis() {
 }
 
 function setupSelectedFrameAnalysis() {
+    setupFrameAnalysisModelsCollapse();
     if (!els.analyzeSelectedFrame) return;
     els.analyzeSelectedFrame.addEventListener('click', async () => {
         if (els.analyzeSelectedFrame.disabled || state.selectedAnalysisPending) return;

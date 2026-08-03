@@ -7,6 +7,12 @@ function summaryStateClass(ok) {
     return 'is-neutral';
 }
 
+function summaryResultText(ok) {
+    if (ok === true) return 'в допуске';
+    if (ok === false) return 'вне порога';
+    return '—';
+}
+
 function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -15,8 +21,15 @@ function el(tag, className, text) {
 }
 
 // Карточка по каждой камере: вердикт, что обнаружено и показатели с допуском.
+// Пороги показаны рядом с результатом (значение / порог — в допуске/вне порога)
+// по каждому показателю правила.
 function renderRuleSummaryCards(cards) {
     const wrap = el('div', 'rule-summary');
+    if (Array.isArray(cards) && cards.some(
+        card => Array.isArray(card.metrics) && card.metrics.length,
+    )) {
+        wrap.appendChild(el('div', 'rule-summary-title', 'ПОРОГИ'));
+    }
     for (const card of cards) {
         const block = el('div', `rule-summary-role ${summaryStateClass(card.ok)}`);
         const head = el('div', 'rule-summary-head');
@@ -42,11 +55,22 @@ function renderRuleSummaryCards(cards) {
                     'div',
                     `rule-summary-metric ${summaryStateClass(metric.ok)}`,
                 );
+                const value = el(
+                    'b',
+                    'rule-summary-metric-value',
+                    metric.limit
+                        ? `${metric.value} / ${metric.limit}`
+                        : metric.value,
+                );
+                const result = el(
+                    'span',
+                    'rule-summary-metric-result',
+                    summaryResultText(metric.ok),
+                );
                 cell.append(
                     el('span', 'rule-summary-metric-label', metric.label),
-                    el('b', 'rule-summary-metric-value', metric.limit
-                        ? `${metric.value} / ${metric.limit}`
-                        : metric.value),
+                    value,
+                    result,
                 );
                 grid.appendChild(cell);
             }

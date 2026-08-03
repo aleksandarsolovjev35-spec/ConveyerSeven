@@ -18,12 +18,16 @@ let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
 let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
+let thresholdsCardIndex = 0;     // индекс активной карточки-категории правил
 
 function thresholdsPanelVisible() {
     return (
         !state.splashActive
         && !state.offline
         && !state.serverExitRequested
+        // Во время анализа кадра (выбранный кадр) блок порогов правил не
+        // показывается — оператору нужен только блок анализа.
+        && !state.selectedAnalysisActive
         && THRESHOLD_EDITABLE_STATES.includes(state.lineState)
         && !!state.currentCamera
     );
@@ -130,9 +134,13 @@ function renderThresholdsPanel() {
 }
 
 // ─── Блоки-карточки правил ─────────────────────────────────────────
-// Каждое правило — отдельная карточка (как blade-card распределителя).
-// Карточки лежат в общем списке; когда список не помещается, он
-// прокручивается вертикальным ползунком справа.
+// Каждое правило (категория) — отдельная карточка (как blade-card
+// распределителя). Одновременно видна только одна карточка; между
+// карточками переключаются стрелками навигации («‹ N / всего ›»).
+// У каждой карточки свой вертикальный ползунок: он появляется только
+// когда строки карточки не помещаются по высоте; если все строки
+// видны — ползунок отключён. Блок ограничен по высоте, поэтому правую
+// колонку интерфейса не приходится прокручивать.
 
 function buildThresholdItem(param) {
     // Контейнер строки — div: клик по названию ничего не переключает.
@@ -172,16 +180,20 @@ function renderThresholdsBody() {
         return;
     }
 
+    // Новая порция данных — снова первая карточка.
+    thresholdsCardIndex = 0;
+
     const scroll = document.createElement('div');
     scroll.className = 'thresholds-scroll';
 
     const cards = document.createElement('div');
     cards.className = 'thresholds-cards';
 
-    rules.forEach(group => {
+    rules.forEach((group, index) => {
         const card = document.createElement('section');
         card.className = 'thresholds-card';
         card.dataset.rule = group.rule || '';
+        card.dataset.index = String(index);
 
         const head = document.createElement('div');
         head.className = 'thresholds-card-head';
@@ -194,57 +206,123 @@ function renderThresholdsBody() {
         head.append(title, count);
         card.appendChild(head);
 
+        // Тело карточки: строки параметров + собственный вертикальный
+        // ползунок прокрутки (включается только при переполнении).
+        const cardBody = document.createElement('div');
+        cardBody.className = 'thresholds-card-body';
+
         const rows = document.createElement('div');
         rows.className = 'thresholds-rows';
         for (const param of group.params || []) {
             rows.appendChild(buildThresholdItem(param));
         }
-        card.appendChild(rows);
+        cardBody.appendChild(rows);
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'thresholds-scroll-slider thresholds-card-slider';
+        slider.min = 0;
+        slider.max = 1000;
+        slider.step = 1;
+        slider.value = 0;
+        slider.disabled = true;
+        slider.setAttribute('aria-label', 'Прокрутка карточки правил');
+        slider.title = 'Прокрутка карточки правил';
+        cardBody.appendChild(slider);
+
+        card.appendChild(cardBody);
         cards.appendChild(card);
     });
 
-    // Вертикальный ползунок прокрутки: включается, только когда список
-    // реально не помещается. Значение ползунка — доля прокрутки (0..1000),
-    // значения порогов он не задаёт.
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.className = 'thresholds-scroll-slider';
-    slider.min = 0;
-    slider.max = 1000;
-    slider.step = 1;
-    slider.value = 0;
-    slider.disabled = true;
-    slider.setAttribute('aria-label', 'Прокрутка списка порогов');
-    slider.title = 'Прокрутка списка порогов';
-    scroll.append(cards, slider);
+    // Навигация между карточками: стрелки «‹ N / всего ›». Значения
+    // порогов ползунок не задаёт — это только прокрутка строк.
+    const nav = document.createElement('div');
+    nav.className = 'thresholds-nav';
+    const prev = document.createElement('button');
+    prev.type = 'button';
+    prev.className = 'thresholds-nav-btn thresholds-nav-prev';
+    prev.setAttribute('aria-label', 'Предыдущая категория правил');
+    prev.title = 'Предыдущая категория правил';
+    prev.textContent = '‹';
+    const counter = document.createElement('span');
+    counter.className = 'thresholds-nav-counter';
+    counter.setAttribute('aria-live', 'polite');
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'thresholds-nav-btn thresholds-nav-next';
+    next.setAttribute('aria-label', 'Следующая категория правил');
+    next.title = 'Следующая категория правил';
+    next.textContent = '›';
+    nav.append(prev, counter, next);
+
+    scroll.append(cards, nav);
     body.appendChild(scroll);
 
-    cards.addEventListener('scroll', thresholdsSyncScroll);
-    slider.addEventListener('input', () => {
-        const maxScroll = Math.max(0, cards.scrollHeight - cards.clientHeight);
-        if (maxScroll <= 0) return;
-        cards.scrollTop = (Number(slider.value) || 0) / 1000 * maxScroll;
+    // Показ только активной карточки + состояние навигации.
+    const updateCardVisibility = () => {
+        const total = rules.length;
+        thresholdsCardIndex = Math.max(0, Math.min(total - 1, thresholdsCardIndex));
+        [...cards.querySelectorAll('.thresholds-card')].forEach((card, index) => {
+            card.classList.toggle('is-active', index === thresholdsCardIndex);
+        });
+        counter.textContent = `${thresholdsCardIndex + 1} / ${total}`;
+        prev.disabled = thresholdsCardIndex <= 0;
+        next.disabled = thresholdsCardIndex >= total - 1;
+        thresholdsSyncScroll();
+    };
+    prev.addEventListener('click', () => {
+        thresholdsCardIndex -= 1;
+        updateCardVisibility();
     });
-    thresholdsSyncScroll();
+    next.addEventListener('click', () => {
+        thresholdsCardIndex += 1;
+        updateCardVisibility();
+    });
+
+    // Ползунок каждой карточки прокручивает только её строки.
+    cards.querySelectorAll('.thresholds-card').forEach(card => {
+        const rows = card.querySelector('.thresholds-rows');
+        const slider = card.querySelector('.thresholds-scroll-slider');
+        if (!rows || !slider) return;
+        rows.addEventListener('scroll', () => thresholdsSyncCard(rows, slider));
+        slider.addEventListener('input', () => {
+            const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
+            if (maxScroll <= 0) return;
+            rows.scrollTop = (Number(slider.value) || 0) / 1000 * maxScroll;
+        });
+    });
+
+    updateCardVisibility();
 }
 
-// Синхронизация ползунка прокрутки с фактическим положением списка.
-function thresholdsSyncScroll() {
-    const body = els.thresholdsBody;
-    if (!body) return;
-    const cards = body.querySelector('.thresholds-cards');
-    const slider = body.querySelector('.thresholds-scroll-slider');
-    if (!cards || !slider) return;
-    const maxScroll = Math.max(0, cards.scrollHeight - cards.clientHeight);
+// Синхронизация ползунка конкретной карточки с фактической прокруткой.
+// Ползунок активен, только когда строки карточки не помещаются; если все
+// строки видны — он отключён (значение порогов он не задаёт).
+function thresholdsSyncCard(rows, slider) {
+    if (!rows || !slider) return;
+    const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
     if (maxScroll <= 0) {
         slider.disabled = true;
         slider.value = 0;
-        if (cards.scrollTop) cards.scrollTop = 0;
+        if (rows.scrollTop) rows.scrollTop = 0;
         return;
     }
     slider.disabled = false;
     slider.value = Math.max(0, Math.min(1000,
-        Math.round(cards.scrollTop / maxScroll * 1000)));
+        Math.round(rows.scrollTop / maxScroll * 1000)));
+}
+
+// Синхронизация ползунка активной карточки (после показа панели,
+// смены карточки или изменения размеров окна).
+function thresholdsSyncScroll() {
+    const body = els.thresholdsBody;
+    if (!body) return;
+    const card = body.querySelector('.thresholds-card.is-active');
+    if (!card) return;
+    thresholdsSyncCard(
+        card.querySelector('.thresholds-rows'),
+        card.querySelector('.thresholds-scroll-slider'),
+    );
 }
 
 function collectThresholdValues() {
