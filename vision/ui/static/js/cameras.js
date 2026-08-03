@@ -157,6 +157,10 @@ async function fetchCameras() {
         applyMainCameraSource();
     }
 
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
+
     checkUiReady();
 }
 
@@ -194,6 +198,10 @@ function selectCamera(role) {
     // опрашивается сразу и ещё раз после того, как backend зафиксировал
     // новую активную камеру.
     sendActiveCameraIfChanged(role).finally(requestImmediateStatus);
+    // Панель порогов правил тоже следует за выбранной (главной) камерой.
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
     applyMainCameraSource();
     requestImmediateStatus();
 }

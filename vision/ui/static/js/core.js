@@ -117,6 +117,7 @@ const state = {
     lastSentActiveCamera: null,
     pendingActiveCamera:  null,
     activeCameraRequestBusy: false,
+    thresholdsRevision:   null,
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,
@@ -216,6 +217,14 @@ const els = {
     btnResume:        $('btn-resume'),
     btnStop:          $('btn-stop'),
     btnExit:          $('btn-exit'),
+
+    thresholdsPanel:      $('thresholds-panel'),
+    thresholdsCameraLabel: $('thresholds-camera-label'),
+    thresholdsHint:       $('thresholds-hint'),
+    thresholdsBody:       $('thresholds-body'),
+    thresholdsStatus:     $('thresholds-status'),
+    thresholdsSave:       $('thresholds-save'),
+    thresholdsReset:      $('thresholds-reset'),
 
     galleryModal:     $('gallery-modal'),
     galleryGrid:      $('gallery-grid'),

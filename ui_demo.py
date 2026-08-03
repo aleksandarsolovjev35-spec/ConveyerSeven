@@ -14,6 +14,7 @@ import numpy as np
 import webview
 
 from core.rule_report import build_rule_report_rows
+from domain.threshold_loader import ThresholdLoader
 from vision.ui import LiveMonitor
 
 
@@ -719,6 +720,64 @@ def main():
     # History cards must open the same archive endpoint as production, even
     # though demo images are synthetic and stored in a temporary directory.
     monitor.server.archive = demo.archive
+
+    # Редактор порогов правил: в демо-режиме изменения тоже применяются и
+    # сохраняются в thresholds.json, чтобы оператор мог опробовать панель.
+    # Пороги автоматически подтягиваются из файла и в демо-режиме.
+    demo_loader = ThresholdLoader()
+    monitor.server.thresholds = dict(demo_loader.get_all())
+    monitor.server.threshold_labels = dict(demo_loader.labels or {})
+    monitor.server.thresholds_path = "thresholds.json"
+
+    def demo_thresholds_reload(fresh):
+        print("[THRESHOLDS] Демо: пороги перечитаны из thresholds.json")
+        return fresh
+
+    monitor.thresholds_reload_callback = demo_thresholds_reload
+
+    def demo_thresholds_apply(role, values, labels):
+        if demo.state not in ("IDLE", "STOPPED"):
+            raise RuntimeError(
+                "Изменение порогов доступно только до пуска "
+                "и после полной остановки"
+            )
+        if not isinstance(values, dict) or not values:
+            raise ValueError("Нет изменённых порогов")
+        updated = dict(monitor.server.thresholds)
+        changed = []
+        for key, value in values.items():
+            full_key = (
+                f"{role}.{key}"
+                if not str(key).startswith(f"{role}.")
+                else str(key)
+            )
+            if full_key not in updated:
+                raise ValueError(f"Неизвестный порог: {full_key}")
+            updated[full_key] = value
+            changed.append(full_key)
+        ThresholdLoader.validate(updated)
+        # Понятные названия порогов для оператора.
+        full_labels = dict(monitor.server.threshold_labels or {})
+        for key, name in (labels or {}).items():
+            full_key = (
+                f"{role}.{key}"
+                if not str(key).startswith(f"{role}.")
+                else str(key)
+            )
+            if name is None or not str(name).strip():
+                full_labels.pop(full_key, None)
+            else:
+                full_labels[full_key] = str(name).strip()
+        ThresholdLoader.save_file(
+            "thresholds.json", updated, labels=full_labels,
+        )
+        print(
+            "[THRESHOLDS] Демо: применено "
+            f"{len(changed)} изменение(й) для {role}"
+        )
+        return updated
+
+    monitor.thresholds_apply_callback = demo_thresholds_apply
     monitor.start_callback = demo.start
     monitor.stop_callback = demo.stop
     monitor.pause_callback = demo.pause

@@ -65,6 +65,10 @@ def setup_api_routes(app, server):
 
     @app.get("/api/status")
     async def get_status():
+        # Автоподхват порогов: если thresholds.json изменился вручную,
+        # перечитываем его (в рабочем потоке) до отдачи статуса.
+        if server.thresholds_file_mtime_changed():
+            await asyncio.to_thread(server.reload_thresholds_from_file)
         with server.lock:
             return JSONResponse({
                 "splash_active": server.splash_active,
@@ -74,6 +78,7 @@ def setup_api_routes(app, server):
                 "frame_version": server._cache_version,
                 "frame_versions": dict(server._latest_frames_ver),
                 "active_camera": server.active_camera_role,
+                "thresholds_revision": server.thresholds_revision,
             })
 
     @app.get("/api/mode")
@@ -105,6 +110,67 @@ def setup_api_routes(app, server):
             "ok": True,
             "active_camera": server.active_camera_role,
         })
+
+    # Пороги правил (редактирование до пуска и после полной остановки)
+
+    @app.get("/api/thresholds")
+    async def api_get_thresholds(role: str | None = None):
+        return JSONResponse(
+            await asyncio.to_thread(server.build_thresholds_payload, role)
+        )
+
+    @app.post("/api/thresholds")
+    async def api_set_thresholds(payload: dict | None = None):
+        payload = payload or {}
+        role = payload.get("role")
+        values = payload.get("values")
+        labels = payload.get("labels")
+        if not isinstance(role, str) or not role:
+            raise HTTPException(400, "Роль камеры не указана")
+        if not isinstance(values, dict) or not values:
+            raise HTTPException(400, "Не указаны значения порогов")
+        if labels is not None:
+            if not isinstance(labels, dict) or any(
+                not isinstance(name, str) for name in labels.values()
+            ):
+                raise HTTPException(
+                    400, "Названия порогов должны быть объектом со строками"
+                )
+        if not server.thresholds_editable():
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "Изменение порогов доступно только до пуска "
+                             "и после полной остановки",
+                },
+                status_code=409,
+            )
+        if server.on_thresholds_apply is None:
+            return JSONResponse(
+                {"ok": False, "error": "Система ещё не готова"},
+                status_code=503,
+            )
+        try:
+            result = await asyncio.to_thread(
+                server.apply_thresholds, role, values, labels,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=400,
+            )
+        except RuntimeError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=409,
+            )
+        except Exception as exc:
+            print(f"[API] thresholds error: {exc}")
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse({"ok": True, "thresholds": result})
 
     @app.post("/api/start")
     async def api_start():

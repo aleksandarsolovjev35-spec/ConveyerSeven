@@ -1,12 +1,18 @@
 import asyncio
+import tempfile
+import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import numpy as np
 
+from domain.threshold_loader import ThresholdLoader
 from vision.ui.live_monitor import LiveMonitor
 from vision.ui.server.server import UIServer
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ApiTests(unittest.TestCase):
@@ -215,6 +221,532 @@ class ApiTests(unittest.TestCase):
                 json={"reason": "test release"},
             )
             self.assertEqual(response.status_code, 200)
+
+
+class ThresholdsApiTests(unittest.TestCase):
+    """Редактор порогов правил: GET /api/thresholds и POST /api/thresholds."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.thresholds = ThresholdLoader(
+            REPO_ROOT / "thresholds.json"
+        ).get_all()
+
+    def test_get_thresholds_groups_role_parameters_by_rule(self):
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+        payload = server.build_thresholds_payload("TOP")
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["role"], "TOP")
+        self.assertFalse(payload["editable"])  # splash_active by default
+        rules = {group["rule"]: group for group in payload["rules"]}
+        self.assertIn("top_contacts", rules)
+        self.assertIn("top_platform", rules)
+        self.assertIn("top_platform_overlap", rules)
+        self.assertIn("top_sinks", rules)
+        self.assertIn("top_glass", rules)
+        keys = {
+            param["key"]
+            for group in payload["rules"]
+            for param in group["params"]
+        }
+        role_keys = {
+            key.split(".", 1)[1]
+            for key in self.thresholds
+            if key.startswith("TOP.")
+        }
+        self.assertEqual(keys, role_keys)
+        # У каждого параметра есть метаданные для редактора
+        for group in payload["rules"]:
+            for param in group["params"]:
+                self.assertIn("label", param)
+                self.assertIn("step", param)
+                self.assertIn("min", param)
+                self.assertIn("max", param)
+        self.assertEqual(
+            payload["values"]["top_contacts_min_confidence"],
+            self.thresholds["TOP.top_contacts_min_confidence"],
+        )
+        # Встроенный перевод на русский, близкий к смыслу параметра.
+        contacts = next(
+            param
+            for group in payload["rules"]
+            for param in group["params"]
+            if param["key"] == "top_contacts_min_confidence"
+        )
+        self.assertEqual(contacts["label"], "Мин. уверенность контактов")
+        platform = next(
+            param
+            for group in payload["rules"]
+            for param in group["params"]
+            if param["key"] == "top_platform_inscribed_rect_width_px"
+        )
+        self.assertEqual(platform["label"], "Ширина эталона платформы, px")
+        self.assertEqual(payload["labels"], {})
+
+    def test_get_thresholds_unknown_role_is_not_available(self):
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+        payload = server.build_thresholds_payload("NOPE")
+        self.assertFalse(payload["available"])
+
+    def test_thresholds_editable_only_when_line_is_idle_or_stopped(self):
+        server = UIServer()
+        server.splash_active = False
+        self.assertFalse(server.thresholds_editable())
+        server.line_status = {"state": "IDLE"}
+        self.assertTrue(server.thresholds_editable())
+        server.line_status = {"state": "STOPPED"}
+        self.assertTrue(server.thresholds_editable())
+        for state in ("RUNNING", "PAUSED", "STOPPING", "FAULT"):
+            server.line_status = {"state": state}
+            self.assertFalse(server.thresholds_editable(), state)
+
+    def test_post_thresholds_requires_stopped_line_and_applies_via_callback(self):
+        asyncio.run(self._run_post())
+
+    async def _run_post(self):
+        server = UIServer()
+        server.splash_active = False
+        server.line_status = {"state": "RUNNING"}
+        server.thresholds = dict(self.thresholds)
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1:8000",
+        ) as client:
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            self.assertEqual(response.status_code, 409)
+
+            server.line_status = {"state": "IDLE"}
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            # Callback не подключён — сервер честно сообщает об этом
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("не готова", response.json()["error"])
+
+            applied = {}
+
+            def apply_cb(role, values, labels=None):
+                applied.update({role: values})
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(applied["TOP"]["top_contacts_min_confidence"], 0.5)
+            updated = response.json()["thresholds"]
+            self.assertTrue(updated["editable"])
+            self.assertEqual(
+                updated["values"]["top_contacts_min_confidence"], 0.5,
+            )
+
+            # Неизвестный параметр отклоняется
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"nope_parameter": 1},
+            })
+            self.assertEqual(response.status_code, 400)
+
+    def test_operator_can_rename_thresholds_in_russian(self):
+        """Понятные названия порогов: задаются через UI, сохраняются в файл,
+        возвращаются в GET и подхватываются при автоперечитывании."""
+        asyncio.run(self._run_labels())
+
+    async def _run_labels(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            def apply_cb(role, values, labels):
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                ThresholdLoader.validate(updated)
+                full_labels = dict(server.threshold_labels)
+                for key, name in labels.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if not str(name).strip():
+                        full_labels.pop(full_key, None)
+                    else:
+                        full_labels[full_key] = str(name).strip()
+                ThresholdLoader.save_file(
+                    str(path), updated, labels=full_labels,
+                )
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                # Задаём русские названия двум порогам TOP.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.3},
+                    "labels": {
+                        "top_contacts_min_confidence": "Уверенность контактов сверху",
+                        "top_platform_min_confidence": "Уверенность платформы",
+                    },
+                })
+                self.assertEqual(response.status_code, 200)
+                updated = response.json()["thresholds"]
+                # В ответе кастомное название заменяет автоподпись.
+                contacts = next(
+                    param
+                    for group in updated["rules"]
+                    for param in group["params"]
+                    if param["key"] == "top_contacts_min_confidence"
+                )
+                self.assertEqual(
+                    contacts["label"], "Уверенность контактов сверху",
+                )
+                self.assertEqual(
+                    updated["labels"]["top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+
+                # Сохранено в файл как _label.<parameter>.
+                saved = ThresholdLoader(str(path))
+                self.assertEqual(
+                    saved.labels["TOP.top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+                self.assertEqual(
+                    saved.labels["TOP.top_platform_min_confidence"],
+                    "Уверенность платформы",
+                )
+
+                # Автоперечитывание файла подхватывает названия.
+                server.reload_thresholds_from_file()
+                self.assertEqual(
+                    server.threshold_labels["TOP.top_contacts_min_confidence"],
+                    "Уверенность контактов сверху",
+                )
+
+                # Удаление названия (пустая строка) возвращает автоподпись.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.3},
+                    "labels": {"top_contacts_min_confidence": ""},
+                })
+                self.assertEqual(response.status_code, 200)
+                updated = response.json()["thresholds"]
+                self.assertNotIn("top_contacts_min_confidence", updated["labels"])
+                self.assertIn(
+                    "top_platform_min_confidence", updated["labels"],
+                )
+
+    def test_threshold_loader_save_round_trip_and_rejects_bad_value(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            data = dict(self.thresholds)
+            data["TOP.top_contacts_min_confidence"] = 0.35
+            ThresholdLoader.save_file(str(path), data)
+            reloaded = ThresholdLoader(str(path)).get_all()
+            self.assertEqual(
+                reloaded["TOP.top_contacts_min_confidence"], 0.35,
+            )
+            self.assertEqual(len(reloaded), len(data))
+            bad = dict(data)
+            bad["TOP.top_contacts_min_confidence"] = 1.5
+            with self.assertRaisesRegex(ValueError, "0..1"):
+                ThresholdLoader.validate(bad)
+
+    def test_reload_applies_label_only_change_and_survives_broken_file(self):
+        """Изменение только названий в файле применяется; битый файл не
+        приводит к бесконечным повторным попыткам на каждом тике статуса."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.threshold_labels = {}
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            # Первый вызов фиксирует mtime.
+            server.thresholds_file_mtime_changed()
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 0)
+
+            # Изменилось ТОЛЬКО название (значения те же) — применяется.
+            time.sleep(0.01)
+            labels = {"TOP.top_contacts_min_confidence": "Контакты сверху"}
+            ThresholdLoader.save_file(
+                str(path), self.thresholds, labels=labels,
+            )
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertEqual(
+                server.threshold_labels["TOP.top_contacts_min_confidence"],
+                "Контакты сверху",
+            )
+            # Значения не изменились.
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"],
+                self.thresholds["TOP.top_contacts_min_confidence"],
+            )
+
+            # Битый файл: попытка один раз, mtime запоминается, ревизия
+            # не растёт и повторной попытки без правки файла нет.
+            time.sleep(0.01)
+            path.write_text("{ не json", encoding="utf-8")
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertFalse(server.thresholds_file_mtime_changed())
+
+            # После исправления файла (с новым значением, чтобы содержимое
+            # отличалось от того, что уже в сервере) перечитывание работает.
+            time.sleep(0.01)
+            fixed = dict(self.thresholds)
+            fixed["TOP.top_contacts_min_confidence"] = 0.62
+            ThresholdLoader.save_file(str(path), fixed, labels=labels)
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 2)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.62,
+            )
+
+    def test_thresholds_auto_reload_from_file_and_status_revision(self):
+        """Пороги сами подтягиваются из thresholds.json при ручной правке."""
+        asyncio.run(self._run_auto_reload())
+
+    async def _run_auto_reload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            # Первый вызов: известного mtime нет — файл фиксируется,
+            # содержимое не менялось, ревизия не растёт.
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 0)
+
+            # Вручную правим файл «снаружи» — как будто оператор отредактировал
+            # thresholds.json текстовым редактором.
+            time.sleep(0.01)  # гарантировать смену mtime
+            modified = dict(self.thresholds)
+            modified["TOP.top_contacts_min_confidence"] = 0.77
+            ThresholdLoader.save_file(str(path), modified)
+
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            reloaded = []
+            server.on_thresholds_reload = (
+                lambda fresh: reloaded.append(fresh) or fresh
+            )
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.77,
+            )
+            self.assertEqual(len(reloaded), 1)
+            # После применения mtime запомнен — повторной перезагрузки нет.
+            self.assertFalse(server.thresholds_file_mtime_changed())
+
+            # Тот же контент, новое время записи (случай сохранения через UI):
+            # ничего не меняем, ревизия не растёт.
+            time.sleep(0.01)
+            ThresholdLoader.save_file(str(path), modified)
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+
+            # Во время работы линии файл не применяется до остановки.
+            time.sleep(0.01)
+            modified["TOP.top_contacts_min_confidence"] = 0.55
+            ThresholdLoader.save_file(str(path), modified)
+            server.line_status = {"state": "RUNNING"}
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            server.line_status = {"state": "STOPPED"}
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 2)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.55,
+            )
+
+            # /api/status сообщает актуальную ревизию порогов.
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                response = await client.get("/api/status")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["thresholds_revision"], 2,
+                )
+
+    def test_operator_workflow_select_camera_edit_save_run_stop_switch(self):
+        """Полный цикл оператора: выбор камеры → правка → сохранение →
+        запуск анализа → остановка → повторная правка → переключение
+        на другую камеру и тот же цикл для неё."""
+        asyncio.run(self._run_operator_workflow())
+
+    async def _run_operator_workflow(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            def apply_cb(role, values, labels=None):
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                ThresholdLoader.validate(updated)
+                ThresholdLoader.save_file(str(path), updated)
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                # 1. Выбрали камеру TOP — приходят только пороги её правил.
+                response = await client.get(
+                    "/api/thresholds", params={"role": "TOP"},
+                )
+                self.assertEqual(response.status_code, 200)
+                top = response.json()
+                top_keys = {
+                    param["key"]
+                    for group in top["rules"]
+                    for param in group["params"]
+                }
+                self.assertIn("top_contacts_min_confidence", top_keys)
+                self.assertIn("top_platform_overlap_margin_px", top_keys)
+                # Чужие камеры не подмешиваются.
+                self.assertNotIn("spider_contacts_long_min_confidence", top_keys)
+                self.assertNotIn("input_window_geometry_min_confidence", top_keys)
+
+                # 2. Изменили и сохранили.
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.5},
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["thresholds"]["values"][
+                        "top_contacts_min_confidence"
+                    ], 0.5,
+                )
+
+                # 3. Запустили анализ — линия работает, правка недоступна.
+                server.line_status = {"state": "RUNNING"}
+                self.assertFalse(server.thresholds_editable())
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.6},
+                })
+                self.assertEqual(response.status_code, 409)
+
+                # 4. Остановились — значения на месте, можно снова менять.
+                server.line_status = {"state": "STOPPED"}
+                self.assertTrue(server.thresholds_editable())
+                response = await client.get(
+                    "/api/thresholds", params={"role": "TOP"},
+                )
+                self.assertEqual(
+                    response.json()["values"][
+                        "top_contacts_min_confidence"
+                    ], 0.5,
+                )
+                response = await client.post("/api/thresholds", json={
+                    "role": "TOP",
+                    "values": {"top_contacts_min_confidence": 0.55},
+                })
+                self.assertEqual(response.status_code, 200)
+
+                # 5. Переключились на SPIDER_LEFT — свои пороги, TOP не виден.
+                response = await client.get(
+                    "/api/thresholds", params={"role": "SPIDER_LEFT"},
+                )
+                self.assertEqual(response.status_code, 200)
+                spider = response.json()
+                spider_keys = {
+                    param["key"]
+                    for group in spider["rules"]
+                    for param in group["params"]
+                }
+                self.assertIn("spider_contacts_long_min_confidence", spider_keys)
+                self.assertIn("spider_long_omission_allowed_thickness_px", spider_keys)
+                self.assertNotIn("top_contacts_min_confidence", spider_keys)
+                response = await client.post("/api/thresholds", json={
+                    "role": "SPIDER_LEFT",
+                    "values": {"spider_contacts_long_min_confidence": 0.4},
+                })
+                self.assertEqual(response.status_code, 200)
+
+                # 6. Файл хранит все изменения по обеим камерам.
+                saved = ThresholdLoader(str(path)).get_all()
+                self.assertEqual(
+                    saved["TOP.top_contacts_min_confidence"], 0.55,
+                )
+                self.assertEqual(
+                    saved["SPIDER_LEFT.spider_contacts_long_min_confidence"], 0.4,
+                )
 
 
 if __name__ == "__main__":

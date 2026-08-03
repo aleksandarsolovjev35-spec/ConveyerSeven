@@ -39,6 +39,13 @@ class LiveMonitor:
         self.jog_hold_heartbeat_callback = None
         self.jog_hold_release_callback = None
 
+        # Пороги правил: callback получает (role, values) и возвращает
+        # обновлённый плоский dict порогов (или бросает исключение).
+        self.thresholds_apply_callback = None
+        # Callback автоподхвата: получает свежий dict порогов из файла,
+        # может пересоздать DecisionEngine и вернуть итоговый dict.
+        self.thresholds_reload_callback = None
+
         self.server = UIServer()
         self._bind_server_callbacks()
 
@@ -149,6 +156,16 @@ class LiveMonitor:
         self.server.on_jog_hold_release = (
             lambda reason="button released": self._invoke_args(
                 self.jog_hold_release_callback, reason,
+            )
+        )
+        self.server.on_thresholds_apply = (
+            lambda role, values, labels: self._invoke_args(
+                self.thresholds_apply_callback, role, values, labels,
+            )
+        )
+        self.server.on_thresholds_reload = (
+            lambda fresh: self._invoke_args(
+                self.thresholds_reload_callback, fresh,
             )
         )
 

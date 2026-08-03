@@ -34,6 +34,7 @@ class UiLayoutTests(unittest.TestCase):
         defects = self.html.index('id="defects-section"')
         stats_service = self.html.index('id="stats-service"')
         distributor = self.html.index('id="distributor-diagnostics"')
+        thresholds = self.html.index('id="thresholds-panel"')
         jog = self.html.index('id="jog-panel"')
         frame_analysis = self.html.index('id="frame-analysis-panel"')
         self.assertLess(camera, process_line)
@@ -42,7 +43,8 @@ class UiLayoutTests(unittest.TestCase):
         self.assertLess(stats_summary, defects)
         self.assertLess(defects, stats_service)
         self.assertLess(stats_service, distributor)
-        self.assertLess(distributor, jog)
+        self.assertLess(distributor, thresholds)
+        self.assertLess(thresholds, jog)
         self.assertLess(jog, frame_analysis)
         self.assertEqual(self.html.count('id="line-cells"'), 1)
         self.assertEqual(self.html.count('id="dist1-blade"'), 1)
@@ -173,8 +175,8 @@ class UiLayoutTests(unittest.TestCase):
             [
                 "core.js", "boot.js", "diagnostics.js", "rule-summary.js",
                 "status.js",
-                "controls.js", "cameras.js", "jog.js", "history.js",
-                "bootstrap.js",
+                "controls.js", "thresholds.js", "cameras.js", "jog.js",
+                "history.js", "bootstrap.js",
             ],
         )
         self.assertGreaterEqual(len(css), 8)
@@ -198,6 +200,7 @@ class UiLayoutTests(unittest.TestCase):
             "jog",
             "frame-analysis",
             "operator-footer",
+            "thresholds",
             "gallery",
         }
         operator_blocks = set(re.findall(r'data-ui-block="([^"]+)"', self.html))
@@ -364,6 +367,17 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("M9 5 L16 12 L9 19", self.html)
         self.assertIn("box-shadow: inset 0 0 0 1px var(--accent)", self.css)
 
+    def test_thresholds_panel_shows_translated_labels_without_rename_ui(self):
+        # Панель показывает русские названия порогов с сервера; ручного
+        # переименования через UI больше нет.
+        self.assertIn('id="thresholds-panel"', self.html)
+        self.assertIn("param.label || param.key", self.js)
+        self.assertNotIn("thresholds-rename-btn", self.js + self.css)
+        self.assertNotIn("beginThresholdRename", self.js)
+        self.assertNotIn("thresholds-label-input", self.js + self.css)
+        self.assertNotIn("collectThresholdLabels", self.js)
+        self.assertNotIn("thresholdsLabelEdits", self.js)
+
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)
         self.assertIn("window.__TRANSPORTER_UI_TEST_API__", self.js)
@@ -520,7 +534,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("→ ${categoryLabel(category)}", self.js)
         card = self.css.split(".blade-card {", 1)[1].split("}", 1)[0]
         self.assertIn("rgba(15, 19, 23, 0.62)", card)
-        marker = self.css.split(".blade-marker {", 1)[1].split("}", 1)[0]
+        # Точный селектор .blade-marker: не зацепить вложенное правило
+        # .distributor-panel.production-ready .blade-marker, которое идёт выше.
+        marker = self.css.split("\n.blade-marker {", 1)[1].split("}", 1)[0]
         self.assertIn("background: var(--accent)", marker)
         self.assertNotIn("blade-dist1", self.css + self.html)
         self.assertNotIn("blade-dist2", self.css + self.html)

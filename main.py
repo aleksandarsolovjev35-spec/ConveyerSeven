@@ -233,7 +233,8 @@ def main():
                 "inspection", "Настройка системы контроля",
             )
             try:
-                thresholds = ThresholdLoader().get_all()
+                threshold_loader = ThresholdLoader()
+                thresholds = threshold_loader.get_all()
                 decision   = DecisionEngine(thresholds=thresholds)
                 recorder = DebugRecorder(
                     folder="debug_frames",
@@ -249,6 +250,86 @@ def main():
                     root_folder="archive", enabled=True,
                 )
                 monitor.server.archive = archive
+
+                # Редактор порогов правил: сервер отдаёт текущие значения
+                # (GET /api/thresholds), а применение изменений пересоздаёт
+                # DecisionEngine внутри Inspector'а и сохраняет файл.
+                # Пороги автоматически подтягиваются из thresholds.json:
+                # ручные правки файла перечитываются без перезапуска.
+                monitor.server.thresholds = dict(thresholds)
+                monitor.server.threshold_labels = dict(
+                    threshold_loader.labels or {}
+                )
+                monitor.server.thresholds_path = "thresholds.json"
+
+                def _thresholds_reload_from_file(fresh):
+                    if inspector is None:
+                        raise RuntimeError(
+                            "Система контроля ещё не инициализирована"
+                        )
+                    inspector.decision = DecisionEngine(thresholds=fresh)
+                    print(
+                        "[THRESHOLDS] Пороги перечитаны из thresholds.json; "
+                        "правила пересозданы"
+                    )
+                    return fresh
+
+                monitor.thresholds_reload_callback = _thresholds_reload_from_file
+
+                def _thresholds_apply(role, values, labels):
+                    nonlocal inspector
+                    if cycle is None or inspector is None:
+                        raise RuntimeError(
+                            "Система контроля ещё не инициализирована"
+                        )
+                    if cycle.state not in ("IDLE", "STOPPED"):
+                        raise RuntimeError(
+                            "Изменение порогов доступно только до пуска "
+                            "и после полной остановки"
+                        )
+                    if not isinstance(values, dict) or not values:
+                        raise ValueError("Нет изменённых порогов")
+                    updated = dict(inspector.decision.thresholds)
+                    changed = []
+                    for key, value in values.items():
+                        full_key = (
+                            f"{role}.{key}"
+                            if not str(key).startswith(f"{role}.")
+                            else str(key)
+                        )
+                        if full_key not in updated:
+                            raise ValueError(f"Неизвестный порог: {full_key}")
+                        updated[full_key] = value
+                        changed.append(full_key)
+                    # Полная валидация, как при загрузке файла
+                    ThresholdLoader.validate(updated)
+                    # Понятные названия порогов для оператора: сохраняются
+                    # вместе со значениями, на логику правил не влияют.
+                    full_labels = dict(monitor.server.threshold_labels or {})
+                    for key, name in (labels or {}).items():
+                        full_key = (
+                            f"{role}.{key}"
+                            if not str(key).startswith(f"{role}.")
+                            else str(key)
+                        )
+                        if name is None or not str(name).strip():
+                            full_labels.pop(full_key, None)
+                        else:
+                            full_labels[full_key] = str(name).strip()
+                    ThresholdLoader.save_file(
+                        "thresholds.json", updated, labels=full_labels,
+                    )
+                    # Правила пересоздаются: Inspector берёт decision каждый
+                    # раз заново, поэтому замена объекта применяется сразу.
+                    inspector.decision = DecisionEngine(thresholds=updated)
+                    print(
+                        "[THRESHOLDS] Применено "
+                        f"{len(changed)} изменение(й) для {role}: "
+                        f"{', '.join(sorted(changed))}"
+                    )
+                    return updated
+
+                monitor.thresholds_apply_callback = _thresholds_apply
             except Exception as e:
                 monitor.boot_step_error(
                     "inspection",

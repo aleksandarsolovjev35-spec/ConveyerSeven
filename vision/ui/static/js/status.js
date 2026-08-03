@@ -63,6 +63,19 @@ async function fetchStatus() {
         state.frameVersions = {...status.frame_versions};
     }
 
+    // Пороги правил подтягиваются из thresholds.json автоматически: когда
+    // backend перечитал файл и увеличил revision, обновляем панель.
+    if (typeof status.thresholds_revision === 'number') {
+        if (
+            state.thresholdsRevision !== null
+            && status.thresholds_revision !== state.thresholdsRevision
+            && typeof updateThresholdsPanel === 'function'
+        ) {
+            updateThresholdsPanel(true);
+        }
+        state.thresholdsRevision = status.thresholds_revision;
+    }
+
     if (typeof status.frame_version === 'number') {
         state.currentVersion = status.frame_version;
         if (
@@ -119,6 +132,9 @@ function markUiOffline() {
             button.disabled = true;
         });
     }
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
@@ -132,6 +148,9 @@ function updateLineStatus(ls) {
         state.startPending = false;
     }
     updateOperationalAccordions(lineState);
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
 
     els.stateIndicator.className =
         `state-dot state-${lineState.toLowerCase()}`;

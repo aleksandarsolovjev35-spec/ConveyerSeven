@@ -134,10 +134,15 @@ class ThresholdLoader:
         *OMISSION_BOUNDARY_PARAMETER_KEYS,
         *TOP_PARAMETER_KEYS,
     )
+    # Сохранено для обратной совместимости: жёсткого «списка разрешённых
+    # ключей» больше нет, дополнительные пороги в файле разрешены.
     ALLOWED_KEYS = {*REQUIRED_KEYS, "disabled_rules"}
 
     def __init__(self, path: str = "thresholds.json"):
         self.path = path
+        # Понятные названия порогов для оператора: ROLE.parameter -> строка.
+        # Хранятся в thresholds.json как "_label.<parameter>": "Название".
+        self.labels: dict = {}
         self.thresholds = self._load()
 
     def _load(self) -> dict:
@@ -151,22 +156,59 @@ class ThresholdLoader:
             raise RuntimeError(f"Ошибка чтения {self.path}: {exc}") from exc
         if not isinstance(raw_data, dict):
             raise ValueError("thresholds.json должен содержать объект")
-        data = self._flatten_sections(raw_data)
+        data, labels = self._flatten_sections(raw_data)
+        self.labels = labels
+        self.validate(data, labels)
+        return data
 
-        for key in self.REQUIRED_KEYS:
+    @classmethod
+    def validate(cls, data: dict, labels: dict | None = None) -> None:
+        """Проверить плоский словарь порогов (ROLE.parameter -> value).
+
+        Используется и при загрузке файла, и перед сохранением изменений,
+        сделанных оператором через интерфейс, чтобы в файл не попал ни один
+        некорректный порог.
+
+        Обязательные ключи (REQUIRED_KEYS) должны присутствовать — без них
+        правила не могут работать. Дополнительные ключи разрешены: новые
+        пороги можно добавлять в thresholds.json вручную, они подхватываются
+        при запуске, показываются в панели «Пороги правил» (группа «Прочие
+        пороги») и свободно редактируются. Ограничение только одно — значение
+        должно быть конечным числом, чтобы редактор мог его отображать.
+
+        ``labels`` — понятные названия порогов для оператора (ROLE.parameter
+        -> строка). Названия не влияют на логику правил, только на отображение.
+        """
+        for key in cls.REQUIRED_KEYS:
             if key not in data:
                 raise ValueError(
                     f"Отсутствует ключ в thresholds.json: {key}"
                 )
 
-        unknown = sorted(set(data) - self.ALLOWED_KEYS)
-        if unknown:
-            raise ValueError(
-                "Лишние или неизвестные ключи в thresholds.json: "
-                + ", ".join(unknown)
-            )
+        extra_keys = sorted(
+            set(data) - set(cls.REQUIRED_KEYS) - {"disabled_rules"}
+        )
+        for key in extra_keys:
+            value = data[key]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{key} должен быть конечным числом")
 
-        for key in self.INPUT_PARAMETER_KEYS:
+        if labels is not None:
+            if not isinstance(labels, dict):
+                raise ValueError("Названия порогов должны быть объектом")
+            for key, name in labels.items():
+                if not isinstance(key, str):
+                    raise ValueError("Ключ названия порога должен быть строкой")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(
+                        f"Название порога {key} должно быть непустой строкой"
+                    )
+
+        for key in cls.INPUT_PARAMETER_KEYS:
             value = data[key]
             if (
                 type(value) not in (int, float)
@@ -199,7 +241,7 @@ class ThresholdLoader:
                     f"{role}: bottom_px_min не может превышать bottom_px_max"
                 )
 
-        for key in self.CONTACT_PARAMETER_KEYS:
+        for key in cls.CONTACT_PARAMETER_KEYS:
             value = data[key]
             if (
                 type(value) not in (int, float)
@@ -216,7 +258,7 @@ class ThresholdLoader:
             if "inscribed_rect_" in key and float(value) <= 0.0:
                 raise ValueError(f"{key} должен быть числом > 0")
 
-        for key in self.OMISSION_CONFIDENCE_KEYS:
+        for key in cls.OMISSION_CONFIDENCE_KEYS:
             value = data[key]
             if (
                 type(value) not in (int, float)
@@ -251,7 +293,7 @@ class ThresholdLoader:
                     f"{prefix}excess_component_min_px должен быть целым >= 1"
                 )
 
-        for key in self.TOP_PARAMETER_KEYS:
+        for key in cls.TOP_PARAMETER_KEYS:
             value = data[key]
             # margin может быть отрицательным (сжатие области)
             allow_negative = key.endswith("_margin_px")
@@ -296,25 +338,45 @@ class ThresholdLoader:
             raise ValueError("disabled_rules должен быть списком строк")
         if "part_presence" in disabled:
             raise ValueError("part_presence нельзя отключать")
-        return data
+        # конец validate()
 
     @staticmethod
-    def _flatten_sections(raw_data: dict) -> dict:
+    def _flatten_sections(raw_data: dict) -> tuple[dict, dict]:
         """Преобразовать читаемые секции камер в ROLE.parameter.
 
         Ключи `_comment*` являются допустимыми комментариями JSON и полностью
-        игнорируются загрузчиком. Старый плоский формат также читается, чтобы
-        ошибка миграции была понятной, но неизвестные ключи затем отклоняются.
+        игнорируются загрузчиком. Дополнительные параметры в секциях камер
+        сохраняются: новые пороги подхватываются при запуске и показываются
+        в панели «Пороги правил» (группа «Прочие пороги»).
+
+        Ключи `_label.<parameter>` — понятные названия порогов для оператора:
+        они не попадают в значения, а собираются в отдельный словарь
+        ``ROLE.parameter -> название`` (self.labels).
         """
-        flattened = {}
+        flattened: dict = {}
+        labels: dict = {}
         for key, value in raw_data.items():
             if str(key).startswith("_comment"):
+                continue
+            if str(key).startswith("_label."):
+                # Служебный ключ названия вне секции камеры: некуда привязать,
+                # игнорируем (названия живут внутри секций ролей).
                 continue
             if key in ROLE_SECTIONS:
                 if not isinstance(value, dict):
                     raise ValueError(f"Секция {key} должна быть объектом")
                 for parameter, parameter_value in value.items():
                     if str(parameter).startswith("_comment"):
+                        continue
+                    if str(parameter).startswith("_label."):
+                        param_name = str(parameter)[len("_label."):]
+                        if (
+                            isinstance(parameter_value, str)
+                            and parameter_value.strip()
+                        ):
+                            labels[f"{key}.{param_name}"] = (
+                                parameter_value.strip()
+                            )
                         continue
                     if isinstance(parameter_value, (dict, list)):
                         raise ValueError(
@@ -323,7 +385,365 @@ class ThresholdLoader:
                     flattened[f"{key}.{parameter}"] = parameter_value
                 continue
             flattened[key] = value
-        return flattened
+        return flattened, labels
+
+    @staticmethod
+    def save_file(path: str, data: dict, labels: dict | None = None) -> None:
+        """Сохранить плоский dict порогов в файл секциями по ролям.
+
+        Формат повторяет читаемый вручную вид thresholds.json: секция камеры
+        с параметрами и пустая строка между секциями. ``disabled_rules``
+        записывается в конец. Перед сохранением вызывающий обязан выполнить
+        :meth:`validate`, чтобы в файл не попали некорректные значения.
+
+        ``labels`` — понятные названия порогов (ROLE.parameter -> строка);
+        записываются в секции камеры как ``"_label.<parameter>": "Название"``.
+        """
+        grouped: dict = {}
+        for key, value in data.items():
+            if key == "disabled_rules":
+                continue
+            role, dot, parameter = key.partition(".")
+            if dot and role in ROLE_SECTIONS:
+                grouped.setdefault(role, {})[parameter] = value
+            else:
+                grouped[key] = value
+
+        ordered_keys = [
+            role for role in ROLE_SECTIONS if role in grouped
+        ]
+        ordered_keys += [
+            key for key in grouped if key not in ROLE_SECTIONS
+        ]
+
+        lines = ["{"]
+        has_disabled = "disabled_rules" in data
+        last_index = len(ordered_keys) - 1
+        for index, role in enumerate(ordered_keys):
+            if index:
+                lines.append("")
+            params = grouped[role]
+            needs_comma = index < last_index or has_disabled
+            if isinstance(params, dict):
+                lines.append(f"    {json.dumps(role, ensure_ascii=False)}: {{")
+                role_label_keys = sorted(
+                    key[len(role) + 1:]
+                    for key in (labels or {})
+                    if key.startswith(f"{role}.")
+                )
+                entries = [
+                    (False, parameter) for parameter in params
+                ] + [
+                    (True, parameter) for parameter in role_label_keys
+                ]
+                for p_index, (is_label, parameter) in enumerate(entries):
+                    comma = "," if p_index < len(entries) - 1 else ""
+                    if is_label:
+                        full_key = f"{role}.{parameter}"
+                        lines.append(
+                            f"        {json.dumps('_label.' + parameter, ensure_ascii=False)}: "
+                            f"{json.dumps(labels[full_key], ensure_ascii=False)}{comma}"
+                        )
+                    else:
+                        lines.append(
+                            f"        {json.dumps(parameter, ensure_ascii=False)}: "
+                            f"{json.dumps(params[parameter], ensure_ascii=False)}{comma}"
+                        )
+                lines.append("    }" + ("," if needs_comma else ""))
+            else:
+                lines.append(
+                    f"    {json.dumps(role, ensure_ascii=False)}: "
+                    f"{json.dumps(params, ensure_ascii=False)}"
+                    + ("," if needs_comma else "")
+                )
+
+        if "disabled_rules" in data:
+            lines.append("")
+            lines.append(
+                f'    "disabled_rules": '
+                f'{json.dumps(data["disabled_rules"], ensure_ascii=False)}'
+            )
+
+        lines.append("}")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
 
     def get_all(self) -> dict:
         return self.thresholds
+
+# ─── Метаданные порогов для интерфейса оператора ────────────────────────
+#
+# Панель «Пороги правил» показывает параметры правил выбранной (главной)
+# камеры, сгруппированные по правилам. Группировка и подписи живут здесь,
+# чтобы backend и фронтенд не расходились в трактовке имён параметров.
+# Ниже — точный перевод каждого порога на русский, максимально близкий
+# к смыслу (что именно проверяет правило).
+
+PARAM_LABELS = {
+    # ── ВХОД: наличие детали ──────────────────────────────────────────
+    "input_part_presence_false_positive_max_count":
+        "Допустимо ложных срабатываний, шт.",
+
+    # ── ВХОД: геометрия окон ──────────────────────────────────────────
+    "input_window_geometry_min_confidence": "Мин. уверенность окон",
+    "input_window_geometry_expected_count": "Ожидаемое число окон, шт.",
+    "input_window_geometry_top_px_min": "Верх зоны окон: мин, px",
+    "input_window_geometry_top_px_max": "Верх зоны окон: макс, px",
+    "input_window_geometry_bottom_px_min": "Низ зоны окон: мин, px",
+    "input_window_geometry_bottom_px_max": "Низ зоны окон: макс, px",
+    "input_window_geometry_center_zone_ratio": "Доля центральной зоны окон",
+
+    # ── ВХОД: заплавы окон ────────────────────────────────────────────
+    "input_window_sinks_min_confidence": "Мин. уверенность заплав",
+    "input_window_sinks_window_min_confidence":
+        "Мин. уверенность окна для заплав",
+    "input_window_sinks_overlap_min_px": "Мин. перекрытие заплава с окном, px",
+
+    # ── КОНТРОЛЬ: длинные контакты ────────────────────────────────────
+    "spider_contacts_long_min_confidence": "Мин. уверенность контактов",
+    "spider_contacts_long_expected_count": "Ожидаемое число контактов, шт.",
+    "spider_contacts_long_line_deviation_ratio":
+        "Допуск отклонения контактов от линии",
+    "spider_contacts_long_max_level_slope": "Макс. наклон уровня контактов",
+    "spider_contacts_long_omission_tilt_ratio_max":
+        "Макс. наклон пропуска (от высоты)",
+    "spider_contacts_long_inscribed_rect_width_px":
+        "Ширина эталона контакта, px",
+    "spider_contacts_long_inscribed_rect_height_px":
+        "Высота эталона контакта, px",
+    "spider_contacts_long_y_filter_ratio":
+        "Фильтр контактов по вертикали (от высоты)",
+
+    # ── КОНТРОЛЬ: короткие контакты ───────────────────────────────────
+    "spider_contacts_short_min_confidence": "Мин. уверенность контактов",
+    "spider_contacts_short_expected_count": "Ожидаемое число контактов, шт.",
+    "spider_contacts_short_level_deviation_ratio":
+        "Допуск отклонения уровня контактов",
+    "spider_contacts_short_omission_tilt_ratio_max":
+        "Макс. наклон пропуска (от высоты)",
+    "spider_contacts_short_inscribed_rect_width_px":
+        "Ширина эталона контакта, px",
+    "spider_contacts_short_inscribed_rect_height_px":
+        "Высота эталона контакта, px",
+    "spider_contacts_short_area_absolute_min": "Мин. площадь контакта, px²",
+    "spider_contacts_short_y_filter_ratio":
+        "Фильтр контактов по вертикали (от высоты)",
+
+    # ── КОНТРОЛЬ: пропуски ────────────────────────────────────────────
+    "spider_long_omission_min_confidence": "Мин. уверенность пропуска",
+    "spider_long_omission_allowed_thickness_px":
+        "Допустимая толщина пропуска, px",
+    "spider_long_omission_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "spider_long_omission_top_line_max_residual_px":
+        "Макс. отклонение верхней линии, px",
+    "spider_short_omission_min_confidence": "Мин. уверенность пропуска",
+    "spider_short_omission_allowed_thickness_px":
+        "Допустимая толщина пропуска, px",
+    "spider_short_omission_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "spider_short_omission_top_line_max_residual_px":
+        "Макс. отклонение верхней линии, px",
+
+    # ── СВЕРХУ: контакты ──────────────────────────────────────────────
+    "top_contacts_min_confidence": "Мин. уверенность контактов",
+    "top_contacts_expected_count": "Ожидаемое число контактов, шт.",
+    "top_contacts_platform_min_confidence": "Мин. уверенность платформы",
+    "top_contacts_edge_distance_deviation_ratio":
+        "Допуск расстояния контактов до края",
+    "top_contacts_side_rect_width_px": "Боковая зона: ширина, px",
+    "top_contacts_side_rect_height_px": "Боковая зона: высота, px",
+    "top_contacts_edge_rect_width_px": "Краевая зона: ширина, px",
+    "top_contacts_edge_rect_height_px": "Краевая зона: высота, px",
+
+    # ── СВЕРХУ: заплыв платформы ──────────────────────────────────────
+    "top_platform_overlap_platform_min_confidence":
+        "Мин. уверенность платформы",
+    "top_platform_overlap_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "top_platform_overlap_contact_min_confidence":
+        "Мин. уверенность контактов",
+    "top_platform_overlap_contact_inner_ratio":
+        "Доля внутренней зоны контакта",
+    "top_platform_overlap_margin_px": "Запас зоны заплыва, px",
+    "top_platform_overlap_expand_x_ratio": "Расширение зоны по X",
+    "top_platform_overlap_expand_y_ratio": "Расширение зоны по Y",
+
+    # ── СВЕРХУ: платформа ─────────────────────────────────────────────
+    "top_platform_min_confidence": "Мин. уверенность платформы",
+    "top_platform_inscribed_rect_width_px": "Ширина эталона платформы, px",
+    "top_platform_inscribed_rect_height_px": "Высота эталона платформы, px",
+
+    # ── СВЕРХУ: заплавы ───────────────────────────────────────────────
+    "top_sinks_min_confidence": "Мин. уверенность заплав",
+    "top_sinks_platform_min_confidence": "Мин. уверенность платформы",
+    "top_sinks_case_central_min_confidence":
+        "Мин. уверенность центра корпуса",
+
+    # ── СВЕРХУ: стекло ────────────────────────────────────────────────
+    "top_glass_min_confidence": "Мин. уверенность стекла",
+    "top_glass_platform_min_confidence": "Мин. уверенность платформы",
+    "top_glass_case_min_confidence": "Мин. уверенность корпуса",
+    "top_glass_case_central_min_confidence":
+        "Мин. уверенность центра корпуса",
+    "top_glass_pin_min_confidence": "Мин. уверенность пина",
+}
+
+# Запасной перевод по суффиксу — для порогов, добавленных вручную,
+# которых ещё нет в PARAM_LABELS.
+SUFFIX_LABELS = {
+    "min_confidence": "Мин. уверенность",
+    "window_min_confidence": "Мин. уверенность окна",
+    "platform_min_confidence": "Мин. уверенность платформы",
+    "contact_min_confidence": "Мин. уверенность контакта",
+    "case_min_confidence": "Мин. уверенность корпуса",
+    "case_central_min_confidence": "Мин. уверенность центра корпуса",
+    "pin_min_confidence": "Мин. уверенность пина",
+    "expected_count": "Ожидаемое количество",
+    "top_px_min": "Верх зоны: мин, px",
+    "top_px_max": "Верх зоны: макс, px",
+    "bottom_px_min": "Низ зоны: мин, px",
+    "bottom_px_max": "Низ зоны: макс, px",
+    "center_zone_ratio": "Доля центральной зоны",
+    "overlap_min_px": "Мин. заплыв, px",
+    "line_deviation_ratio": "Допуск отклонения от линии",
+    "max_level_slope": "Макс. наклон уровня",
+    "omission_tilt_ratio_max": "Макс. наклон пропуска",
+    "inscribed_rect_width_px": "Ширина впис. прямоугольника, px",
+    "inscribed_rect_height_px": "Высота впис. прямоугольника, px",
+    "y_filter_ratio": "Коэффициент фильтра по Y",
+    "level_deviation_ratio": "Допуск отклонения уровня",
+    "area_absolute_min": "Мин. площадь, px²",
+    "allowed_thickness_px": "Допустимая толщина, px",
+    "excess_component_min_px": "Мин. компонент излишка, px",
+    "top_line_max_residual_px": "Макс. остаток верхней линии, px",
+    "edge_distance_deviation_ratio": "Допуск отклонения края",
+    "side_rect_width_px": "Боковая область: ширина, px",
+    "side_rect_height_px": "Боковая область: высота, px",
+    "edge_rect_width_px": "Краевая область: ширина, px",
+    "edge_rect_height_px": "Краевая область: высота, px",
+    "contact_inner_ratio": "Доля внутренней зоны контакта",
+    "margin_px": "Запас области, px",
+    "expand_x_ratio": "Расширение по X",
+    "expand_y_ratio": "Расширение по Y",
+}
+
+# (rule_id, подпись в UI, префиксы имён параметров). Более специфичные
+# префиксы идут раньше общих: TOP.top_platform_overlap_* не должен попадать
+# в группу TOP.top_platform_*.
+RULE_GROUPS = (
+    ("input_part_presence",   "НАЛИЧИЕ ДЕТАЛИ",         ("input_part_presence_",)),
+    ("input_window_geometry", "ГЕОМЕТРИЯ ВХОДНОГО ОКНА", ("input_window_geometry_",)),
+    ("input_window_sinks",    "ЗАПЛАВЫ ВХОДНОГО ОКНА",  ("input_window_sinks_",)),
+    ("spider_contacts_long",  "КОНТАКТЫ · ДЛИННЫЕ",     ("spider_contacts_long_",)),
+    ("spider_long_omission",  "ПРОПУСК · ДЛИННЫЕ",      ("spider_long_omission_",)),
+    ("spider_contacts_short", "КОНТАКТЫ · КОРОТКИЕ",    ("spider_contacts_short_",)),
+    ("spider_short_omission", "ПРОПУСК · КОРОТКИЕ",     ("spider_short_omission_",)),
+    ("top_contacts",          "КОНТАКТЫ СВЕРХУ",        ("top_contacts_",)),
+    ("top_platform_overlap",  "ЗАПЛЫВ ПЛАТФОРМЫ",       ("top_platform_overlap_",)),
+    ("top_platform",          "ПЛАТФОРМА СВЕРХУ",       ("top_platform_",)),
+    ("top_sinks",             "ЗАПЛАВЫ СВЕРХУ",         ("top_sinks_",)),
+    ("top_glass",             "СТЕКЛО СВЕРХУ",          ("top_glass_",)),
+)
+
+_RULE_GROUPS_SORTED = tuple(
+    sorted(
+        RULE_GROUPS,
+        key=lambda group: -max(len(p) for p in group[2]),
+    )
+)
+
+
+def _param_meta(key: str, value) -> dict:
+    """Метаданные одного параметра для редактора: подпись и границы ввода."""
+    # Точный перевод по имени параметра; для незнакомых (добавленных вручную)
+    # порогов — запасной перевод по суффиксу, иначе техническое имя.
+    label = PARAM_LABELS.get(key)
+    if label is None:
+        label = next(
+            (
+                suffix_label
+                for suffix, suffix_label in sorted(
+                    SUFFIX_LABELS.items(), key=lambda item: -len(item[0]),
+                )
+                if key.endswith(suffix)
+            ),
+            key,
+        )
+    meta = {"key": key, "label": label, "value": value}
+    if key.endswith("_expected_count") or key.endswith("_false_positive_max_count"):
+        meta.update({"step": 1, "min": 0, "max": 1000})
+    elif key.endswith("_excess_component_min_px"):
+        meta.update({"step": 1, "min": 1, "max": 1000})
+    elif key.endswith("_area_absolute_min"):
+        meta.update({"step": 1, "min": 0, "max": 1000000})
+    elif key.endswith("_min_confidence"):
+        meta.update({"step": 0.01, "min": 0, "max": 1})
+    elif key.endswith("_y_filter_ratio"):
+        meta.update({"step": 0.1, "min": 0, "max": 100})
+    elif key.endswith("_center_zone_ratio") or key.endswith("_inner_ratio"):
+        meta.update({"step": 0.01, "min": 0, "max": 1})
+    elif key.endswith("_expand_x_ratio") or key.endswith("_expand_y_ratio"):
+        meta.update({"step": 0.05, "min": 0, "max": 10})
+    elif key.endswith("_margin_px"):
+        meta.update({"step": 1, "min": -500, "max": 500})
+    elif (
+        key.endswith("_ratio")
+        or key.endswith("_tilt_ratio_max")
+        or key.endswith("_slope")
+    ):
+        meta.update({"step": 0.01, "min": 0, "max": 1})
+    else:
+        meta.update({"step": 0.1, "min": 0, "max": 5000})
+    return meta
+
+
+def describe_role_parameters(role: str, thresholds: dict) -> list:
+    """Пороги роли, сгруппированные по правилам, в формате для UI.
+
+    Возвращает список групп::
+
+        [{"rule": "top_contacts", "label": "КОНТАКТЫ СВЕРХУ",
+          "params": [{"key": ..., "label": ..., "value": ...,
+                      "step": ..., "min": ..., "max": ...}]}, ...]
+    """
+    prefix = f"{role}."
+    params = [
+        (key[len(prefix):], value)
+        for key, value in thresholds.items()
+        if key.startswith(prefix) and key != "disabled_rules"
+    ]
+
+    groups = []
+    matched = set()
+    for rule_id, label, prefixes in _RULE_GROUPS_SORTED:
+        group_params = [
+            (name, value)
+            for name, value in params
+            if (
+                name not in matched
+                and any(name.startswith(prefix) for prefix in prefixes)
+            )
+        ]
+        if not group_params:
+            continue
+        group_params.sort()
+        groups.append({
+            "rule": rule_id,
+            "label": label,
+            "params": [
+                _param_meta(name, value)
+                for name, value in group_params
+            ],
+        })
+        matched.update(name for name, _ in group_params)
+
+    leftovers = [(name, value) for name, value in params if name not in matched]
+    if leftovers:
+        leftovers.sort()
+        groups.append({
+            "rule": "other",
+            "label": "ПРОЧИЕ ПОРОГИ",
+            "params": [_param_meta(name, value) for name, value in leftovers],
+        })
+    return groups
