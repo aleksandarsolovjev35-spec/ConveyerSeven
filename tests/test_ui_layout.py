@@ -254,7 +254,7 @@ class UiLayoutTests(unittest.TestCase):
 
     def test_operator_interface_is_russian_and_previews_refresh_frequently(self):
         for label in (
-            "РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7",
+            "МОНИТОР ЛИНИИ",
             "ГОТОВА К ПУСКУ",
             "ШАГ:",
             "ВРЕМЯ РАБОТЫ:",
