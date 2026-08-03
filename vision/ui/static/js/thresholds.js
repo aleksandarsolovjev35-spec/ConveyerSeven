@@ -13,6 +13,7 @@ let thresholdsData = null;       // последний ответ GET /api/thres
 let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
+let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
 
 function thresholdsPanelVisible() {
     return (
@@ -54,7 +55,9 @@ async function fetchThresholds(role) {
 
 // Вызывается из updateLineStatus (status.js), selectCamera/fetchCameras
 // (cameras.js) и при офлайне: панель следует за выбранной главной камерой.
-function updateThresholdsPanel() {
+// force=true — принудительно перечитать пороги с сервера (автоподхват
+// после внешней правки thresholds.json).
+function updateThresholdsPanel(force) {
     if (!thresholdsPanelVisible()) {
         if (els.thresholdsPanel) els.thresholdsPanel.classList.add('is-hidden');
         return;
@@ -62,9 +65,15 @@ function updateThresholdsPanel() {
     if (els.thresholdsPanel) els.thresholdsPanel.classList.remove('is-hidden');
 
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
+        // Смена камеры отбрасывает незаконченный ввод.
+        thresholdsDirty = false;
         thresholdsData = null;
         thresholdsBodyKey = null;
         setThresholdsStatus('', '');
+        fetchThresholds(state.currentCamera);
+        return;
+    }
+    if (force && !thresholdsDirty && !thresholdsBusy) {
         fetchThresholds(state.currentCamera);
         return;
     }
@@ -221,6 +230,10 @@ async function saveThresholds() {
             return;
         }
         thresholdsData = result.thresholds;
+        thresholdsDirty = false;
+        if (typeof result.thresholds.revision === 'number') {
+            state.thresholdsRevision = result.thresholds.revision;
+        }
         setThresholdsStatus('Сохранено', '');
         renderThresholdsPanel();
     } finally {
@@ -234,6 +247,7 @@ async function resetThresholds() {
     setThresholdsStatus('', '');
     // Принудительно перестраиваем поля, даже если ревизия не изменилась:
     // нужно сбросить незаконченный ввод оператора.
+    thresholdsDirty = false;
     thresholdsBodyKey = null;
     thresholdsData = null;
     await fetchThresholds(state.currentCamera);
@@ -247,7 +261,10 @@ function setupThresholdsControls() {
         els.thresholdsReset.addEventListener('click', resetThresholds);
     }
     if (els.thresholdsBody) {
-        els.thresholdsBody.addEventListener('input', updateThresholdsActions);
+        els.thresholdsBody.addEventListener('input', () => {
+            thresholdsDirty = true;
+            updateThresholdsActions();
+        });
     }
     updateThresholdsPanel();
 }

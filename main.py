@@ -253,7 +253,24 @@ def main():
                 # Редактор порогов правил: сервер отдаёт текущие значения
                 # (GET /api/thresholds), а применение изменений пересоздаёт
                 # DecisionEngine внутри Inspector'а и сохраняет файл.
+                # Пороги автоматически подтягиваются из thresholds.json:
+                # ручные правки файла перечитываются без перезапуска.
                 monitor.server.thresholds = dict(thresholds)
+                monitor.server.thresholds_path = "thresholds.json"
+
+                def _thresholds_reload_from_file(fresh):
+                    if inspector is None:
+                        raise RuntimeError(
+                            "Система контроля ещё не инициализирована"
+                        )
+                    inspector.decision = DecisionEngine(thresholds=fresh)
+                    print(
+                        "[THRESHOLDS] Пороги перечитаны из thresholds.json; "
+                        "правила пересозданы"
+                    )
+                    return fresh
+
+                monitor.thresholds_reload_callback = _thresholds_reload_from_file
 
                 def _thresholds_apply(role, values):
                     nonlocal inspector

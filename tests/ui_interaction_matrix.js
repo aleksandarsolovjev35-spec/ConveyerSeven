@@ -261,6 +261,19 @@ async function main() {
         }],
       });
     }
+    if (target.startsWith('/api/thresholds')) {
+      const role = target.includes('role=')
+        ? decodeURIComponent(target.split('role=')[1])
+        : 'TOP';
+      return jsonResponse({
+        role,
+        available: true,
+        editable: true,
+        revision: 1,
+        values: {},
+        rules: [],
+      });
+    }
     return jsonResponse({ok: true});
   };
 

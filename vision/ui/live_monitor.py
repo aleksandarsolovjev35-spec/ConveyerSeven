@@ -42,6 +42,9 @@ class LiveMonitor:
         # Пороги правил: callback получает (role, values) и возвращает
         # обновлённый плоский dict порогов (или бросает исключение).
         self.thresholds_apply_callback = None
+        # Callback автоподхвата: получает свежий dict порогов из файла,
+        # может пересоздать DecisionEngine и вернуть итоговый dict.
+        self.thresholds_reload_callback = None
 
         self.server = UIServer()
         self._bind_server_callbacks()
@@ -158,6 +161,11 @@ class LiveMonitor:
         self.server.on_thresholds_apply = (
             lambda role, values: self._invoke_args(
                 self.thresholds_apply_callback, role, values,
+            )
+        )
+        self.server.on_thresholds_reload = (
+            lambda fresh: self._invoke_args(
+                self.thresholds_reload_callback, fresh,
             )
         )
 

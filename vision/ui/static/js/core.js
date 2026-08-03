@@ -117,6 +117,7 @@ const state = {
     lastSentActiveCamera: null,
     pendingActiveCamera:  null,
     activeCameraRequestBusy: false,
+    thresholdsRevision:   null,
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,

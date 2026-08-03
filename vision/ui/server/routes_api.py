@@ -65,6 +65,10 @@ def setup_api_routes(app, server):
 
     @app.get("/api/status")
     async def get_status():
+        # Автоподхват порогов: если thresholds.json изменился вручную,
+        # перечитываем его (в рабочем потоке) до отдачи статуса.
+        if server.thresholds_file_mtime_changed():
+            await asyncio.to_thread(server.reload_thresholds_from_file)
         with server.lock:
             return JSONResponse({
                 "splash_active": server.splash_active,
@@ -74,6 +78,7 @@ def setup_api_routes(app, server):
                 "frame_version": server._cache_version,
                 "frame_versions": dict(server._latest_frames_ver),
                 "active_camera": server.active_camera_role,
+                "thresholds_revision": server.thresholds_revision,
             })
 
     @app.get("/api/mode")

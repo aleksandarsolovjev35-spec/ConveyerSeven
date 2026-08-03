@@ -723,7 +723,15 @@ def main():
 
     # Редактор порогов правил: в демо-режиме изменения тоже применяются и
     # сохраняются в thresholds.json, чтобы оператор мог опробовать панель.
+    # Пороги автоматически подтягиваются из файла и в демо-режиме.
     monitor.server.thresholds = dict(ThresholdLoader().get_all())
+    monitor.server.thresholds_path = "thresholds.json"
+
+    def demo_thresholds_reload(fresh):
+        print("[THRESHOLDS] Демо: пороги перечитаны из thresholds.json")
+        return fresh
+
+    monitor.thresholds_reload_callback = demo_thresholds_reload
 
     def demo_thresholds_apply(role, values):
         if demo.state not in ("IDLE", "STOPPED"):

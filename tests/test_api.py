@@ -1,5 +1,6 @@
 import asyncio
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -364,6 +365,83 @@ class ThresholdsApiTests(unittest.TestCase):
             bad["TOP.top_contacts_min_confidence"] = 1.5
             with self.assertRaisesRegex(ValueError, "0..1"):
                 ThresholdLoader.validate(bad)
+
+    def test_thresholds_auto_reload_from_file_and_status_revision(self):
+        """Пороги сами подтягиваются из thresholds.json при ручной правке."""
+        asyncio.run(self._run_auto_reload())
+
+    async def _run_auto_reload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            # Первый вызов: известного mtime нет — файл фиксируется,
+            # содержимое не менялось, ревизия не растёт.
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 0)
+
+            # Вручную правим файл «снаружи» — как будто оператор отредактировал
+            # thresholds.json текстовым редактором.
+            time.sleep(0.01)  # гарантировать смену mtime
+            modified = dict(self.thresholds)
+            modified["TOP.top_contacts_min_confidence"] = 0.77
+            ThresholdLoader.save_file(str(path), modified)
+
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            reloaded = []
+            server.on_thresholds_reload = (
+                lambda fresh: reloaded.append(fresh) or fresh
+            )
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.77,
+            )
+            self.assertEqual(len(reloaded), 1)
+            # После применения mtime запомнен — повторной перезагрузки нет.
+            self.assertFalse(server.thresholds_file_mtime_changed())
+
+            # Тот же контент, новое время записи (случай сохранения через UI):
+            # ничего не меняем, ревизия не растёт.
+            time.sleep(0.01)
+            ThresholdLoader.save_file(str(path), modified)
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+
+            # Во время работы линии файл не применяется до остановки.
+            time.sleep(0.01)
+            modified["TOP.top_contacts_min_confidence"] = 0.55
+            ThresholdLoader.save_file(str(path), modified)
+            server.line_status = {"state": "RUNNING"}
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            server.line_status = {"state": "STOPPED"}
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 2)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.55,
+            )
+
+            # /api/status сообщает актуальную ревизию порогов.
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://127.0.0.1:8000",
+            ) as client:
+                response = await client.get("/api/status")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.json()["thresholds_revision"], 2,
+                )
 
 
 if __name__ == "__main__":

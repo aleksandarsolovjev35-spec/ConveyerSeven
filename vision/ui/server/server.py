@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 import threading
 import time
@@ -95,9 +96,18 @@ class UIServer:
         # Пороги правил: плоский dict (ROLE.parameter -> value), которым
         # UI отвечает на GET /api/thresholds. Применение изменений выполняет
         # внешний callback (валидация + пересоздание DecisionEngine).
+        # Помимо сохранения через UI, пороги автоматически перечитываются
+        # из thresholds.json (см. reload_thresholds_from_file).
         self.thresholds: dict | None = None
         self.thresholds_revision = 0
         self.on_thresholds_apply: callable | None = None
+
+        # Автоподхват порогов из файла: путь и время последней проверки.
+        self.thresholds_path: str | None = None
+        self.thresholds_file_mtime: float | None = None
+        # Внешний callback: получает свежий dict порогов из файла, может
+        # пересоздать DecisionEngine и вернуть итоговый dict.
+        self.on_thresholds_reload: callable | None = None
 
         self.archive = None
 
@@ -176,11 +186,81 @@ class UIServer:
         line_state = (self.line_status or {}).get("state")
         return line_state in ("IDLE", "STOPPED")
 
+    def thresholds_file_mtime_changed(self) -> bool:
+        """Дёшево проверить (syscall getmtime), изменился ли thresholds.json.
+
+        Вызывается на каждом тике /api/status; тяжёлая работа выполняется
+        только при реальном изменении файла.
+        """
+        if not self.thresholds_path:
+            return False
+        try:
+            mtime = os.path.getmtime(self.thresholds_path)
+        except OSError:
+            return False
+        with self.lock:
+            known = self.thresholds_file_mtime
+        return mtime != known
+
+    def reload_thresholds_from_file(self) -> bool:
+        """Перечитать thresholds.json, если файл изменился.
+
+        Применяется только когда линия остановлена (IDLE/STOPPED): в этот
+        момент правила можно безопасно пересоздать. При изменении содержимого
+        вызывается on_thresholds_reload (пересоздание DecisionEngine),
+        обновляется dict порогов и увеличивается revision, по которому
+        фронтенд перерисовывает панель.
+        """
+        if not self.thresholds_path:
+            return False
+        try:
+            mtime = os.path.getmtime(self.thresholds_path)
+        except OSError:
+            return False
+        with self.lock:
+            known = self.thresholds_file_mtime
+        if mtime == known:
+            return False
+        if not self.thresholds_editable():
+            return False
+        try:
+            from domain.threshold_loader import ThresholdLoader
+            fresh = ThresholdLoader(self.thresholds_path).get_all()
+        except Exception as exc:
+            print(f"[THRESHOLDS] Ошибка перечитывания thresholds.json: {exc}")
+            return False
+        with self.lock:
+            current = dict(self.thresholds or {})
+        if fresh == current:
+            # Файл тронут, но содержимое не изменилось (например, после
+            # сохранения через UI) — просто запоминаем время проверки.
+            with self.lock:
+                self.thresholds_file_mtime = mtime
+            return False
+        if self.on_thresholds_reload is not None:
+            try:
+                fresh = self.on_thresholds_reload(fresh) or fresh
+            except Exception as exc:
+                print(
+                    f"[THRESHOLDS] Ошибка применения порогов из файла: {exc}"
+                )
+                return False
+        with self.lock:
+            self.thresholds = dict(fresh)
+            self.thresholds_file_mtime = mtime
+            self.thresholds_revision += 1
+        print("[THRESHOLDS] thresholds.json перечитан автоматически")
+        return True
+
     def build_thresholds_payload(self, role: str | None = None) -> dict:
         """Ответ для GET /api/thresholds: пороги роли, сгруппированные по
         правилам, с метаданными для редактора (подпись, шаг, границы).
         """
         from domain.threshold_loader import describe_role_parameters
+
+        # Сначала синхронизация с файлом: оператор мог поправить
+        # thresholds.json вручную — панель покажет актуальные значения.
+        self.reload_thresholds_from_file()
 
         with self.lock:
             thresholds = dict(self.thresholds or {})
@@ -251,6 +331,9 @@ class UIServer:
                 "Изменение порогов доступно только до пуска "
                 "и после полной остановки"
             )
+        # Синхронизация с файлом перед применением: база порогов не должна
+        # затирать внешние правки thresholds.json.
+        self.reload_thresholds_from_file()
         if self.on_thresholds_apply is None:
             raise RuntimeError("Применение порогов ещё не подключено")
         updated = self.on_thresholds_apply(role, values)
