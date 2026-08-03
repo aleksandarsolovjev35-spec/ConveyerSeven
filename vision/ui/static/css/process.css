@@ -71,7 +71,6 @@
     position: relative;
     box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
-
 .production-line-cells .line-cell::before {
     content: "#" attr(data-cell-no);
     position: absolute;
@@ -82,7 +81,6 @@
     opacity: 0.65;
     pointer-events: none;
 }
-
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -92,7 +90,6 @@
        exit gates around them. */
     margin: 3px 63px 0;
 }
-
 .line-position-labels span {
     overflow: hidden;
     color: var(--text-muted);
@@ -101,12 +98,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
 .line-position-labels .stage-position {
     color: var(--text-dim);
     font-weight: 700;
 }
-
 .line-cell.process-active { border-color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
 .line-cell.process-camera { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .line-cell.process-route { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
@@ -142,18 +137,14 @@
     background: var(--ok);
     color: var(--ok);
 }
-
 .distributor-panel.route-good { background: var(--ok-fill); border-color: var(--ok); }
 .distributor-panel.route-bad { background: var(--bad-fill); border-color: var(--bad); }
 .distributor-panel.route-cleanup { background: var(--warn-fill); border-color: var(--warn); }
-
 .distributor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .dist-route { min-width: 0; font: 700 9px var(--font-mono); letter-spacing: 0.45px; }
-
 .distributor-panel.route-good .distributor-title, .distributor-panel.route-good .dist-route { color: var(--ok); }
 .distributor-panel.route-bad .distributor-title, .distributor-panel.route-bad .dist-route { color: var(--bad); }
 .distributor-panel.route-cleanup .distributor-title, .distributor-panel.route-cleanup .dist-route { color: var(--warn); }
-
 .blade-card {
     display: flex;
     flex-direction: column;
@@ -166,16 +157,13 @@
     padding: 6px;
     transition: min-height 220ms var(--ease);
 }
-
 .distributor-panel.controls-collapsed .blade-card {
     min-height: 76px;
 }
-
 .blade-card .axis-row {
     flex: 0 0 22px;
     margin-bottom: 0;
 }
-
 .blade-track {
     position: relative;
     align-self: stretch;
@@ -249,17 +237,29 @@
 .jog-panel.jog-panel-embedded {
     grid-column: auto;
     grid-row: auto;
-    background: transparent;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    border-radius: 0;
-    padding: 7px 0 9px;
+    /* Отдельный блок-карточка, как панель распределителя и пороги
+       правил: собственная подложка, рамка и скругление. */
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 8px 8px;
     min-height: 0;
     overflow: visible;
     gap: 6px;
     box-shadow: none;
 }
-.jog-panel-embedded .jog-dpad { padding: 3px 0; }
+.jog-panel-embedded .jog-header {
+    border-bottom: 0;
+    padding-bottom: 0;
+}
+/* Внутренняя рамка вокруг кнопок ручного хода: кнопки собраны в
+   отдельный блок внутри карточки (как blade-card у распределителя). */
+.jog-panel-embedded .jog-dpad {
+    padding: 5px 6px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
 .jog-panel-embedded .jog-hold-btn {
     height: 57px;
     min-height: 57px;

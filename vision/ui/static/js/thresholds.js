@@ -78,6 +78,10 @@ function updateThresholdsPanel(force) {
         return;
     }
     if (els.thresholdsPanel) els.thresholdsPanel.classList.remove('is-hidden');
+    // Панель могла быть скрыта (display:none), пока список в неё не
+    // влезал/переставал влезать: ползунок прокрутки пересчитывается
+    // при каждом показе, а не только при перестроении полей.
+    thresholdsSyncScroll();
 
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
         // Смена камеры отбрасывает незаконченный ввод.
@@ -211,6 +215,7 @@ function renderThresholdsBody() {
     slider.value = 0;
     slider.disabled = true;
     slider.setAttribute('aria-label', 'Прокрутка списка порогов');
+    slider.title = 'Прокрутка списка порогов';
     scroll.append(cards, slider);
     body.appendChild(scroll);
 
