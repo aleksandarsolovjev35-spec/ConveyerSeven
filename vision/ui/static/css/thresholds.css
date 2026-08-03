@@ -2,7 +2,9 @@
 
 /* Панель «Пороги правил»: в правой колонке, над кнопками ручного
    управления лентой (JOG). Видна только до пуска и после полной
-   остановки линии. */
+   остановки линии. Каждое правило — отдельная карточка-блок
+   (стилистически как карточки распределителя), каждый порог
+   редактируется ползунком и числовым полем одновременно. */
 
 .thresholds-panel {
     display: flex;
@@ -57,38 +59,23 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    /* Группы переключаются вкладками, поэтому внутренний скролл не нужен. */
 }
 
-.thresholds-tabs {
+/* Список карточек правил. Жёсткий предел высоты: пороги не занимают
+   место кнопок ручного управления — при нехватке места прокручивается
+   только список, правая колонка остаётся единой областью прокрутки. */
+.thresholds-cards {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    flex-direction: column;
+    gap: 6px;
+    max-height: min(44vh, 340px);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
-.thresholds-tab {
-    min-width: 0;
-    padding: 4px 6px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-1);
-    color: var(--text-muted);
-    font: 700 8px var(--font-ui);
-    letter-spacing: 0.35px;
-    text-transform: uppercase;
-    cursor: pointer;
-}
-
-.thresholds-tab:hover,
-.thresholds-tab:focus-visible,
-.thresholds-tab.is-active,
-.thresholds-tab[aria-selected="true"] {
-    border-color: var(--accent);
-    color: var(--accent);
-    outline: none;
-}
-
-.thresholds-tab-panel[hidden] { display: none; }
+.thresholds-cards::-webkit-scrollbar { width: 6px; }
+.thresholds-cards::-webkit-scrollbar-track { background: transparent; }
+.thresholds-cards::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 
 .thresholds-empty {
     font-family: var(--font-ui);
@@ -97,47 +84,147 @@
     padding: 2px 0;
 }
 
-.thresholds-group {
+/* ─── Карточка правила (блок, как у распределителя) ─────────────── */
+
+.thresholds-card {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    /* Полупрозрачная тёмная подложка, как у blade-card распределителя. */
+    background: rgba(15, 19, 23, 0.62);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    background: var(--bg-2);
     padding: 5px 7px;
 }
 
-.thresholds-group-title {
+.thresholds-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+}
+
+.thresholds-card-title {
     font-family: var(--font-ui);
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.7px;
     color: var(--text-dim);
     text-transform: uppercase;
-    margin-bottom: 3px;
-}
-
-.thresholds-items {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px 8px;
-}
-
-.thresholds-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.thresholds-item-label {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    color: var(--text-dim);
     white-space: nowrap;
-    max-width: 190px;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
+.thresholds-card-count {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--text-muted);
+}
+
+/* ─── Строка параметра: название | ползунок | число ─────────────── */
+
+.thresholds-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.thresholds-item {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr) 64px;
+    align-items: center;
+    gap: 6px;
+    min-height: 26px;
+}
+
+.thresholds-item-no-slider {
+    grid-template-columns: minmax(0, 1fr) 64px;
+}
+
+.thresholds-item-label {
+    min-width: 0;
+    font-family: var(--font-ui);
+    font-size: 9px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Ползунок: дорожка повторяет blade-track распределителя, бегунок —
+   blade-marker (квадрат 12×14, accent). Заливка под бегунком — тонкий
+   accent-glow без градиентов, в тон строгой теме. */
+
+.thresholds-slider-wrap {
+    position: relative;
+    display: block;
+    height: 8px;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+}
+
+.thresholds-slider-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: var(--fill, 0%);
+    border-radius: 999px;
+    background: var(--accent-glow);
+    pointer-events: none;
+}
+
+.thresholds-slider {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -3px;
+    bottom: -3px;
+    width: 100%;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+.thresholds-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+    border: none;
+}
+
+.thresholds-slider::-moz-range-thumb {
+    width: 12px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+    border: none;
+}
+
+.thresholds-slider::-moz-range-track {
+    background: transparent;
+}
+
+.thresholds-slider:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+
 .thresholds-input {
-    width: 78px;
+    width: 100%;
+    min-width: 0;
     height: 25px;
     padding: 0 6px;
     /* Только прямой ввод: без стрелок increment/decrement. */
@@ -164,6 +251,11 @@
 }
 
 .thresholds-panel.is-locked .thresholds-input {
+    opacity: 0.55;
+}
+
+.thresholds-panel.is-locked .thresholds-slider {
+    pointer-events: none;
     opacity: 0.55;
 }
 

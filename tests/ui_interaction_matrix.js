@@ -270,8 +270,22 @@ async function main() {
         available: true,
         editable: true,
         revision: 1,
-        values: {},
-        rules: [],
+        values: {min_confidence: 0.4, expected_count: 7, false_positive_max_count: 2},
+        rules: [
+          {
+            rule: 'input_window_geometry', label: 'ГЕОМЕТРИЯ ОКНА',
+            params: [
+              {key: 'min_confidence', label: 'Мин. уверенность', value: 0.4, step: 0.01, min: 0, max: 1},
+              {key: 'expected_count', label: 'Ожидаемое число', value: 7, step: 1, min: 0, max: 1000},
+            ],
+          },
+          {
+            rule: 'input_part_presence', label: 'НАЛИЧИЕ КОРПУСА',
+            params: [
+              {key: 'false_positive_max_count', label: 'Ложных срабатываний', value: 2, step: 1, min: 0, max: 100},
+            ],
+          },
+        ],
       });
     }
     return jsonResponse({ok: true});
@@ -545,7 +559,24 @@ async function main() {
     !routeClasses.some(cls => distPanel.classList.contains(cls)),
     'без детали на сортировке панель не залита',
   );
-  assert(distRoute.textContent === '', 'подпись маршрута очищена');
+  assert(distPanel.classList.contains('production-ready'), 'припаркованный распределитель подсвечен зелёным');
+  assert(distRoute.textContent === 'ПРОИЗВОДСТВО ГОТОВО', 'подпись готовности к пуску видна');
+
+  // Команда ПРОХОД (заслонка закрывается к 0) зажигает зелёное сразу,
+  // не дожидаясь фактического прихода ползунка в исходное положение —
+  // как СБРОС зажигает красное в момент команды.
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 340, dist1_state: 'CLOSING',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('production-ready'), 'закрытие к HOME подсвечено зелёным сразу');
+  assert(!distPanel.classList.contains('route-bad'), 'красный не держится во время закрытия');
+  assert(distRoute.textContent === 'ПРОИЗВОДСТВО ГОТОВО', 'подпись готовности видна и при закрытии');
+  api.updateLineStatus(lineStatus('IDLE', {
+    dist1_position: 0, dist1_state: 'IDLE',
+    controls: controls({start: true, exit: true}),
+  }));
+  assert(distPanel.classList.contains('production-ready'), 'после прихода в 0 зелёный остаётся');
 
   // Открытая вручную заслонка сброса заливает панель по каналу DIST2.
   api.updateLineStatus(lineStatus('IDLE', {
@@ -930,7 +961,45 @@ async function main() {
   api.updateMode('RULES');
   assert(badge.classList.contains('is-faded'), 'badge hidden again at rest');
 
-  console.log('UI INTERACTION MATRIX PASS: 22 groups');
+  // 23. Пороги правил: отдельные блоки-карточки (как у распределителя)
+  // с ползунками, синхронизированными с числовыми полями.
+  currentStatus = lineStatus('IDLE', {
+    diagnostic_allowed: true,
+    controls: controls({
+      start: true, exit: true, distributor_diagnostic: true,
+    }),
+  });
+  api.updateLineStatus(currentStatus);
+  api.state.currentCamera = null;
+  api.selectCamera('TOP');
+  await sleep(30);
+  const thresholdsBody = window.document.getElementById('thresholds-body');
+  assert(
+    thresholdsBody.querySelectorAll('.thresholds-card').length === 2,
+    'каждое правило — отдельный блок-карточка',
+  );
+  assert(
+    thresholdsBody.querySelectorAll('input.thresholds-slider').length === 3,
+    'у каждого порога есть ползунок',
+  );
+  assert(
+    thresholdsBody.querySelectorAll('input.thresholds-input').length === 3,
+    'у каждого порога есть числовое поле',
+  );
+  const thresholdSlider = thresholdsBody.querySelector('input.thresholds-slider');
+  const thresholdInput = thresholdsBody.querySelector('input.thresholds-input');
+  thresholdSlider.value = '0.75';
+  thresholdSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
+  assert(thresholdInput.value === '0.75', 'ползунок двигает числовое поле');
+  assert(
+    !window.document.getElementById('thresholds-save').disabled,
+    'после движения ползунка СОХРАНИТЬ доступна',
+  );
+  thresholdInput.value = '0.2';
+  thresholdInput.dispatchEvent(new window.Event('input', {bubbles: true}));
+  assert(thresholdSlider.value === '0.2', 'числовое поле двигает ползунок');
+
+  console.log('UI INTERACTION MATRIX PASS: 23 groups');
   dom.window.close();
 }
 

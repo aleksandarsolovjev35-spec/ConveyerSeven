@@ -1,5 +1,4 @@
 /* process.css — Line Monitor UI module */
-
 /* ─── Process line under main camera ───────────────────────────── */
 .process-line-panel {
     flex: 0 0 auto;
@@ -314,6 +313,7 @@
 .frame-analysis-panel,
 .stats-summary,
 .distributor-panel,
+.thresholds-panel,
 .jog-panel.jog-panel-embedded,
 .defects-section,
 .stats-service {

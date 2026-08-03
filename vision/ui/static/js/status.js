@@ -351,8 +351,11 @@ function _resolveDistributorRoute(ls) {
         // сброса (в т.ч. ручная проверка СБРОС): цвет — по каналу DIST2.
         // Припаркованный селектор сам по себе панель не заливает.
         const d1State = String(ls.dist1_state || '').toUpperCase();
-        const d1Open = ['OPEN', 'OPENING', 'CLOSING'].includes(d1State)
-            || Number(ls.dist1_position || 0) > 0;
+        // CLOSING — движение к «зелёному» состоянию ПРОХОД: открытой
+        // заслонкой оно не считается, и панель сразу подсвечивается
+        // зелёным ниже, не дожидаясь фактического прихода заслонки в 0.
+        const d1Open = ['OPEN', 'OPENING'].includes(d1State)
+            || (d1State !== 'CLOSING' && Number(ls.dist1_position || 0) > 0);
         if (d1Open) {
             category =
                 String(ls.dist2_target || '').toUpperCase() === 'CLEANUP'
@@ -384,12 +387,15 @@ function _updateDistributorRoute(ls) {
         effective = 'CLEANUP';
     } else {
         // Нет активного маршрута детали: если распределитель в исходном
-        // положении (DIST1 закрыт, линия не работает), показываем зелёную
-        // заливку — сигнал «можно стартовать».
+        // положении (DIST1 закрыт) или уже закрывается к нему, линия не
+        // работает — показываем зелёную заливку сразу после команды,
+        // а не после фактического прихода заслонки в 0.
         const lineState = (ls.state || state.lineState || '').toUpperCase();
+        const d1State = String(ls.dist1_state || '').toUpperCase();
+        const closingToHome = d1State === 'CLOSING';
         const parked = ['IDLE', 'STOPPED'].includes(lineState)
-            && String(ls.dist1_state || '').toUpperCase() === 'IDLE'
-            && Number(ls.dist1_position || 0) === 0;
+            && (d1State === 'IDLE' || closingToHome)
+            && (Number(ls.dist1_position || 0) === 0 || closingToHome);
         if (parked) {
             panel.classList.add('production-ready');
             effective = 'GOOD';   // production-ready = зелёный

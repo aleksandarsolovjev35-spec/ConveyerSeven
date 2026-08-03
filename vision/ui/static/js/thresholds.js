@@ -3,10 +3,13 @@
 
 // Панель «Пороги правил» показывает параметры правил выбранной (главной)
 // камеры с понятными русскими названиями (label приходит с сервера) и
-// позволяет менять только значения. Редактирование доступно только до
-// пуска (IDLE) и после полной остановки (STOPPED); во время работы линии
-// панель скрыта, а backend дополнительно проверяет состояние при
-// сохранении.
+// позволяет менять только значения. Каждое правило — собственная
+// карточка-блок (стилистически как карточки распределителя), каждый
+// параметр — строка «название | ползунок | число»: ползунок и числовое
+// поле всегда синхронизированы. Редактирование доступно только до
+// пуска (IDLE) и после полной остановки (STOPPED); во время работы
+// линии панель скрыта, а backend дополнительно проверяет состояние
+// при сохранении.
 
 const THRESHOLD_EDITABLE_STATES = ['IDLE', 'STOPPED'];
 
@@ -15,7 +18,6 @@ let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
 let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
-let thresholdsActiveRule = null; // открытая вкладка правила в редакторе
 
 function thresholdsPanelVisible() {
     return (
@@ -76,7 +78,6 @@ function updateThresholdsPanel(force) {
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
         // Смена камеры отбрасывает незаконченный ввод.
         thresholdsDirty = false;
-        thresholdsActiveRule = null;
         thresholdsData = null;
         thresholdsBodyKey = null;
         setThresholdsStatus('', '');
@@ -120,6 +121,85 @@ function renderThresholdsPanel() {
     updateThresholdsActions();
 }
 
+// ─── Блоки-карточки правил ─────────────────────────────────────────
+// Каждое правило — отдельная карточка (как blade-card распределителя).
+// Карточки лежат в общем списке; при нехватке места прокручивается
+// только список порогов, а кнопки ручного управления ниже остаются
+// на своих местах.
+
+function thresholdsSliderRange(param) {
+    const lo = Number(param.min);
+    const hi = Number(param.max);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return null;
+    return {lo, hi};
+}
+
+function thresholdsSyncItem(item) {
+    const input = item.querySelector('input.thresholds-input');
+    const slider = item.querySelector('input.thresholds-slider');
+    const wrap = item.querySelector('.thresholds-slider-wrap');
+    if (!input || !slider || !wrap) return;
+    const raw = String(input.value).trim();
+    if (raw !== '') slider.value = Number(raw);
+    const value = raw === '' ? Number(slider.value) : Number(raw);
+    const lo = Number(slider.min) || 0;
+    const hi = Number(slider.max) || 1;
+    const pct = hi > lo
+        ? Math.max(0, Math.min(100, (value - lo) / (hi - lo) * 100))
+        : 0;
+    wrap.style.setProperty('--fill', `${pct}%`);
+}
+
+function buildThresholdItem(param) {
+    // Контейнер строки — div, а не label: клик по названию не должен
+    // перебрасывать ползунок (label форвардит клик на range-инпут).
+    const item = document.createElement('div');
+    item.className = 'thresholds-item';
+
+    const span = document.createElement('span');
+    span.className = 'thresholds-item-label';
+    span.textContent = param.label || param.key;
+    span.title = param.key;
+    item.appendChild(span);
+
+    // Ползунок появляется, только когда backend дал осмысленный диапазон.
+    // Иначе остаётся одно числовое поле — как для нестандартных порогов.
+    const range = thresholdsSliderRange(param);
+    if (range) {
+        const wrap = document.createElement('span');
+        wrap.className = 'thresholds-slider-wrap';
+        const fill = document.createElement('span');
+        fill.className = 'thresholds-slider-fill';
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'thresholds-slider';
+        slider.min = range.lo;
+        slider.max = range.hi;
+        slider.step = (typeof param.step === 'number' && param.step > 0)
+            ? param.step
+            : (range.hi - range.lo) / 100;
+        slider.value = Math.min(
+            range.hi,
+            Math.max(range.lo, Number(param.value) || range.lo),
+        );
+        wrap.append(fill, slider);
+        item.appendChild(wrap);
+    } else {
+        item.classList.add('thresholds-item-no-slider');
+    }
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'thresholds-input';
+    input.dataset.key = param.key;
+    input.step = param.step || 'any';
+    if (typeof param.min === 'number') input.min = param.min;
+    if (typeof param.max === 'number') input.max = param.max;
+    input.value = param.value;
+    item.appendChild(input);
+    return item;
+}
+
 function renderThresholdsBody() {
     const body = els.thresholdsBody;
     if (!body) return;
@@ -134,81 +214,37 @@ function renderThresholdsBody() {
         return;
     }
 
-    // Вместо внутренней прокрутки каждая группа правила открывается на
-    // собственной вкладке. Все поля остаются в DOM: правки на другой
-    // вкладке не теряются и одним действием сохраняются целиком.
-    const activeRules = rules.map((group, index) => group.rule || String(index));
-    if (!activeRules.includes(thresholdsActiveRule)) {
-        thresholdsActiveRule = activeRules[0];
-    }
+    const cards = document.createElement('div');
+    cards.className = 'thresholds-cards';
 
-    const tabs = document.createElement('div');
-    tabs.className = 'thresholds-tabs';
-    tabs.setAttribute('role', 'tablist');
-    const panels = document.createDocumentFragment();
+    rules.forEach(group => {
+        const card = document.createElement('section');
+        card.className = 'thresholds-card';
+        card.dataset.rule = group.rule || '';
 
-    rules.forEach((group, index) => {
-        const ruleId = group.rule || String(index);
-        const isActive = ruleId === thresholdsActiveRule;
-        const tab = document.createElement('button');
-        tab.type = 'button';
-        tab.className = 'thresholds-tab';
-        tab.dataset.rule = ruleId;
-        tab.setAttribute('role', 'tab');
-        tab.setAttribute('aria-selected', String(isActive));
-        tab.textContent = group.label || group.rule;
-        tabs.appendChild(tab);
-
-        const groupEl = document.createElement('div');
-        groupEl.className = 'thresholds-group thresholds-tab-panel';
-        groupEl.dataset.rule = ruleId;
-        groupEl.setAttribute('role', 'tabpanel');
-        groupEl.hidden = !isActive;
-
-        const title = document.createElement('div');
-        title.className = 'thresholds-group-title';
+        const head = document.createElement('div');
+        head.className = 'thresholds-card-head';
+        const title = document.createElement('span');
+        title.className = 'thresholds-card-title';
         title.textContent = group.label || group.rule;
-        groupEl.appendChild(title);
+        const count = document.createElement('span');
+        count.className = 'thresholds-card-count';
+        count.textContent = String((group.params || []).length);
+        head.append(title, count);
+        card.appendChild(head);
 
-        const items = document.createElement('div');
-        items.className = 'thresholds-items';
-
+        const rows = document.createElement('div');
+        rows.className = 'thresholds-rows';
         for (const param of group.params || []) {
-            const item = document.createElement('label');
-            item.className = 'thresholds-item';
-            const span = document.createElement('span');
-            span.className = 'thresholds-item-label';
-            span.textContent = param.label || param.key;
-            span.title = param.key;
-
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.className = 'thresholds-input';
-            input.dataset.key = param.key;
-            input.step = param.step || 'any';
-            if (typeof param.min === 'number') input.min = param.min;
-            if (typeof param.max === 'number') input.max = param.max;
-            input.value = param.value;
-            item.append(span, input);
-            items.appendChild(item);
+            const item = buildThresholdItem(param);
+            thresholdsSyncItem(item);
+            rows.appendChild(item);
         }
-        groupEl.appendChild(items);
-        panels.appendChild(groupEl);
+        card.appendChild(rows);
+        cards.appendChild(card);
     });
-    body.append(tabs, panels);
-}
 
-function selectThresholdRule(rule) {
-    if (!rule || !els.thresholdsBody) return;
-    thresholdsActiveRule = rule;
-    els.thresholdsBody.querySelectorAll('.thresholds-tab').forEach(tab => {
-        const active = tab.dataset.rule === rule;
-        tab.classList.toggle('is-active', active);
-        tab.setAttribute('aria-selected', String(active));
-    });
-    els.thresholdsBody.querySelectorAll('.thresholds-tab-panel').forEach(panel => {
-        panel.hidden = panel.dataset.rule !== rule;
-    });
+    body.appendChild(cards);
 }
 
 function collectThresholdValues() {
@@ -251,9 +287,9 @@ function updateThresholdsActions() {
         && thresholdsData.editable !== false
     );
     // Не полагаемся только на сравнение чисел. Некоторые браузеры присылают
-    // ``change`` для стрелок number-поля позже, чем оператор ожидает, а
-    // ``input`` — при ручном вводе. Флаг гарантирует, что после любого
-    // редактирования кнопка сохранения сразу доступна.
+    // ``change`` для number-поля позже, чем оператор ожидает, а ``input`` —
+    // при ручном вводе. Флаг гарантирует, что после любого редактирования
+    // кнопка сохранения сразу доступна.
     const changed = thresholdsDirty || hasChangedThresholds();
     els.thresholdsReset.disabled = !editable || thresholdsSaveBusy;
     els.thresholdsSave.disabled = !editable || thresholdsSaveBusy || !changed;
@@ -325,21 +361,30 @@ function setupThresholdsControls() {
         els.thresholdsReset.addEventListener('click', resetThresholds);
     }
     if (els.thresholdsBody) {
-        els.thresholdsBody.addEventListener('click', event => {
-            const tab = event.target.closest('button.thresholds-tab');
-            if (tab) selectThresholdRule(tab.dataset.rule);
-        });
         const markThresholdsChanged = event => {
             // Делегирование сохраняет обработчик и после перестроения полей.
-            if (!event.target.matches('input.thresholds-input')) return;
+            const target = event.target;
+            if (!target.matches(
+                'input.thresholds-input, input.thresholds-slider'
+            )) return;
+            const item = target.closest('.thresholds-item');
+            if (item) {
+                const input = item.querySelector('input.thresholds-input');
+                const slider = item.querySelector('input.thresholds-slider');
+                // Ползунок — источник значения: число повторяет его шаг.
+                // Ручной ввод числа, наоборот, двигает ползунок и заливку.
+                if (target === slider && input) input.value = slider.value;
+                thresholdsSyncItem(item);
+            }
             thresholdsDirty = true;
             // Если оператор вернул значения как было (0.3 -> 0.5 -> 0.3),
             // изменений больше нет — снимаем блокировку автоподхвата.
             if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
         };
-        // ``input`` покрывает набор с клавиатуры, ``change`` —
-        // автозаполнение number-поля в браузерах, где input приходит поздно.
+        // ``input`` покрывает набор с клавиатуры и движение ползунка,
+        // ``change`` — автозаполнение number-поля в браузерах, где input
+        // приходит поздно.
         els.thresholdsBody.addEventListener('input', markThresholdsChanged);
         els.thresholdsBody.addEventListener('change', markThresholdsChanged);
     }
