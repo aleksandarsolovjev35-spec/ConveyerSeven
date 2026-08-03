@@ -472,9 +472,122 @@ class ThresholdLoader:
 # Панель «Пороги правил» показывает параметры правил выбранной (главной)
 # камеры, сгруппированные по правилам. Группировка и подписи живут здесь,
 # чтобы backend и фронтенд не расходились в трактовке имён параметров.
+# Ниже — точный перевод каждого порога на русский, максимально близкий
+# к смыслу (что именно проверяет правило).
 
 PARAM_LABELS = {
-    "false_positive_max_count": "Допустимо ложных срабатываний",
+    # ── ВХОД: наличие детали ──────────────────────────────────────────
+    "input_part_presence_false_positive_max_count":
+        "Допустимо ложных срабатываний, шт.",
+
+    # ── ВХОД: геометрия окон ──────────────────────────────────────────
+    "input_window_geometry_min_confidence": "Мин. уверенность окон",
+    "input_window_geometry_expected_count": "Ожидаемое число окон, шт.",
+    "input_window_geometry_top_px_min": "Верх зоны окон: мин, px",
+    "input_window_geometry_top_px_max": "Верх зоны окон: макс, px",
+    "input_window_geometry_bottom_px_min": "Низ зоны окон: мин, px",
+    "input_window_geometry_bottom_px_max": "Низ зоны окон: макс, px",
+    "input_window_geometry_center_zone_ratio": "Доля центральной зоны окон",
+
+    # ── ВХОД: заплавы окон ────────────────────────────────────────────
+    "input_window_sinks_min_confidence": "Мин. уверенность заплав",
+    "input_window_sinks_window_min_confidence":
+        "Мин. уверенность окна для заплав",
+    "input_window_sinks_overlap_min_px": "Мин. перекрытие заплава с окном, px",
+
+    # ── КОНТРОЛЬ: длинные контакты ────────────────────────────────────
+    "spider_contacts_long_min_confidence": "Мин. уверенность контактов",
+    "spider_contacts_long_expected_count": "Ожидаемое число контактов, шт.",
+    "spider_contacts_long_line_deviation_ratio":
+        "Допуск отклонения контактов от линии",
+    "spider_contacts_long_max_level_slope": "Макс. наклон уровня контактов",
+    "spider_contacts_long_omission_tilt_ratio_max":
+        "Макс. наклон пропуска (от высоты)",
+    "spider_contacts_long_inscribed_rect_width_px":
+        "Ширина эталона контакта, px",
+    "spider_contacts_long_inscribed_rect_height_px":
+        "Высота эталона контакта, px",
+    "spider_contacts_long_y_filter_ratio":
+        "Фильтр контактов по вертикали (от высоты)",
+
+    # ── КОНТРОЛЬ: короткие контакты ───────────────────────────────────
+    "spider_contacts_short_min_confidence": "Мин. уверенность контактов",
+    "spider_contacts_short_expected_count": "Ожидаемое число контактов, шт.",
+    "spider_contacts_short_level_deviation_ratio":
+        "Допуск отклонения уровня контактов",
+    "spider_contacts_short_omission_tilt_ratio_max":
+        "Макс. наклон пропуска (от высоты)",
+    "spider_contacts_short_inscribed_rect_width_px":
+        "Ширина эталона контакта, px",
+    "spider_contacts_short_inscribed_rect_height_px":
+        "Высота эталона контакта, px",
+    "spider_contacts_short_area_absolute_min": "Мин. площадь контакта, px²",
+    "spider_contacts_short_y_filter_ratio":
+        "Фильтр контактов по вертикали (от высоты)",
+
+    # ── КОНТРОЛЬ: пропуски ────────────────────────────────────────────
+    "spider_long_omission_min_confidence": "Мин. уверенность пропуска",
+    "spider_long_omission_allowed_thickness_px":
+        "Допустимая толщина пропуска, px",
+    "spider_long_omission_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "spider_long_omission_top_line_max_residual_px":
+        "Макс. отклонение верхней линии, px",
+    "spider_short_omission_min_confidence": "Мин. уверенность пропуска",
+    "spider_short_omission_allowed_thickness_px":
+        "Допустимая толщина пропуска, px",
+    "spider_short_omission_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "spider_short_omission_top_line_max_residual_px":
+        "Макс. отклонение верхней линии, px",
+
+    # ── СВЕРХУ: контакты ──────────────────────────────────────────────
+    "top_contacts_min_confidence": "Мин. уверенность контактов",
+    "top_contacts_expected_count": "Ожидаемое число контактов, шт.",
+    "top_contacts_platform_min_confidence": "Мин. уверенность платформы",
+    "top_contacts_edge_distance_deviation_ratio":
+        "Допуск расстояния контактов до края",
+    "top_contacts_side_rect_width_px": "Боковая зона: ширина, px",
+    "top_contacts_side_rect_height_px": "Боковая зона: высота, px",
+    "top_contacts_edge_rect_width_px": "Краевая зона: ширина, px",
+    "top_contacts_edge_rect_height_px": "Краевая зона: высота, px",
+
+    # ── СВЕРХУ: заплыв платформы ──────────────────────────────────────
+    "top_platform_overlap_platform_min_confidence":
+        "Мин. уверенность платформы",
+    "top_platform_overlap_excess_component_min_px":
+        "Мин. размер лишнего фрагмента, px",
+    "top_platform_overlap_contact_min_confidence":
+        "Мин. уверенность контактов",
+    "top_platform_overlap_contact_inner_ratio":
+        "Доля внутренней зоны контакта",
+    "top_platform_overlap_margin_px": "Запас зоны заплыва, px",
+    "top_platform_overlap_expand_x_ratio": "Расширение зоны по X",
+    "top_platform_overlap_expand_y_ratio": "Расширение зоны по Y",
+
+    # ── СВЕРХУ: платформа ─────────────────────────────────────────────
+    "top_platform_min_confidence": "Мин. уверенность платформы",
+    "top_platform_inscribed_rect_width_px": "Ширина эталона платформы, px",
+    "top_platform_inscribed_rect_height_px": "Высота эталона платформы, px",
+
+    # ── СВЕРХУ: заплавы ───────────────────────────────────────────────
+    "top_sinks_min_confidence": "Мин. уверенность заплав",
+    "top_sinks_platform_min_confidence": "Мин. уверенность платформы",
+    "top_sinks_case_central_min_confidence":
+        "Мин. уверенность центра корпуса",
+
+    # ── СВЕРХУ: стекло ────────────────────────────────────────────────
+    "top_glass_min_confidence": "Мин. уверенность стекла",
+    "top_glass_platform_min_confidence": "Мин. уверенность платформы",
+    "top_glass_case_min_confidence": "Мин. уверенность корпуса",
+    "top_glass_case_central_min_confidence":
+        "Мин. уверенность центра корпуса",
+    "top_glass_pin_min_confidence": "Мин. уверенность пина",
+}
+
+# Запасной перевод по суффиксу — для порогов, добавленных вручную,
+# которых ещё нет в PARAM_LABELS.
+SUFFIX_LABELS = {
     "min_confidence": "Мин. уверенность",
     "window_min_confidence": "Мин. уверенность окна",
     "platform_min_confidence": "Мин. уверенность платформы",
@@ -539,18 +652,20 @@ _RULE_GROUPS_SORTED = tuple(
 
 def _param_meta(key: str, value) -> dict:
     """Метаданные одного параметра для редактора: подпись и границы ввода."""
-    # Более специфичные суффиксы (contact_min_confidence, platform_min_…)
-    # должны побеждать общий суффикс min_confidence.
-    label = next(
-        (
-            label
-            for suffix, label in sorted(
-                PARAM_LABELS.items(), key=lambda item: -len(item[0]),
-            )
-            if key.endswith(suffix)
-        ),
-        key,
-    )
+    # Точный перевод по имени параметра; для незнакомых (добавленных вручную)
+    # порогов — запасной перевод по суффиксу, иначе техническое имя.
+    label = PARAM_LABELS.get(key)
+    if label is None:
+        label = next(
+            (
+                suffix_label
+                for suffix, suffix_label in sorted(
+                    SUFFIX_LABELS.items(), key=lambda item: -len(item[0]),
+                )
+                if key.endswith(suffix)
+            ),
+            key,
+        )
     meta = {"key": key, "label": label, "value": value}
     if key.endswith("_expected_count") or key.endswith("_false_positive_max_count"):
         meta.update({"step": 1, "min": 0, "max": 1000})

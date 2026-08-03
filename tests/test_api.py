@@ -267,10 +267,21 @@ class ThresholdsApiTests(unittest.TestCase):
             payload["values"]["top_contacts_min_confidence"],
             self.thresholds["TOP.top_contacts_min_confidence"],
         )
-        # У каждого параметра есть автоподпись; кастомных названий пока нет.
-        for group in payload["rules"]:
-            for param in group["params"]:
-                self.assertIn("autoLabel", param)
+        # Встроенный перевод на русский, близкий к смыслу параметра.
+        contacts = next(
+            param
+            for group in payload["rules"]
+            for param in group["params"]
+            if param["key"] == "top_contacts_min_confidence"
+        )
+        self.assertEqual(contacts["label"], "Мин. уверенность контактов")
+        platform = next(
+            param
+            for group in payload["rules"]
+            for param in group["params"]
+            if param["key"] == "top_platform_inscribed_rect_width_px"
+        )
+        self.assertEqual(platform["label"], "Ширина эталона платформы, px")
         self.assertEqual(payload["labels"], {})
 
     def test_get_thresholds_unknown_role_is_not_available(self):
@@ -426,7 +437,6 @@ class ThresholdsApiTests(unittest.TestCase):
                 self.assertEqual(
                     contacts["label"], "Уверенность контактов сверху",
                 )
-                self.assertIn("autoLabel", contacts)
                 self.assertEqual(
                     updated["labels"]["top_contacts_min_confidence"],
                     "Уверенность контактов сверху",

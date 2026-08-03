@@ -108,48 +108,6 @@
     text-overflow: ellipsis;
 }
 
-.thresholds-rename-btn {
-    flex: 0 0 auto;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-0);
-    color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.thresholds-rename-btn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-}
-
-.thresholds-rename-btn.is-active {
-    color: var(--ok);
-    border-color: var(--ok);
-}
-
-.thresholds-label-input {
-    width: 190px;
-    height: 25px;
-    padding: 0 6px;
-    background: var(--bg-0);
-    color: var(--text);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-ui);
-    font-size: 11px;
-    user-select: text;
-}
-
-.thresholds-label-input:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
 .thresholds-input {
     width: 78px;
     height: 25px;

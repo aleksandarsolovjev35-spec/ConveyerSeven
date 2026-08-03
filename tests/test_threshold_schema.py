@@ -2,7 +2,10 @@ import ast
 import unittest
 from pathlib import Path
 
-from domain.threshold_loader import ThresholdLoader
+from domain.threshold_loader import (
+    ThresholdLoader,
+    describe_role_parameters,
+)
 
 
 DIRECT_PARAMETER_NAMES = {
@@ -54,6 +57,32 @@ class ThresholdSchemaTests(unittest.TestCase):
         # Обратное направление теперь разрешено: в thresholds.json можно
         # добавлять новые пороги вручную, они подхватываются при запуске и
         # редактируются в панели «Пороги правил» (группа «Прочие пороги»).
+
+    def test_every_configured_parameter_has_russian_operator_label(self):
+        """Каждый порог в файле получает понятную русскую подпись."""
+        root = Path(__file__).resolve().parents[1]
+        thresholds = ThresholdLoader(root / "thresholds.json").get_all()
+        roles = sorted({
+            key.split(".", 1)[0]
+            for key in thresholds
+            if "." in key
+        })
+        self.assertTrue(roles)
+        for role in roles:
+            groups = describe_role_parameters(role, thresholds)
+            params = [
+                param
+                for group in groups
+                for param in group["params"]
+            ]
+            self.assertTrue(params, role)
+            for param in params:
+                # Подпись не должна совпадать с техническим именем и не
+                # должна содержать snake_case (значит, не переведена).
+                self.assertNotEqual(
+                    param["label"], param["key"], param["key"],
+                )
+                self.assertNotIn("_", param["label"], param["key"])
 
 
 if __name__ == "__main__":

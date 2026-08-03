@@ -305,7 +305,8 @@ class UIServer:
                 for group in rules
                 for param in group["params"]
             }
-            # Понятные названия, заданные оператором: заменяют автоподпись.
+            # Названия, переопределённые вручную в thresholds.json
+            # (_label.<parameter>), заменяют встроенный перевод.
             with self.lock:
                 labels = {
                     key.split(".", 1)[1]: name
@@ -314,7 +315,6 @@ class UIServer:
                 }
             for group in rules:
                 for param in group["params"]:
-                    param["autoLabel"] = param["label"]
                     custom = labels.get(param["key"])
                     if custom:
                         param["label"] = custom
