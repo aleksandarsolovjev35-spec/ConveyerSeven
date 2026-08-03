@@ -3,8 +3,9 @@
 /* Панель «Пороги правил»: в правой колонке, над кнопками ручного
    управления лентой (JOG). Видна только до пуска и после полной
    остановки линии. Каждое правило — отдельная карточка-блок
-   (стилистически как карточки распределителя), каждый порог
-   редактируется ползунком и числовым полем одновременно. */
+   (стилистически как карточки распределителя); значение каждого
+   порога задаётся числовым полем, а вертикальный ползунок справа
+   прокручивает список блоков, когда он не помещается. */
 
 .thresholds-panel {
     display: flex;
@@ -61,21 +62,29 @@
     gap: 6px;
 }
 
-/* Список карточек правил. Жёсткий предел высоты: пороги не занимают
-   место кнопок ручного управления — при нехватке места прокручивается
-   только список, правая колонка остаётся единой областью прокрутки. */
+/* Обёртка «список + ползунок прокрутки». Список ограничен по высоте:
+   пороги не занимают место кнопок ручного управления — при нехватке
+   места прокручивается только список. */
+.thresholds-scroll {
+    display: flex;
+    align-items: stretch;
+    gap: 7px;
+    min-height: 0;
+}
+
 .thresholds-cards {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
     max-height: min(44vh, 340px);
     overflow-y: auto;
-    scrollbar-gutter: stable;
+    /* Прокрутку выполняет стилизованный ползунок справа. */
+    scrollbar-width: none;
 }
 
-.thresholds-cards::-webkit-scrollbar { width: 6px; }
-.thresholds-cards::-webkit-scrollbar-track { background: transparent; }
-.thresholds-cards::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+.thresholds-cards::-webkit-scrollbar { display: none; }
 
 .thresholds-empty {
     font-family: var(--font-ui);
@@ -127,7 +136,7 @@
     color: var(--text-muted);
 }
 
-/* ─── Строка параметра: название | ползунок | число ─────────────── */
+/* ─── Строка параметра: название | число ────────────────────────── */
 
 .thresholds-rows {
     display: flex;
@@ -137,14 +146,10 @@
 
 .thresholds-item {
     display: grid;
-    grid-template-columns: 112px minmax(0, 1fr) 64px;
-    align-items: center;
-    gap: 6px;
-    min-height: 26px;
-}
-
-.thresholds-item-no-slider {
     grid-template-columns: minmax(0, 1fr) 64px;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
 }
 
 .thresholds-item-label {
@@ -155,71 +160,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-/* Ползунок: дорожка повторяет blade-track распределителя, бегунок —
-   blade-marker (квадрат 12×14, accent). Заливка под бегунком — тонкий
-   accent-glow без градиентов, в тон строгой теме. */
-
-.thresholds-slider-wrap {
-    position: relative;
-    display: block;
-    height: 8px;
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-}
-
-.thresholds-slider-fill {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: var(--fill, 0%);
-    border-radius: 999px;
-    background: var(--accent-glow);
-    pointer-events: none;
-}
-
-.thresholds-slider {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -3px;
-    bottom: -3px;
-    width: 100%;
-    margin: 0;
-    -webkit-appearance: none;
-    appearance: none;
-    background: transparent;
-    cursor: pointer;
-}
-
-.thresholds-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 12px;
-    height: 14px;
-    border-radius: 2px;
-    background: var(--accent);
-    border: none;
-}
-
-.thresholds-slider::-moz-range-thumb {
-    width: 12px;
-    height: 14px;
-    border-radius: 2px;
-    background: var(--accent);
-    border: none;
-}
-
-.thresholds-slider::-moz-range-track {
-    background: transparent;
-}
-
-.thresholds-slider:focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: 2px;
 }
 
 .thresholds-input {
@@ -254,9 +194,59 @@
     opacity: 0.55;
 }
 
-.thresholds-panel.is-locked .thresholds-slider {
-    pointer-events: none;
-    opacity: 0.55;
+/* ─── Ползунок прокрутки списка ────────────────────────────────────
+   Вертикальный range-инпут в стиле распределителя: дорожка как
+   blade-track, бегунок как blade-marker (квадрат 12×14, accent).
+   Прокручивает список блоков; значения порогов не задаёт. */
+
+.thresholds-scroll-slider {
+    flex: 0 0 auto;
+    width: 8px;
+    min-height: 56px;
+    align-self: stretch;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    /* Вертикальная ориентация: min снизу, max сверху. */
+    writing-mode: vertical-lr;
+    direction: rtl;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.thresholds-scroll-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+    border: none;
+}
+
+.thresholds-scroll-slider::-moz-range-thumb {
+    width: 12px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+    border: none;
+}
+
+.thresholds-scroll-slider::-moz-range-track {
+    background: transparent;
+    border: none;
+}
+
+.thresholds-scroll-slider:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.thresholds-scroll-slider:disabled {
+    opacity: 0.35;
+    cursor: default;
 }
 
 .thresholds-actions {

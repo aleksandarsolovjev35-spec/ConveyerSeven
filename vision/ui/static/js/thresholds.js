@@ -2,14 +2,14 @@
 'use strict';
 
 // Панель «Пороги правил» показывает параметры правил выбранной (главной)
-// камеры с понятными русскими названиями (label приходит с сервера) и
-// позволяет менять только значения. Каждое правило — собственная
-// карточка-блок (стилистически как карточки распределителя), каждый
-// параметр — строка «название | ползунок | число»: ползунок и числовое
-// поле всегда синхронизированы. Редактирование доступно только до
-// пуска (IDLE) и после полной остановки (STOPPED); во время работы
-// линии панель скрыта, а backend дополнительно проверяет состояние
-// при сохранении.
+// камеры с понятными русскими названиями (label приходит с сервера).
+// Каждое правило — собственная карточка-блок (стилистически как карточки
+// распределителя); значение каждого порога задаётся только числовым полем.
+// Отдельный вертикальный ползунок прокручивает список блоков, когда он
+// не помещается. Редактирование доступно только до пуска (IDLE) и после
+// полной остановки (STOPPED) и блокируется на время реального движения
+// ленты (jog.busy); backend дополнительно проверяет состояние при
+// сохранении.
 
 const THRESHOLD_EDITABLE_STATES = ['IDLE', 'STOPPED'];
 
@@ -34,7 +34,11 @@ function thresholdsEditableNow() {
         thresholdsPanelVisible()
         && !state.controlPending
         && !state.startPending
-        && !state.jogActive
+        // JOG-режим (jog.active) включается автоматически в IDLE/STOPPED,
+        // поэтому блокировать редактирование на весь ручной ход нельзя:
+        // кнопка «СОХРАНИТЬ» была бы недоступна всегда. Блокируем только
+        // на время реального движения ленты (jog.busy).
+        && !state.jogBusy
         && !state.distributorDiagnosticPending
         && !state.distributorDiagnosticBackendBusy
         && !state.selectedAnalysisPending
@@ -123,36 +127,11 @@ function renderThresholdsPanel() {
 
 // ─── Блоки-карточки правил ─────────────────────────────────────────
 // Каждое правило — отдельная карточка (как blade-card распределителя).
-// Карточки лежат в общем списке; при нехватке места прокручивается
-// только список порогов, а кнопки ручного управления ниже остаются
-// на своих местах.
-
-function thresholdsSliderRange(param) {
-    const lo = Number(param.min);
-    const hi = Number(param.max);
-    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return null;
-    return {lo, hi};
-}
-
-function thresholdsSyncItem(item) {
-    const input = item.querySelector('input.thresholds-input');
-    const slider = item.querySelector('input.thresholds-slider');
-    const wrap = item.querySelector('.thresholds-slider-wrap');
-    if (!input || !slider || !wrap) return;
-    const raw = String(input.value).trim();
-    if (raw !== '') slider.value = Number(raw);
-    const value = raw === '' ? Number(slider.value) : Number(raw);
-    const lo = Number(slider.min) || 0;
-    const hi = Number(slider.max) || 1;
-    const pct = hi > lo
-        ? Math.max(0, Math.min(100, (value - lo) / (hi - lo) * 100))
-        : 0;
-    wrap.style.setProperty('--fill', `${pct}%`);
-}
+// Карточки лежат в общем списке; когда список не помещается, он
+// прокручивается вертикальным ползунком справа.
 
 function buildThresholdItem(param) {
-    // Контейнер строки — div, а не label: клик по названию не должен
-    // перебрасывать ползунок (label форвардит клик на range-инпут).
+    // Контейнер строки — div: клик по названию ничего не переключает.
     const item = document.createElement('div');
     item.className = 'thresholds-item';
 
@@ -162,32 +141,7 @@ function buildThresholdItem(param) {
     span.title = param.key;
     item.appendChild(span);
 
-    // Ползунок появляется, только когда backend дал осмысленный диапазон.
-    // Иначе остаётся одно числовое поле — как для нестандартных порогов.
-    const range = thresholdsSliderRange(param);
-    if (range) {
-        const wrap = document.createElement('span');
-        wrap.className = 'thresholds-slider-wrap';
-        const fill = document.createElement('span');
-        fill.className = 'thresholds-slider-fill';
-        const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.className = 'thresholds-slider';
-        slider.min = range.lo;
-        slider.max = range.hi;
-        slider.step = (typeof param.step === 'number' && param.step > 0)
-            ? param.step
-            : (range.hi - range.lo) / 100;
-        slider.value = Math.min(
-            range.hi,
-            Math.max(range.lo, Number(param.value) || range.lo),
-        );
-        wrap.append(fill, slider);
-        item.appendChild(wrap);
-    } else {
-        item.classList.add('thresholds-item-no-slider');
-    }
-
+    // Значение задаётся только числовым полем.
     const input = document.createElement('input');
     input.type = 'number';
     input.className = 'thresholds-input';
@@ -214,6 +168,9 @@ function renderThresholdsBody() {
         return;
     }
 
+    const scroll = document.createElement('div');
+    scroll.className = 'thresholds-scroll';
+
     const cards = document.createElement('div');
     cards.className = 'thresholds-cards';
 
@@ -236,15 +193,53 @@ function renderThresholdsBody() {
         const rows = document.createElement('div');
         rows.className = 'thresholds-rows';
         for (const param of group.params || []) {
-            const item = buildThresholdItem(param);
-            thresholdsSyncItem(item);
-            rows.appendChild(item);
+            rows.appendChild(buildThresholdItem(param));
         }
         card.appendChild(rows);
         cards.appendChild(card);
     });
 
-    body.appendChild(cards);
+    // Вертикальный ползунок прокрутки: включается, только когда список
+    // реально не помещается. Значение ползунка — доля прокрутки (0..1000),
+    // значения порогов он не задаёт.
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.className = 'thresholds-scroll-slider';
+    slider.min = 0;
+    slider.max = 1000;
+    slider.step = 1;
+    slider.value = 0;
+    slider.disabled = true;
+    slider.setAttribute('aria-label', 'Прокрутка списка порогов');
+    scroll.append(cards, slider);
+    body.appendChild(scroll);
+
+    cards.addEventListener('scroll', thresholdsSyncScroll);
+    slider.addEventListener('input', () => {
+        const maxScroll = Math.max(0, cards.scrollHeight - cards.clientHeight);
+        if (maxScroll <= 0) return;
+        cards.scrollTop = (Number(slider.value) || 0) / 1000 * maxScroll;
+    });
+    thresholdsSyncScroll();
+}
+
+// Синхронизация ползунка прокрутки с фактическим положением списка.
+function thresholdsSyncScroll() {
+    const body = els.thresholdsBody;
+    if (!body) return;
+    const cards = body.querySelector('.thresholds-cards');
+    const slider = body.querySelector('.thresholds-scroll-slider');
+    if (!cards || !slider) return;
+    const maxScroll = Math.max(0, cards.scrollHeight - cards.clientHeight);
+    if (maxScroll <= 0) {
+        slider.disabled = true;
+        slider.value = 0;
+        if (cards.scrollTop) cards.scrollTop = 0;
+        return;
+    }
+    slider.disabled = false;
+    slider.value = Math.max(0, Math.min(1000,
+        Math.round(cards.scrollTop / maxScroll * 1000)));
 }
 
 function collectThresholdValues() {
@@ -363,30 +358,20 @@ function setupThresholdsControls() {
     if (els.thresholdsBody) {
         const markThresholdsChanged = event => {
             // Делегирование сохраняет обработчик и после перестроения полей.
-            const target = event.target;
-            if (!target.matches(
-                'input.thresholds-input, input.thresholds-slider'
-            )) return;
-            const item = target.closest('.thresholds-item');
-            if (item) {
-                const input = item.querySelector('input.thresholds-input');
-                const slider = item.querySelector('input.thresholds-slider');
-                // Ползунок — источник значения: число повторяет его шаг.
-                // Ручной ввод числа, наоборот, двигает ползунок и заливку.
-                if (target === slider && input) input.value = slider.value;
-                thresholdsSyncItem(item);
-            }
+            if (!event.target.matches('input.thresholds-input')) return;
             thresholdsDirty = true;
             // Если оператор вернул значения как было (0.3 -> 0.5 -> 0.3),
             // изменений больше нет — снимаем блокировку автоподхвата.
             if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
         };
-        // ``input`` покрывает набор с клавиатуры и движение ползунка,
-        // ``change`` — автозаполнение number-поля в браузерах, где input
-        // приходит поздно.
+        // ``input`` покрывает набор с клавиатуры, ``change`` —
+        // автозаполнение number-поля в браузерах, где input приходит поздно.
         els.thresholdsBody.addEventListener('input', markThresholdsChanged);
         els.thresholdsBody.addEventListener('change', markThresholdsChanged);
     }
+    // При изменении размеров окна высота списка меняется — ползунок
+    // прокрутки пересчитывается.
+    window.addEventListener('resize', thresholdsSyncScroll);
     updateThresholdsPanel();
 }
