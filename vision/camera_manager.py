@@ -40,6 +40,19 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_number(name: str):
+    """Число из env без ограничения диапазона (экспозиция бывает
+    отрицательной, например -5..-1 у UVC-камер). None — не задано."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    try:
+        return float(raw.strip())
+    except ValueError:
+        print(f"[CAMERA] {name}={raw!r} не число, параметр пропущен")
+        return None
+
+
 CONFIG_FILE = "camera_mapping.json"
 _CAPTURE_TIMEOUT = 5.0
 _REQUIRED_ROLES = (
@@ -565,6 +578,52 @@ class CameraManager:
         codec = "".join(char if char.isprintable() else "?" for char in codec)
         return codec
 
+    @staticmethod
+    def _apply_exposure(cap):
+        """Зафиксировать экспозицию/усиление/баланс белого из env.
+
+        Автоэкспозиция (AGC) подстраивает кадр под фоновый свет, поэтому
+        смена освещения на линии меняет картинку, и модели перестают
+        видеть omission. Ручная экспозиция делает кадр независимым от
+        освещения цеха. Все параметры опциональны, применяются только
+        при заданном env и безопасно игнорируются, если драйвер их не
+        поддерживает:
+
+            CAMERA_AUTO_EXPOSURE=0    выключить AGC (0=manual, 1=auto)
+            CAMERA_EXPOSURE=-6        значение экспозиции (у UVC -5..-1)
+            CAMERA_GAIN=10            усиление
+            CAMERA_WHITE_BALANCE=4000 баланс белого (CAP_PROP_WHITE_BALANCE_BLUE_U)
+        """
+        props = (
+            ("CAMERA_AUTO_EXPOSURE", cv2.CAP_PROP_AUTO_EXPOSURE),
+            ("CAMERA_EXPOSURE", cv2.CAP_PROP_EXPOSURE),
+            ("CAMERA_GAIN", cv2.CAP_PROP_GAIN),
+            ("CAMERA_WHITE_BALANCE", cv2.CAP_PROP_WHITE_BALANCE_BLUE_U),
+        )
+        for env_name, prop in props:
+            value = _env_number(env_name)
+            if value is None:
+                continue
+            try:
+                accepted = bool(cap.set(prop, value))
+                detail = ""
+                try:
+                    applied = cap.get(prop)
+                    applied = float(applied)
+                    if applied == value:
+                        detail = ""
+                    else:
+                        detail = f", фактически {applied:.4g}"
+                except Exception:
+                    pass
+                status = "OK" if accepted else "ОТКЛОНЕНО ДРАЙВЕРОМ"
+                print(f"[CAMERA] {env_name}={value:g} -> {status}{detail}")
+            except Exception as exc:
+                print(
+                    f"[CAMERA] {env_name}={value:g} не применён: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
     @classmethod
     def _configure_capture(cls, cap):
         """Запросить MJPG и убедиться, что драйвер действительно согласился.
@@ -578,6 +637,8 @@ class CameraManager:
         FOURCC. Откат без CAMERA_REQUIRE_MJPG — громкое предупреждение
         (связка может жить на быстрой шине), с флагом — ошибка, потому
         что для семи камер на одном хабе это гарантированный сбой набора.
+        После согласования формата применяются фиксированные параметры
+        экспозиции из env (см. _apply_exposure).
         """
         codec = None
         for fourcc_first in (True, False, True):
@@ -587,15 +648,17 @@ class CameraManager:
             # доверяем запросу и идём дальше (тестовые doubles ведут
             # себя именно так).
             if codec is None or codec == "MJPG":
-                return
-        message = (
-            f"драйвер откатился с MJPG на {codec}: поток "
-            f"{_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]}@{_REQUESTED_FPS:.0f} "
-            "займёт в разы больше полосы USB и утопит остальные камеры"
-        )
-        if _env_flag("CAMERA_REQUIRE_MJPG"):
-            raise RuntimeError(message)
-        print(f"[CAMERA] ВНИМАНИЕ: {message}")
+                break
+        else:
+            message = (
+                f"драйвер откатился с MJPG на {codec}: поток "
+                f"{_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]}@{_REQUESTED_FPS:.0f} "
+                "займёт в разы больше полосы USB и утопит остальные камеры"
+            )
+            if _env_flag("CAMERA_REQUIRE_MJPG"):
+                raise RuntimeError(message)
+            print(f"[CAMERA] ВНИМАНИЕ: {message}")
+        cls._apply_exposure(cap)
 
     @staticmethod
     def _negotiated_format(capture) -> str:

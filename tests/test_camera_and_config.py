@@ -827,6 +827,82 @@ class CameraAndConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "YUY2"):
                 CameraManager._configure_capture(capture)
 
+    def test_configure_capture_applies_env_exposure_settings(self):
+        class RecordingCapture(FakeCapture):
+            def __init__(self, frame):
+                super().__init__(frame)
+                self.sets = []
+
+            def set(self, prop, value):
+                self.sets.append((int(prop), value))
+                return True
+
+        bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        capture = RecordingCapture(bright)
+        with patch.dict(os.environ, {
+            "CAMERA_AUTO_EXPOSURE": "0",
+            "CAMERA_EXPOSURE": "-6",
+            "CAMERA_GAIN": "10",
+            "CAMERA_WHITE_BALANCE": "4000",
+        }):
+            CameraManager._configure_capture(capture)
+        props = {prop for prop, _ in capture.sets}
+        self.assertIn(cv2.CAP_PROP_AUTO_EXPOSURE, props)
+        self.assertIn(cv2.CAP_PROP_EXPOSURE, props)
+        self.assertIn(cv2.CAP_PROP_GAIN, props)
+        self.assertIn(cv2.CAP_PROP_WHITE_BALANCE_BLUE_U, props)
+        exposure_values = [
+            value for prop, value in capture.sets
+            if prop == cv2.CAP_PROP_EXPOSURE
+        ]
+        self.assertEqual(exposure_values, [-6.0])
+
+    def test_configure_capture_skips_exposure_without_env(self):
+        class RecordingCapture(FakeCapture):
+            def __init__(self, frame):
+                super().__init__(frame)
+                self.sets = []
+
+            def set(self, prop, value):
+                self.sets.append((int(prop), value))
+                return True
+
+        bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        capture = RecordingCapture(bright)
+        for key in (
+            "CAMERA_AUTO_EXPOSURE",
+            "CAMERA_EXPOSURE",
+            "CAMERA_GAIN",
+            "CAMERA_WHITE_BALANCE",
+        ):
+            os.environ.pop(key, None)
+        CameraManager._configure_capture(capture)
+        exposure_props = {
+            cv2.CAP_PROP_AUTO_EXPOSURE,
+            cv2.CAP_PROP_EXPOSURE,
+            cv2.CAP_PROP_GAIN,
+            cv2.CAP_PROP_WHITE_BALANCE_BLUE_U,
+        }
+        props = {prop for prop, _ in capture.sets}
+        self.assertTrue(props.isdisjoint(exposure_props))
+
+    def test_configure_capture_tolerates_unknown_exposure_env_value(self):
+        class RecordingCapture(FakeCapture):
+            def __init__(self, frame):
+                super().__init__(frame)
+                self.sets = []
+
+            def set(self, prop, value):
+                self.sets.append((int(prop), value))
+                return True
+
+        bright = np.full((720, 1280, 3), 100, dtype=np.uint8)
+        capture = RecordingCapture(bright)
+        with patch.dict(os.environ, {"CAMERA_EXPOSURE": "fast"}):
+            CameraManager._configure_capture(capture)
+        props = {prop for prop, _ in capture.sets}
+        self.assertNotIn(cv2.CAP_PROP_EXPOSURE, props)
+
     def test_stream_dropout_reopens_role_without_latching_manager(self):
         with tempfile.TemporaryDirectory() as temp:
             mapping = self.mapping()

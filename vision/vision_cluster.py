@@ -6,12 +6,58 @@ from ultralytics import YOLO
 import numpy as np
 
 from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
+from vision.normalize import normalize_for_role
 
 INFERENCE_IMGSZ = 1280
 
 AGGRESSIVE_IOU_ROLES = {"TOP", "SPIDER_LEFT", "SPIDER_RIGHT"}
 DEFAULT_IOU    = 0.45
 AGGRESSIVE_IOU = 0.10
+
+# Префикс env-переменных, переопределяющих conf для класса:
+# VISION_CONF_<класс> (например VISION_CONF_omission-short=0.2) позволяет
+# смягчить порог без правки model_config.py, когда после смены освещения
+# уверенность модели просела ниже штатного порога.
+CONF_OVERRIDE_PREFIX = "VISION_CONF_"
+
+
+def effective_conf(entry: dict, verbose: bool = False) -> float:
+    """conf модели с учётом env-переопределения по классам.
+
+    Если для класса(ов) модели задано несколько VISION_CONF_*, берётся
+    минимальное значение (самое «мягкое»): цель переопределения — не
+    потерять детекции после смены условий съёмки.
+    """
+    base = float(entry.get("conf", 0.25))
+    overrides = []
+    for cls_name in entry.get("classes", ()):
+        raw = os.environ.get(f"{CONF_OVERRIDE_PREFIX}{cls_name}")
+        if raw is None:
+            continue
+        try:
+            value = float(raw.strip())
+        except ValueError:
+            print(
+                f"[VISION] {CONF_OVERRIDE_PREFIX}{cls_name}={raw!r} "
+                "не число, переопределение проигнорировано"
+            )
+            continue
+        if not 0.0 <= value <= 1.0:
+            print(
+                f"[VISION] {CONF_OVERRIDE_PREFIX}{cls_name}={value} "
+                "вне диапазона 0..1, переопределение проигнорировано"
+            )
+            continue
+        overrides.append(value)
+    if not overrides:
+        return base
+    chosen = min(overrides)
+    if verbose and chosen != base:
+        print(
+            f"[VISION] conf {entry.get('path')}: "
+            f"{base} -> {chosen} (env)"
+        )
+    return chosen
 
 
 class VisionCluster:
@@ -92,6 +138,14 @@ class VisionCluster:
             if array.ndim != 3 or array.shape[0] < 240 or array.shape[1] < 320:
                 raise ValueError(f"Invalid frame for {role}: shape={array.shape}")
 
+            # Смена освещения на линии сдвигает яркость/контраст, и
+            # уверенность YOLO падает ниже conf-порога. CLAHE-нормализация
+            # (vision.normalize) частично компенсирует это; включается
+            # env VISION_NORMALIZE=1, по умолчанию выключена.
+            normalized = normalize_for_role(array, role)
+            if normalized is not array and self.verbose:
+                print(f"[VISION] {role}: кадр нормализован (CLAHE)")
+
             iou = (
                 AGGRESSIVE_IOU
                 if role in AGGRESSIVE_IOU_ROLES
@@ -102,13 +156,13 @@ class VisionCluster:
 
             for entry in MODEL_GROUPS[group_name]:
                 path  = entry["path"]
-                conf  = entry["conf"]
+                conf  = effective_conf(entry, verbose=self.verbose)
                 model = self.models[path]
 
                 started = time.perf_counter()
                 try:
                     preds = model.predict(
-                        frame,
+                        normalized,
                         device=self.device,
                         conf=conf,
                         imgsz=INFERENCE_IMGSZ,
