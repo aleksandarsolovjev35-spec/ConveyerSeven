@@ -7,7 +7,7 @@
     <title>Роботехнический комплекс конвейерного типа 7</title>
     <link rel="stylesheet" href="/static/css/base.css?v=27">
     <link rel="stylesheet" href="/static/css/blocks.css?v=2">
-    <link rel="stylesheet" href="/static/css/camera.css?v=26">
+    <link rel="stylesheet" href="/static/css/camera.css?v=27">
     <link rel="stylesheet" href="/static/css/axis.css?v=27">
     <link rel="stylesheet" href="/static/css/history-strip.css?v=27">
     <link rel="stylesheet" href="/static/css/stats.css?v=27">
@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
     <link rel="stylesheet" href="/static/css/process.css?v=28">
-    <link rel="stylesheet" href="/static/css/motion.css?v=25">
+    <link rel="stylesheet" href="/static/css/motion.css?v=26">
 </head>
 <body>
 
@@ -60,11 +60,9 @@
                     <div class="mode-badge is-faded" id="mode-badge" aria-live="polite"></div>
                     <img id="main-camera" class="main-camera" alt="Камера">
                     <div class="camera-live-controls" data-ui-block="camera-controls">
-                        <div id="camera-view-switch" class="camera-view-switch is-faded" role="group" aria-label="Режим отображения кадра">
-                            <button id="view-mode-raw" data-view-mode="RAW" disabled>RAW</button>
-                            <button id="view-mode-rules" data-view-mode="RULES" disabled>ПРАВИЛА</button>
-                        </div>
-                        <button id="analyze-selected-frame" disabled>АНАЛИЗ 3 КАДРОВ</button>
+                        <button id="view-mode-toggle" class="is-faded" disabled
+                                aria-label="Переключить режим отображения кадра">ВИД: RAW</button>
+                        <button id="analyze-selected-frame" disabled>АНАЛИЗ КАДРА</button>
                     </div>
                     <div id="camera-overlay" class="camera-overlay is-hidden"></div>
                 </div>
@@ -206,7 +204,7 @@
 
                 <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed" data-ui-block="frame-analysis">
                     <div class="frame-analysis-header">
-                        <h2 id="frame-analysis-title">АНАЛИЗ 3 КАДРОВ</h2>
+                        <h2 id="frame-analysis-title">АНАЛИЗ КАДРА</h2>
                         <span id="frame-analysis-context">—</span>
                     </div>
                     <div id="frame-analysis-message" class="frame-analysis-message">—</div>
@@ -265,11 +263,11 @@
 
     <script src="/static/js/core.js?v=28"></script>
     <script src="/static/js/boot.js?v=25"></script>
-    <script src="/static/js/diagnostics.js?v=28"></script>
+    <script src="/static/js/diagnostics.js?v=29"></script>
     <script src="/static/js/rule-summary.js?v=1"></script>
     <script src="/static/js/status.js?v=28"></script>
     <script src="/static/js/controls.js?v=28"></script>
-    <script src="/static/js/cameras.js?v=27"></script>
+    <script src="/static/js/cameras.js?v=28"></script>
     <script src="/static/js/jog.js?v=27"></script>
     <script src="/static/js/history.js?v=25"></script>
     <script src="/static/js/bootstrap.js?v=27"></script>

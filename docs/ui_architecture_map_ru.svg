@@ -26,7 +26,7 @@
 <text x="40" y="391" font-size="13" font-weight="bold" fill="#e6c07b">main-camera + preview-strip</text>
 <text x="40" y="409" font-size="11" fill="#c9d1d9">#main-camera (img, двойная буферизация mainBuffer)</text>
 <text x="40" y="424" font-size="11" fill="#c9d1d9">#mode-badge  ← ПОТОК/СТОП-КАДР/АНАЛИЗ [был баг]</text>
-<text x="40" y="439" font-size="11" fill="#c9d1d9">#camera-view-switch RAW/ПРАВИЛА · #analyze-selected-frame</text>
+<text x="40" y="439" font-size="11" fill="#c9d1d9">#view-mode-toggle RAW/ПРАВИЛА · #analyze-selected-frame</text>
 <text x="40" y="454" font-size="11" fill="#c9d1d9">#camera-overlay — большие состояния (ПАУЗА, АВАРИЯ…)</text>
 <text x="40" y="469" font-size="11" fill="#c9d1d9">#preview-strip — 7 миниатюр, клик = selectCamera</text>
 <rect x="30" y="533" width="400" height="128" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>

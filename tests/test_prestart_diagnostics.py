@@ -213,7 +213,7 @@ class PrestartDiagnosticTests(unittest.TestCase):
         self.assertIn("3 свежих кадра", status["diagnostics"]["message"])
         self.assertTrue(status["frame_analysis"]["available"])
         self.assertEqual(status["frame_analysis"]["kind"], "SELECTED")
-        self.assertEqual(status["frame_analysis"]["title"], "АНАЛИЗ 3 КАДРОВ")
+        self.assertEqual(status["frame_analysis"]["title"], "АНАЛИЗ КАДРА")
         self.assertFalse(status["controls"]["start"])
         self.assertFalse(status["controls"]["jog_hold"])
         self.assertFalse(status["controls"]["distributor_diagnostic"])

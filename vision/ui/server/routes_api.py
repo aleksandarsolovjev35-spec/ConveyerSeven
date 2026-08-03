@@ -155,7 +155,7 @@ def setup_api_routes(app, server):
     @app.post("/api/diagnostics/selected/{role}")
     async def api_diagnostic_selected_model(role: str):
         return await invoke(
-            "АНАЛИЗ 3 КАДРОВ",
+            "АНАЛИЗ КАДРА",
             server.on_selected_model_analysis,
             role,
         )

@@ -155,9 +155,7 @@ const els = {
     modeBadge:        $('mode-badge'),
     mainCamera:       $('main-camera'),
     cameraOverlay:    $('camera-overlay'),
-    cameraViewSwitch: $('camera-view-switch'),
-    viewModeRaw:      $('view-mode-raw'),
-    viewModeRules:    $('view-mode-rules'),
+    viewModeToggle:   $('view-mode-toggle'),
     analyzeSelectedFrame: $('analyze-selected-frame'),
     cameraContainer:  null,
 

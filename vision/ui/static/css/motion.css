@@ -35,7 +35,7 @@
 #stats-service.ui-collapse { max-height: 48px; }
 #frame-analysis-panel.ui-collapse { max-height: 1600px; }
 
-.camera-view-switch,
+#view-mode-toggle,
 .mode-badge {
     transition:
         opacity 160ms var(--ease),
@@ -46,7 +46,7 @@
         background-color var(--t-normal) var(--ease);
 }
 
-.camera-view-switch.is-faded {
+#view-mode-toggle.is-faded {
     opacity: 0;
     visibility: hidden;
     transform: translateY(4px);
@@ -82,7 +82,7 @@
 
 @media (prefers-reduced-motion: reduce) {
     .ui-collapse,
-    .camera-view-switch,
+    #view-mode-toggle,
     .mode-badge {
         transition-duration: 1ms !important;
     }

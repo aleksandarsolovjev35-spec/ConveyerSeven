@@ -234,7 +234,7 @@ class ProductionCycle:
                     self._diagnostics = {
                         "status": "NOT_RUN",
                         "kind": None,
-                        "message": "Анализ трёх кадров ещё не выполнялся",
+                        "message": "Анализ кадра ещё не выполнялся",
                         "cameras": [],
                         "models": [],
                         "rules": [],
@@ -513,11 +513,11 @@ class ProductionCycle:
             self._selected_analysis_role = role
             self._set_diagnostic_running(
                 "SELECTED_MODEL",
-                f"Анализ трёх кадров выбранной камеры: {role}",
+                f"Анализ кадра выбранной камеры: {role}",
             )
             self._set_process(
                 "SELECTED_MODEL_ANALYSIS",
-                f"Анализ 3 кадров {role}",
+                f"Анализ кадра {role}",
             )
 
             decision = self.inspector.decision
@@ -640,7 +640,7 @@ class ProductionCycle:
             }
             self._set_process(
                 "SELECTED_MODEL_READY",
-                f"Анализ 3 кадров {role} завершён; поток приостановлен",
+                f"Анализ кадра {role} завершён; поток приостановлен",
             )
             self._refresh_monitor(stage_frames)
             return True
@@ -670,7 +670,7 @@ class ProductionCycle:
             self._diagnostics = {
                 "status": "NOT_RUN",
                 "kind": None,
-                "message": "Анализ трёх кадров не выполнялся",
+                "message": "Анализ кадра не выполнялся",
                 "cameras": [],
                 "models": [],
                 "rules": [],
@@ -1682,13 +1682,13 @@ class ProductionCycle:
                 "available": True,
                 "kind": "SELECTED",
                 "active": self._selected_analysis_active,
-                "title": "АНАЛИЗ 3 КАДРОВ",
+                "title": "АНАЛИЗ КАДРА",
                 "role": (
                     report.get("selected_role")
                     or self._selected_analysis_role
                 ),
                 "part_id": None,
-                "message": report.get("message") or "Анализ трёх кадров",
+                "message": report.get("message") or "Анализ кадра",
                 "status": report.get("status"),
                 "cameras": [dict(item) for item in report.get("cameras", [])],
                 "models": [dict(item) for item in report.get("models", [])],

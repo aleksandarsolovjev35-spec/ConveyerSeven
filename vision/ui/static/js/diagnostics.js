@@ -108,7 +108,7 @@ function updateSelectedAnalysisStatus(ls) {
     );
     els.analyzeSelectedFrame.textContent = state.selectedAnalysisActive
         ? 'ВЕРНУТЬ ПОТОК'
-        : 'АНАЛИЗ 3 КАДРОВ';
+        : 'АНАЛИЗ КАДРА';
     els.analyzeSelectedFrame.classList.toggle(
         'analysis-active',
         state.selectedAnalysisActive,
@@ -160,11 +160,11 @@ function updateFrameAnalysisStatus(ls) {
     const contextBits = [];
     if (report.stage) contextBits.push(String(report.stage));
     if (report.role) contextBits.push(cameraRoleLabel(report.role));
-    if (report.part_id) contextBits.push(`ДЕТАЛЬ #${report.part_id}`);
+    if (report.part_id) contextBits.push(`КОРПУС #${report.part_id}`);
     const context = contextBits.length
         ? contextBits.join(' · ')
         : 'ТЕКУЩИЙ ЦИКЛ';
-    setIfChanged(els.frameAnalysisTitle, report.title || 'АНАЛИЗ 3 КАДРОВ');
+    setIfChanged(els.frameAnalysisTitle, report.title || 'АНАЛИЗ КАДРА');
     setIfChanged(els.frameAnalysisContext, context);
     setIfChanged(
         els.frameAnalysisMessage,
@@ -331,7 +331,7 @@ function showPendingSelectedFrameAnalysis() {
         els.distributorDiagnostics.classList.add('is-collapsed');
     }
     if (els.statsService) els.statsService.classList.add('is-collapsed');
-    setIfChanged(els.frameAnalysisTitle, 'АНАЛИЗ 3 КАДРОВ');
+    setIfChanged(els.frameAnalysisTitle, 'АНАЛИЗ КАДРА');
     setIfChanged(els.frameAnalysisContext, cameraRoleLabel(state.currentCamera));
     setIfChanged(els.frameAnalysisMessage, 'Подготовка моделей и правил');
     setIfChanged(els.frameAnalysisModelsTitle, 'МОДЕЛИ');
