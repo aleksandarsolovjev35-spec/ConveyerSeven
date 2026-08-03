@@ -8,7 +8,7 @@ class LiveMonitor:
 
     def __init__(
         self,
-        window_name: str = "МОНИТОР ЛИНИИ",
+        window_name: str = "РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7",
         host: str = "127.0.0.1",
         port: int = 8000,
         fullscreen: bool = True,
