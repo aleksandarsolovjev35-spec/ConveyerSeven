@@ -44,8 +44,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertLess(defects, stats_service)
         self.assertLess(stats_service, distributor)
         self.assertLess(distributor, thresholds)
-        self.assertLess(thresholds, jog)
-        self.assertLess(jog, frame_analysis)
+        self.assertLess(thresholds, frame_analysis)
+        # Ручное управление намеренно в самом низу правой колонки.
+        self.assertLess(frame_analysis, jog)
         self.assertEqual(self.html.count('id="line-cells"'), 1)
         self.assertEqual(self.html.count('id="dist1-blade"'), 1)
         self.assertEqual(self.html.count('id="dist2-blade"'), 1)

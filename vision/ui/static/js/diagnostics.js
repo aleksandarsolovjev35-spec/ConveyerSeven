@@ -284,6 +284,45 @@ function decisiveRules(rules) {
     return rules;
 }
 
+function renderThresholdBreaches(rule) {
+    const breaches = Array.isArray(rule.threshold_breaches)
+        ? rule.threshold_breaches : [];
+    // Выводим блок только для сработавшего правила: нормальные показатели
+    // остаются в карточках ниже, а оператор сразу видит причину брака.
+    if (!rule.triggered) return null;
+
+    const block = document.createElement('div');
+    block.className = 'frame-analysis-thresholds';
+    const title = document.createElement('strong');
+    title.textContent = breaches.length ? 'ВНЕ ПОРОГА' : 'ВЫВОД ПО ПОРОГАМ';
+    block.appendChild(title);
+
+    for (const breach of breaches) {
+        const line = document.createElement('div');
+        line.className = 'frame-analysis-threshold-line';
+        const role = breach.role ? `${cameraRoleLabel(breach.role)} · ` : '';
+        const threshold = breach.threshold == null
+            ? 'порог не задан'
+            : `порог: ${breach.threshold}`;
+        line.textContent = `${role}${breach.label}: ${breach.value} (${threshold})`;
+        block.appendChild(line);
+    }
+
+    if (!breaches.length) {
+        const note = document.createElement('div');
+        note.className = 'frame-analysis-threshold-line';
+        note.textContent = 'Отклонение зафиксировано; подробные измерения — ниже';
+        block.appendChild(note);
+    }
+
+    const conclusion = document.createElement('div');
+    conclusion.className = 'frame-analysis-threshold-conclusion';
+    conclusion.textContent = rule.threshold_conclusion
+        || 'Значение вышло за заданный порог — правило сработало';
+    block.appendChild(conclusion);
+    return block;
+}
+
 function ruleSummaryLines(rule) {
     if (Array.isArray(rule.summary_lines) && rule.summary_lines.length) {
         return rule.summary_lines.filter(Boolean).map(String);
@@ -337,6 +376,13 @@ function renderFrameAnalysisRules(rules) {
             cause.textContent = rule.human_cause;
             item.appendChild(cause);
             item.classList.add('has-human-cause');
+        }
+
+        // Сначала причина срабатывания: фактическое значение, порог и вывод.
+        const thresholdBreaches = renderThresholdBreaches(rule);
+        if (thresholdBreaches) {
+            item.classList.add('has-detail');
+            item.appendChild(thresholdBreaches);
         }
 
         // Наглядная сводка: что обнаружено и какие получились показатели.

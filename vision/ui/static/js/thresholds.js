@@ -15,6 +15,7 @@ let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
 let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
+let thresholdsActiveRule = null; // открытая вкладка правила в редакторе
 
 function thresholdsPanelVisible() {
     return (
@@ -75,6 +76,7 @@ function updateThresholdsPanel(force) {
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
         // Смена камеры отбрасывает незаконченный ввод.
         thresholdsDirty = false;
+        thresholdsActiveRule = null;
         thresholdsData = null;
         thresholdsBodyKey = null;
         setThresholdsStatus('', '');
@@ -132,10 +134,36 @@ function renderThresholdsBody() {
         return;
     }
 
-    const fragment = document.createDocumentFragment();
-    for (const group of rules) {
+    // Вместо внутренней прокрутки каждая группа правила открывается на
+    // собственной вкладке. Все поля остаются в DOM: правки на другой
+    // вкладке не теряются и одним действием сохраняются целиком.
+    const activeRules = rules.map((group, index) => group.rule || String(index));
+    if (!activeRules.includes(thresholdsActiveRule)) {
+        thresholdsActiveRule = activeRules[0];
+    }
+
+    const tabs = document.createElement('div');
+    tabs.className = 'thresholds-tabs';
+    tabs.setAttribute('role', 'tablist');
+    const panels = document.createDocumentFragment();
+
+    rules.forEach((group, index) => {
+        const ruleId = group.rule || String(index);
+        const isActive = ruleId === thresholdsActiveRule;
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'thresholds-tab';
+        tab.dataset.rule = ruleId;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', String(isActive));
+        tab.textContent = group.label || group.rule;
+        tabs.appendChild(tab);
+
         const groupEl = document.createElement('div');
-        groupEl.className = 'thresholds-group';
+        groupEl.className = 'thresholds-group thresholds-tab-panel';
+        groupEl.dataset.rule = ruleId;
+        groupEl.setAttribute('role', 'tabpanel');
+        groupEl.hidden = !isActive;
 
         const title = document.createElement('div');
         title.className = 'thresholds-group-title';
@@ -148,7 +176,6 @@ function renderThresholdsBody() {
         for (const param of group.params || []) {
             const item = document.createElement('label');
             item.className = 'thresholds-item';
-
             const span = document.createElement('span');
             span.className = 'thresholds-item-label';
             span.textContent = param.label || param.key;
@@ -162,16 +189,26 @@ function renderThresholdsBody() {
             if (typeof param.min === 'number') input.min = param.min;
             if (typeof param.max === 'number') input.max = param.max;
             input.value = param.value;
-
-            item.appendChild(span);
-            item.appendChild(input);
+            item.append(span, input);
             items.appendChild(item);
         }
-
         groupEl.appendChild(items);
-        fragment.appendChild(groupEl);
-    }
-    body.appendChild(fragment);
+        panels.appendChild(groupEl);
+    });
+    body.append(tabs, panels);
+}
+
+function selectThresholdRule(rule) {
+    if (!rule || !els.thresholdsBody) return;
+    thresholdsActiveRule = rule;
+    els.thresholdsBody.querySelectorAll('.thresholds-tab').forEach(tab => {
+        const active = tab.dataset.rule === rule;
+        tab.classList.toggle('is-active', active);
+        tab.setAttribute('aria-selected', String(active));
+    });
+    els.thresholdsBody.querySelectorAll('.thresholds-tab-panel').forEach(panel => {
+        panel.hidden = panel.dataset.rule !== rule;
+    });
 }
 
 function collectThresholdValues() {
@@ -206,13 +243,20 @@ function hasChangedThresholds() {
 
 function updateThresholdsActions() {
     if (!els.thresholdsSave || !els.thresholdsReset) return;
-    const editable = thresholdsEditableNow() && !!thresholdsData;
-    els.thresholdsReset.disabled = !editable || thresholdsSaveBusy;
-    els.thresholdsSave.disabled = (
-        !editable
-        || thresholdsSaveBusy
-        || !hasChangedThresholds()
+    // ``editable`` от API — отдельная защита: панель может быть видимой в
+    // момент, когда backend уже запретил правку (например, начинается пуск).
+    const editable = (
+        thresholdsEditableNow()
+        && !!thresholdsData
+        && thresholdsData.editable !== false
     );
+    // Не полагаемся только на сравнение чисел. Некоторые браузеры присылают
+    // ``change`` для стрелок number-поля позже, чем оператор ожидает, а
+    // ``input`` — при ручном вводе. Флаг гарантирует, что после любого
+    // редактирования кнопка сохранения сразу доступна.
+    const changed = thresholdsDirty || hasChangedThresholds();
+    els.thresholdsReset.disabled = !editable || thresholdsSaveBusy;
+    els.thresholdsSave.disabled = !editable || thresholdsSaveBusy || !changed;
 }
 
 async function saveThresholds() {
@@ -281,13 +325,23 @@ function setupThresholdsControls() {
         els.thresholdsReset.addEventListener('click', resetThresholds);
     }
     if (els.thresholdsBody) {
-        els.thresholdsBody.addEventListener('input', () => {
+        els.thresholdsBody.addEventListener('click', event => {
+            const tab = event.target.closest('button.thresholds-tab');
+            if (tab) selectThresholdRule(tab.dataset.rule);
+        });
+        const markThresholdsChanged = event => {
+            // Делегирование сохраняет обработчик и после перестроения полей.
+            if (!event.target.matches('input.thresholds-input')) return;
             thresholdsDirty = true;
             // Если оператор вернул значения как было (0.3 -> 0.5 -> 0.3),
             // изменений больше нет — снимаем блокировку автоподхвата.
             if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
-        });
+        };
+        // ``input`` покрывает набор с клавиатуры, ``change`` —
+        // автозаполнение number-поля в браузерах, где input приходит поздно.
+        els.thresholdsBody.addEventListener('input', markThresholdsChanged);
+        els.thresholdsBody.addEventListener('change', markThresholdsChanged);
     }
     updateThresholdsPanel();
 }

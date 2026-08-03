@@ -763,6 +763,39 @@ def _summary_lines(
     return [str(line) for line in lines]
 
 
+def _threshold_breaches(summary_cards: list) -> list:
+    """Выделить только показатели, из-за которых правило не прошло.
+
+    Карточки хранят и нормальные измерения, что полезно инженеру, но
+    оператору в анализе кадра сначала нужны факт, значение и сам порог.
+    Отдельное компактное поле позволяет UI показать именно эти данные без
+    разбора внутренней телеметрии правила.
+    """
+    breaches = []
+    for card in summary_cards or []:
+        for metric in card.get("metrics") or []:
+            if metric.get("ok") is not False:
+                continue
+            breaches.append({
+                "role": card.get("role", ""),
+                "label": metric.get("label", "показатель"),
+                "value": metric.get("value", "—"),
+                "threshold": metric.get("limit"),
+            })
+    return breaches
+
+
+def _threshold_conclusion(
+    triggered: bool, human_cause: str | None, breaches: list,
+) -> str:
+    """Короткий вывод, связывающий отклонение с результатом правила."""
+    if not triggered:
+        return "Показатели укладываются в заданные пороги"
+    if breaches:
+        return human_cause or "Значение вышло за заданный порог — правило сработало"
+    return human_cause or "Правило сработало: проверьте причину и измерения"
+
+
 def filter_rule_report_rows(rows) -> list:
     """Оставить только решающие правила.
 
@@ -853,6 +886,10 @@ def build_rule_report_row(result) -> dict:
         detail_lines,
         str(detail),
     )
+    threshold_breaches = _threshold_breaches(summary_cards)
+    threshold_conclusion = _threshold_conclusion(
+        triggered, human_cause, threshold_breaches,
+    )
 
     return {
         "name": result.rule_name,
@@ -866,6 +903,9 @@ def build_rule_report_row(result) -> dict:
         "detail_lines": detail_lines,
         "summary_lines": summary_lines,
         "summary_cards": summary_cards,
+        # Значения, не прошедшие проверку, их пороги и итог для HMI.
+        "threshold_breaches": threshold_breaches,
+        "threshold_conclusion": threshold_conclusion,
         "part_absent": part_absent,
         "decisive": bool(part_absent or triggered or skipped),
         "consensus": dict(consensus),
