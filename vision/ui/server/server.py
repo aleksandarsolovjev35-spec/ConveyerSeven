@@ -226,6 +226,8 @@ class UIServer:
         if mtime == known:
             return False
         if not self.thresholds_editable():
+            # Линия работает: не запоминаем mtime, чтобы применить изменения
+            # сразу после остановки (проверка по mtime дёшева).
             return False
         try:
             from domain.threshold_loader import ThresholdLoader
@@ -233,7 +235,12 @@ class UIServer:
             fresh = loader.get_all()
             fresh_labels = dict(loader.labels)
         except Exception as exc:
+            # Битый файл: запоминаем время проверки, чтобы не пытаться
+            # перечитывать и не спамить ошибкой на каждом тике статуса.
+            # Повторная попытка будет после следующей правки файла.
             print(f"[THRESHOLDS] Ошибка перечитывания thresholds.json: {exc}")
+            with self.lock:
+                self.thresholds_file_mtime = mtime
             return False
         with self.lock:
             current = dict(self.thresholds or {})
@@ -251,6 +258,8 @@ class UIServer:
                 print(
                     f"[THRESHOLDS] Ошибка применения порогов из файла: {exc}"
                 )
+                with self.lock:
+                    self.thresholds_file_mtime = mtime
                 return False
         with self.lock:
             self.thresholds = dict(fresh)

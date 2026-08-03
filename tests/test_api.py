@@ -489,6 +489,66 @@ class ThresholdsApiTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "0..1"):
                 ThresholdLoader.validate(bad)
 
+    def test_reload_applies_label_only_change_and_survives_broken_file(self):
+        """Изменение только названий в файле применяется; битый файл не
+        приводит к бесконечным повторным попыткам на каждом тике статуса."""
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            ThresholdLoader.save_file(str(path), self.thresholds)
+
+            server = UIServer()
+            server.thresholds = dict(self.thresholds)
+            server.threshold_labels = {}
+            server.thresholds_path = str(path)
+            server.splash_active = False
+            server.line_status = {"state": "IDLE"}
+
+            # Первый вызов фиксирует mtime.
+            server.thresholds_file_mtime_changed()
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 0)
+
+            # Изменилось ТОЛЬКО название (значения те же) — применяется.
+            time.sleep(0.01)
+            labels = {"TOP.top_contacts_min_confidence": "Контакты сверху"}
+            ThresholdLoader.save_file(
+                str(path), self.thresholds, labels=labels,
+            )
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertEqual(
+                server.threshold_labels["TOP.top_contacts_min_confidence"],
+                "Контакты сверху",
+            )
+            # Значения не изменились.
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"],
+                self.thresholds["TOP.top_contacts_min_confidence"],
+            )
+
+            # Битый файл: попытка один раз, mtime запоминается, ревизия
+            # не растёт и повторной попытки без правки файла нет.
+            time.sleep(0.01)
+            path.write_text("{ не json", encoding="utf-8")
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertFalse(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 1)
+            self.assertFalse(server.thresholds_file_mtime_changed())
+
+            # После исправления файла (с новым значением, чтобы содержимое
+            # отличалось от того, что уже в сервере) перечитывание работает.
+            time.sleep(0.01)
+            fixed = dict(self.thresholds)
+            fixed["TOP.top_contacts_min_confidence"] = 0.62
+            ThresholdLoader.save_file(str(path), fixed, labels=labels)
+            self.assertTrue(server.thresholds_file_mtime_changed())
+            self.assertTrue(server.reload_thresholds_from_file())
+            self.assertEqual(server.thresholds_revision, 2)
+            self.assertEqual(
+                server.thresholds["TOP.top_contacts_min_confidence"], 0.62,
+            )
+
     def test_thresholds_auto_reload_from_file_and_status_revision(self):
         """Пороги сами подтягиваются из thresholds.json при ручной правке."""
         asyncio.run(self._run_auto_reload())

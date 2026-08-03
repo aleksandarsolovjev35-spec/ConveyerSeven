@@ -233,7 +233,8 @@ def main():
                 "inspection", "Настройка системы контроля",
             )
             try:
-                thresholds = ThresholdLoader().get_all()
+                threshold_loader = ThresholdLoader()
+                thresholds = threshold_loader.get_all()
                 decision   = DecisionEngine(thresholds=thresholds)
                 recorder = DebugRecorder(
                     folder="debug_frames",
@@ -256,6 +257,9 @@ def main():
                 # Пороги автоматически подтягиваются из thresholds.json:
                 # ручные правки файла перечитываются без перезапуска.
                 monitor.server.thresholds = dict(thresholds)
+                monitor.server.threshold_labels = dict(
+                    threshold_loader.labels or {}
+                )
                 monitor.server.thresholds_path = "thresholds.json"
 
                 def _thresholds_reload_from_file(fresh):

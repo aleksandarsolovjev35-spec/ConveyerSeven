@@ -14,6 +14,7 @@ let thresholdsData = null;       // последний ответ GET /api/thres
 let thresholdsBusy = false;      // идёт загрузка порогов
 let thresholdsSaveBusy = false;  // идёт сохранение порогов
 let thresholdsBodyKey = null;    // роль+ревизия, для которой построены поля
+let thresholdsDirty = false;     // оператор менял значения и ещё не сохранил
 
 function thresholdsPanelVisible() {
     return (
@@ -65,13 +66,17 @@ function updateThresholdsPanel(force) {
     if (els.thresholdsPanel) els.thresholdsPanel.classList.remove('is-hidden');
 
     if (!thresholdsData || thresholdsData.role !== state.currentCamera) {
+        // Смена камеры отбрасывает незаконченный ввод.
+        thresholdsDirty = false;
         thresholdsData = null;
         thresholdsBodyKey = null;
         setThresholdsStatus('', '');
         fetchThresholds(state.currentCamera);
         return;
     }
-    if (force && !thresholdsBusy) {
+    // Автоподхват после внешней правки файла: не перезапрашивать, пока
+    // оператор не сохранил свои незаконченные изменения.
+    if (force && !thresholdsDirty && !thresholdsBusy) {
         fetchThresholds(state.currentCamera);
         return;
     }
@@ -178,6 +183,14 @@ function collectThresholdValues() {
 
 function hasChangedThresholds() {
     if (!thresholdsData || !thresholdsData.values) return false;
+    // Пустое поле — тоже незаконченное изменение: кнопка «СОХРАНИТЬ»
+    // становится активной, а сохранение честно сообщает «Заполните все поля».
+    if (els.thresholdsBody) {
+        const hasEmpty = [...els.thresholdsBody.querySelectorAll(
+            'input.thresholds-input'
+        )].some(input => String(input.value).trim() === '');
+        if (hasEmpty) return true;
+    }
     const current = collectThresholdValues();
     return Object.entries(current).some(
         ([key, value]) => thresholdsData.values[key] !== value,
@@ -197,11 +210,10 @@ function updateThresholdsActions() {
 
 async function saveThresholds() {
     if (!thresholdsEditableNow() || thresholdsSaveBusy || !thresholdsData) return;
-    const values = collectThresholdValues();
-    if (!Object.keys(values).length) return;
 
     // Пустые поля не сохраняются: честно предупреждаем, а не молча
-    // пропускаем параметр.
+    // пропускаем параметр (проверяем до сбора значений, иначе очищенное
+    // поле дало бы пустой values и молчаливый выход).
     if (els.thresholdsBody) {
         const empty = els.thresholdsBody.querySelectorAll(
             'input.thresholds-input'
@@ -214,6 +226,9 @@ async function saveThresholds() {
             return;
         }
     }
+
+    const values = collectThresholdValues();
+    if (!Object.keys(values).length) return;
 
     thresholdsSaveBusy = true;
     updateThresholdsActions();
@@ -228,6 +243,7 @@ async function saveThresholds() {
             return;
         }
         thresholdsData = result.thresholds;
+        thresholdsDirty = false;
         if (typeof result.thresholds.revision === 'number') {
             state.thresholdsRevision = result.thresholds.revision;
         }
@@ -244,6 +260,7 @@ async function resetThresholds() {
     setThresholdsStatus('', '');
     // Принудительно перестраиваем поля, даже если ревизия не изменилась:
     // нужно сбросить незаконченный ввод оператора.
+    thresholdsDirty = false;
     thresholdsBodyKey = null;
     thresholdsData = null;
     await fetchThresholds(state.currentCamera);
@@ -257,7 +274,10 @@ function setupThresholdsControls() {
         els.thresholdsReset.addEventListener('click', resetThresholds);
     }
     if (els.thresholdsBody) {
-        els.thresholdsBody.addEventListener('input', updateThresholdsActions);
+        els.thresholdsBody.addEventListener('input', () => {
+            thresholdsDirty = true;
+            updateThresholdsActions();
+        });
     }
     updateThresholdsPanel();
 }

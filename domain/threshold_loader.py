@@ -358,6 +358,10 @@ class ThresholdLoader:
         for key, value in raw_data.items():
             if str(key).startswith("_comment"):
                 continue
+            if str(key).startswith("_label."):
+                # Служебный ключ названия вне секции камеры: некуда привязать,
+                # игнорируем (названия живут внутри секций ролей).
+                continue
             if key in ROLE_SECTIONS:
                 if not isinstance(value, dict):
                     raise ValueError(f"Секция {key} должна быть объектом")
