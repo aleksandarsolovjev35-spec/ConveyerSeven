@@ -249,6 +249,51 @@ def main():
                     root_folder="archive", enabled=True,
                 )
                 monitor.server.archive = archive
+
+                # Редактор порогов правил: сервер отдаёт текущие значения
+                # (GET /api/thresholds), а применение изменений пересоздаёт
+                # DecisionEngine внутри Inspector'а и сохраняет файл.
+                monitor.server.thresholds = dict(thresholds)
+
+                def _thresholds_apply(role, values):
+                    nonlocal inspector
+                    if cycle is None or inspector is None:
+                        raise RuntimeError(
+                            "Система контроля ещё не инициализирована"
+                        )
+                    if cycle.state not in ("IDLE", "STOPPED"):
+                        raise RuntimeError(
+                            "Изменение порогов доступно только до пуска "
+                            "и после полной остановки"
+                        )
+                    if not isinstance(values, dict) or not values:
+                        raise ValueError("Нет изменённых порогов")
+                    updated = dict(inspector.decision.thresholds)
+                    changed = []
+                    for key, value in values.items():
+                        full_key = (
+                            f"{role}.{key}"
+                            if not str(key).startswith(f"{role}.")
+                            else str(key)
+                        )
+                        if full_key not in updated:
+                            raise ValueError(f"Неизвестный порог: {full_key}")
+                        updated[full_key] = value
+                        changed.append(full_key)
+                    # Полная валидация, как при загрузке файла
+                    ThresholdLoader.validate(updated)
+                    ThresholdLoader.save_file("thresholds.json", updated)
+                    # Правила пересоздаются: Inspector берёт decision каждый
+                    # раз заново, поэтому замена объекта применяется сразу.
+                    inspector.decision = DecisionEngine(thresholds=updated)
+                    print(
+                        "[THRESHOLDS] Применено "
+                        f"{len(changed)} изменение(й) для {role}: "
+                        f"{', '.join(sorted(changed))}"
+                    )
+                    return updated
+
+                monitor.thresholds_apply_callback = _thresholds_apply
             except Exception as e:
                 monitor.boot_step_error(
                     "inspection",

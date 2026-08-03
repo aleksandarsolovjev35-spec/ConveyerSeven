@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
     <link rel="stylesheet" href="/static/css/process.css?v=28">
     <link rel="stylesheet" href="/static/css/motion.css?v=26">
+    <link rel="stylesheet" href="/static/css/thresholds.css?v=1">
 </head>
 <body>
 
@@ -223,14 +224,32 @@
         </main>
 
         <footer class="footer" data-ui-block="operator-footer">
-            <div class="buttons">
-                <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
-                <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
-                <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
-                <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
-                <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
+            <!-- Пороги правил выбранной (главной) камеры: редактирование
+                 доступно только до пуска и после полной остановки. -->
+            <section id="thresholds-panel" class="thresholds-panel is-hidden"
+                     data-ui-block="thresholds" aria-label="Пороги правил">
+                <div class="thresholds-head">
+                    <span class="thresholds-title">ПОРОГИ ПРАВИЛ</span>
+                    <span id="thresholds-camera-label" class="thresholds-camera">—</span>
+                    <span id="thresholds-hint" class="thresholds-hint"></span>
+                </div>
+                <div id="thresholds-body" class="thresholds-body"></div>
+                <div class="thresholds-actions">
+                    <span id="thresholds-status" class="thresholds-status"></span>
+                    <button id="thresholds-reset" class="btn btn-sm" disabled>СБРОС</button>
+                    <button id="thresholds-save" class="btn btn-sm btn-thresholds-save" disabled>СОХРАНИТЬ</button>
+                </div>
+            </section>
+            <div class="footer-row">
+                <div class="buttons">
+                    <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
+                    <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
+                    <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
+                    <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
+                    <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
+                </div>
+                <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
             </div>
-            <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
         </footer>
     </div>
 
@@ -267,6 +286,7 @@
     <script src="/static/js/rule-summary.js?v=1"></script>
     <script src="/static/js/status.js?v=29"></script>
     <script src="/static/js/controls.js?v=29"></script>
+    <script src="/static/js/thresholds.js?v=1"></script>
     <script src="/static/js/cameras.js?v=28"></script>
     <script src="/static/js/jog.js?v=28"></script>
     <script src="/static/js/history.js?v=26"></script>

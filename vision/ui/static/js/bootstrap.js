@@ -134,6 +134,7 @@ function init() {
     setupJogControls();
     setupDistributorDiagnostics();
     setupSelectedFrameAnalysis();
+    setupThresholdsControls();
 
     fetchBoot();
     state.bootInterval = setInterval(fetchBoot, BOOT_INTERVAL);
@@ -155,6 +156,7 @@ function setupForTest() {
     setupJogControls();
     setupDistributorDiagnostics();
     setupSelectedFrameAnalysis();
+    setupThresholdsControls();
     state.bootDone = true;
     state.bootDoneAt = Date.now();
     state.statusReceived = true;

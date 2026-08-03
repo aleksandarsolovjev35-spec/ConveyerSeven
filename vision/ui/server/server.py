@@ -92,6 +92,13 @@ class UIServer:
         self.on_jog_hold_heartbeat: callable | None = None
         self.on_jog_hold_release: callable | None = None
 
+        # Пороги правил: плоский dict (ROLE.parameter -> value), которым
+        # UI отвечает на GET /api/thresholds. Применение изменений выполняет
+        # внешний callback (валидация + пересоздание DecisionEngine).
+        self.thresholds: dict | None = None
+        self.thresholds_revision = 0
+        self.on_thresholds_apply: callable | None = None
+
         self.archive = None
 
         # Кэш JPEG для pull-механики (/frame): ключ (role, mode, size)
@@ -159,6 +166,100 @@ class UIServer:
                 return False
             self.active_camera_role = role
         return True
+
+    # ─── Пороги правил ─────────────────────────────────────────
+
+    def thresholds_editable(self) -> bool:
+        """Пороги меняются только до пуска и после полной остановки."""
+        if self.splash_active:
+            return False
+        line_state = (self.line_status or {}).get("state")
+        return line_state in ("IDLE", "STOPPED")
+
+    def build_thresholds_payload(self, role: str | None = None) -> dict:
+        """Ответ для GET /api/thresholds: пороги роли, сгруппированные по
+        правилам, с метаданными для редактора (подпись, шаг, границы).
+        """
+        from domain.threshold_loader import describe_role_parameters
+
+        with self.lock:
+            thresholds = dict(self.thresholds or {})
+            revision = self.thresholds_revision
+            editable = self.thresholds_editable()
+
+        if not thresholds:
+            return {
+                "role": role,
+                "available": False,
+                "editable": False,
+                "rules": [],
+                "values": {},
+                "revision": revision,
+            }
+
+        if role:
+            role_keys = [
+                key for key in thresholds if key.startswith(f"{role}.")
+            ]
+            if not role_keys:
+                return {
+                    "role": role,
+                    "available": False,
+                    "editable": False,
+                    "rules": [],
+                    "values": {},
+                    "revision": revision,
+                }
+            rules = describe_role_parameters(role, thresholds)
+            values = {
+                param["key"]: param["value"]
+                for group in rules
+                for param in group["params"]
+            }
+            return {
+                "role": role,
+                "available": True,
+                "editable": editable,
+                "rules": rules,
+                "values": values,
+                "revision": revision,
+            }
+
+        roles = sorted({
+            key.split(".", 1)[0]
+            for key in thresholds
+            if "." in key
+        })
+        return {
+            "role": None,
+            "available": True,
+            "editable": editable,
+            "roles": roles,
+            "rules": [],
+            "values": {},
+            "revision": revision,
+        }
+
+    def apply_thresholds(self, role: str, values: dict) -> dict:
+        """Применить изменения порогов через внешний callback.
+
+        Доступно только когда линия остановлена (IDLE/STOPPED). Возвращает
+        обновлённый payload GET /api/thresholds.
+        """
+        if not self.thresholds_editable():
+            raise RuntimeError(
+                "Изменение порогов доступно только до пуска "
+                "и после полной остановки"
+            )
+        if self.on_thresholds_apply is None:
+            raise RuntimeError("Применение порогов ещё не подключено")
+        updated = self.on_thresholds_apply(role, values)
+        if not isinstance(updated, dict):
+            raise RuntimeError("Backend не вернул обновлённые пороги")
+        with self.lock:
+            self.thresholds = dict(updated)
+            self.thresholds_revision += 1
+        return self.build_thresholds_payload(role)
 
     def boot_step_start(self, key, message=None):
         with self.lock:

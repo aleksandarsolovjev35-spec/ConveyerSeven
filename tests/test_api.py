@@ -1,12 +1,17 @@
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import numpy as np
 
+from domain.threshold_loader import ThresholdLoader
 from vision.ui.live_monitor import LiveMonitor
 from vision.ui.server.server import UIServer
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ApiTests(unittest.TestCase):
@@ -215,6 +220,150 @@ class ApiTests(unittest.TestCase):
                 json={"reason": "test release"},
             )
             self.assertEqual(response.status_code, 200)
+
+
+class ThresholdsApiTests(unittest.TestCase):
+    """Редактор порогов правил: GET /api/thresholds и POST /api/thresholds."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.thresholds = ThresholdLoader(
+            REPO_ROOT / "thresholds.json"
+        ).get_all()
+
+    def test_get_thresholds_groups_role_parameters_by_rule(self):
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+        payload = server.build_thresholds_payload("TOP")
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["role"], "TOP")
+        self.assertFalse(payload["editable"])  # splash_active by default
+        rules = {group["rule"]: group for group in payload["rules"]}
+        self.assertIn("top_contacts", rules)
+        self.assertIn("top_platform", rules)
+        self.assertIn("top_platform_overlap", rules)
+        self.assertIn("top_sinks", rules)
+        self.assertIn("top_glass", rules)
+        keys = {
+            param["key"]
+            for group in payload["rules"]
+            for param in group["params"]
+        }
+        role_keys = {
+            key.split(".", 1)[1]
+            for key in self.thresholds
+            if key.startswith("TOP.")
+        }
+        self.assertEqual(keys, role_keys)
+        # У каждого параметра есть метаданные для редактора
+        for group in payload["rules"]:
+            for param in group["params"]:
+                self.assertIn("label", param)
+                self.assertIn("step", param)
+                self.assertIn("min", param)
+                self.assertIn("max", param)
+        self.assertEqual(
+            payload["values"]["top_contacts_min_confidence"],
+            self.thresholds["TOP.top_contacts_min_confidence"],
+        )
+
+    def test_get_thresholds_unknown_role_is_not_available(self):
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+        payload = server.build_thresholds_payload("NOPE")
+        self.assertFalse(payload["available"])
+
+    def test_thresholds_editable_only_when_line_is_idle_or_stopped(self):
+        server = UIServer()
+        server.splash_active = False
+        self.assertFalse(server.thresholds_editable())
+        server.line_status = {"state": "IDLE"}
+        self.assertTrue(server.thresholds_editable())
+        server.line_status = {"state": "STOPPED"}
+        self.assertTrue(server.thresholds_editable())
+        for state in ("RUNNING", "PAUSED", "STOPPING", "FAULT"):
+            server.line_status = {"state": state}
+            self.assertFalse(server.thresholds_editable(), state)
+
+    def test_post_thresholds_requires_stopped_line_and_applies_via_callback(self):
+        asyncio.run(self._run_post())
+
+    async def _run_post(self):
+        server = UIServer()
+        server.splash_active = False
+        server.line_status = {"state": "RUNNING"}
+        server.thresholds = dict(self.thresholds)
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://127.0.0.1:8000",
+        ) as client:
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            self.assertEqual(response.status_code, 409)
+
+            server.line_status = {"state": "IDLE"}
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            # Callback не подключён — сервер честно сообщает об этом
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("не готова", response.json()["error"])
+
+            applied = {}
+
+            def apply_cb(role, values):
+                applied.update({role: values})
+                updated = dict(server.thresholds)
+                for key, value in values.items():
+                    full_key = (
+                        f"{role}.{key}"
+                        if not key.startswith(f"{role}.")
+                        else key
+                    )
+                    if full_key not in updated:
+                        raise ValueError(f"Неизвестный порог: {full_key}")
+                    updated[full_key] = value
+                return updated
+
+            server.on_thresholds_apply = apply_cb
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"top_contacts_min_confidence": 0.5},
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(applied["TOP"]["top_contacts_min_confidence"], 0.5)
+            updated = response.json()["thresholds"]
+            self.assertTrue(updated["editable"])
+            self.assertEqual(
+                updated["values"]["top_contacts_min_confidence"], 0.5,
+            )
+
+            # Неизвестный параметр отклоняется
+            response = await client.post("/api/thresholds", json={
+                "role": "TOP",
+                "values": {"nope_parameter": 1},
+            })
+            self.assertEqual(response.status_code, 400)
+
+    def test_threshold_loader_save_round_trip_and_rejects_bad_value(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "thresholds.json"
+            data = dict(self.thresholds)
+            data["TOP.top_contacts_min_confidence"] = 0.35
+            ThresholdLoader.save_file(str(path), data)
+            reloaded = ThresholdLoader(str(path)).get_all()
+            self.assertEqual(
+                reloaded["TOP.top_contacts_min_confidence"], 0.35,
+            )
+            self.assertEqual(len(reloaded), len(data))
+            bad = dict(data)
+            bad["TOP.top_contacts_min_confidence"] = 1.5
+            with self.assertRaisesRegex(ValueError, "0..1"):
+                ThresholdLoader.validate(bad)
 
 
 if __name__ == "__main__":

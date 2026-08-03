@@ -119,6 +119,9 @@ function markUiOffline() {
             button.disabled = true;
         });
     }
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
@@ -132,6 +135,9 @@ function updateLineStatus(ls) {
         state.startPending = false;
     }
     updateOperationalAccordions(lineState);
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
 
     els.stateIndicator.className =
         `state-dot state-${lineState.toLowerCase()}`;

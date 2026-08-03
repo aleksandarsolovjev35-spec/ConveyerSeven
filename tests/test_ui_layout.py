@@ -173,8 +173,8 @@ class UiLayoutTests(unittest.TestCase):
             [
                 "core.js", "boot.js", "diagnostics.js", "rule-summary.js",
                 "status.js",
-                "controls.js", "cameras.js", "jog.js", "history.js",
-                "bootstrap.js",
+                "controls.js", "thresholds.js", "cameras.js", "jog.js",
+                "history.js", "bootstrap.js",
             ],
         )
         self.assertGreaterEqual(len(css), 8)
@@ -198,6 +198,7 @@ class UiLayoutTests(unittest.TestCase):
             "jog",
             "frame-analysis",
             "operator-footer",
+            "thresholds",
             "gallery",
         }
         operator_blocks = set(re.findall(r'data-ui-block="([^"]+)"', self.html))
@@ -520,7 +521,9 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("→ ${categoryLabel(category)}", self.js)
         card = self.css.split(".blade-card {", 1)[1].split("}", 1)[0]
         self.assertIn("rgba(15, 19, 23, 0.62)", card)
-        marker = self.css.split(".blade-marker {", 1)[1].split("}", 1)[0]
+        # Точный селектор .blade-marker: не зацепить вложенное правило
+        # .distributor-panel.production-ready .blade-marker, которое идёт выше.
+        marker = self.css.split("\n.blade-marker {", 1)[1].split("}", 1)[0]
         self.assertIn("background: var(--accent)", marker)
         self.assertNotIn("blade-dist1", self.css + self.html)
         self.assertNotIn("blade-dist2", self.css + self.html)

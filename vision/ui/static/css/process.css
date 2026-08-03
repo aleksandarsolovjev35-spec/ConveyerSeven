@@ -9,14 +9,12 @@
     padding: 8px 14px 9px;
     min-height: 78px;
 }
-
 .process-line-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
 }
-
 .process-line-title,
 .distributor-title {
     color: var(--text-dim);
@@ -24,7 +22,6 @@
     font-weight: 700;
     letter-spacing: 0.9px;
 }
-
 .production-line-wrapper {
     position: relative;
     margin-top: 6px;
@@ -410,7 +407,6 @@
 .line-token.cell-good::after { content: "✓"; color: var(--ok); }
 .line-token.cell-bad::after { content: "✕"; color: var(--bad); }
 .line-token.cell-cleanup::after { content: "🧹"; color: var(--warn); }
-
 
 /* === Human-readable defect cause (simple & bold) === */
 .frame-analysis-item.has-human-cause .frame-analysis-human-cause {

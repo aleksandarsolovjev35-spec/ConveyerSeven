@@ -106,6 +106,59 @@ def setup_api_routes(app, server):
             "active_camera": server.active_camera_role,
         })
 
+    # Пороги правил (редактирование до пуска и после полной остановки)
+
+    @app.get("/api/thresholds")
+    async def api_get_thresholds(role: str | None = None):
+        return JSONResponse(
+            await asyncio.to_thread(server.build_thresholds_payload, role)
+        )
+
+    @app.post("/api/thresholds")
+    async def api_set_thresholds(payload: dict | None = None):
+        payload = payload or {}
+        role = payload.get("role")
+        values = payload.get("values")
+        if not isinstance(role, str) or not role:
+            raise HTTPException(400, "Роль камеры не указана")
+        if not isinstance(values, dict) or not values:
+            raise HTTPException(400, "Не указаны значения порогов")
+        if not server.thresholds_editable():
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "Изменение порогов доступно только до пуска "
+                             "и после полной остановки",
+                },
+                status_code=409,
+            )
+        if server.on_thresholds_apply is None:
+            return JSONResponse(
+                {"ok": False, "error": "Система ещё не готова"},
+                status_code=503,
+            )
+        try:
+            result = await asyncio.to_thread(
+                server.apply_thresholds, role, values,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=400,
+            )
+        except RuntimeError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=409,
+            )
+        except Exception as exc:
+            print(f"[API] thresholds error: {exc}")
+            return JSONResponse(
+                {"ok": False, "error": str(exc)},
+                status_code=500,
+            )
+        return JSONResponse({"ok": True, "thresholds": result})
+
     @app.post("/api/start")
     async def api_start():
         print("[API] /api/start called")
