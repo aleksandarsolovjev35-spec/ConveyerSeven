@@ -141,7 +141,7 @@ class DemoArchive:
 class UiDemo:
     def __init__(self):
         self.monitor = LiveMonitor(
-            window_name="РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7 — ДЕМО",
+            window_name="МОНИТОР ЛИНИИ — ДЕМО",
             fullscreen=False,
         )
         self.lock = threading.RLock()

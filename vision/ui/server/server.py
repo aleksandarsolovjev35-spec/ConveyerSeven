@@ -106,7 +106,7 @@ class UIServer:
 
         self.lock = threading.Lock()
 
-        self.app = FastAPI(title="Роботехнический комплекс конвейерного типа 7")
+        self.app = FastAPI(title="Монитор линии")
 
         self._setup_static()
         self._setup_routes()
