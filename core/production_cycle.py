@@ -14,6 +14,7 @@ from core.step_stages import (
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
     INSPECTION_RUNS,
+    combine_presence_results,
     combine_rule_results,
     summarize_model_health,
 )
@@ -400,12 +401,13 @@ class ProductionCycle:
                 raise RuntimeError("part_presence rule is disabled")
             presence_result = presence_rule.check(vision_results)
             rule_results = [presence_result]
-            rule_results.extend(
-                self.inspector.decision.evaluate_all_detailed(
-                    vision_results,
-                    frames=frames,
+            if not presence_result.details.get("empty_tray"):
+                rule_results.extend(
+                    self.inspector.decision.evaluate_all_detailed(
+                        vision_results,
+                        frames=frames,
+                    )
                 )
-            )
             model_rows = [dict(item) for item in self.inspector.vision.last_health]
             rule_rows = [
                 self._rule_report_row(result)
@@ -529,9 +531,12 @@ class ProductionCycle:
 
             frame_runs = []
             vision_runs = []
+            presence_runs = []
             rule_results_by_run = []
             raw_model_health = []
             detection_counts = []
+
+            is_input = role in self.inspector.INPUT_ROLES
 
             for run_number in range(1, INSPECTION_RUNS + 1):
                 self._set_process(
@@ -547,15 +552,14 @@ class ProductionCycle:
                         f"в прогоне {run_number}"
                     )
 
-                selected_rule_results = decision.evaluate_rules_detailed(
-                    decision_rules,
-                    vision_results,
-                    frames=stage_frames,
-                )
                 frame_runs.append(frame)
                 vision_runs.append(vision_results)
-                rule_results_by_run.append(selected_rule_results)
                 detection_counts.append(len(vision_results.get(role, [])))
+
+                if is_input:
+                    presence_runs.append(
+                        self.inspector._evaluate_part_presence(vision_results)
+                    )
 
                 health_rows = getattr(
                     self.inspector.vision,
@@ -569,9 +573,42 @@ class ProductionCycle:
                         if isinstance(item, dict)
                     )
 
-            rule_results, consensus, evidence_index = combine_rule_results(
-                rule_results_by_run
-            )
+            if is_input:
+                presence_result, presence_vote, presence_evidence = (
+                    combine_presence_results(presence_runs)
+                )
+
+                if presence_result.details.get("empty_tray"):
+                    rule_results = []
+                    evidence_index = presence_evidence
+                    consensus = {"part_presence": presence_vote}
+                else:
+                    for v_res, frame in zip(vision_runs, frame_runs):
+                        rule_results_by_run.append(
+                            decision.evaluate_rules_detailed(
+                                decision_rules,
+                                v_res,
+                                frames={role: frame},
+                            )
+                        )
+                    rule_results, consensus, evidence_index = (
+                        combine_rule_results(rule_results_by_run)
+                    )
+                    consensus["part_presence"] = presence_vote
+            else:
+                presence_result = None
+                for v_res, frame in zip(vision_runs, frame_runs):
+                    rule_results_by_run.append(
+                        decision.evaluate_rules_detailed(
+                            decision_rules,
+                            v_res,
+                            frames={role: frame},
+                        )
+                    )
+                rule_results, consensus, evidence_index = (
+                    combine_rule_results(rule_results_by_run)
+                )
+
             evidence_frame = frame_runs[evidence_index]
             vision_results = vision_runs[evidence_index]
             stage_frames = {role: evidence_frame}
@@ -582,27 +619,9 @@ class ProductionCycle:
                 )
 
             rule_rows = []
-            if role in self.inspector.INPUT_ROLES:
-                rule_rows.append({
-                    "name": "part_presence",
-                    "triggered": False,
-                    "skipped": True,
-                    "status_label": None,
-                    "neutral": False,
-                    "show_detail": False,
-                    "detail": (
-                        "Не выполнено: для part_presence одновременно нужны "
-                        "INPUT_LEFT и INPUT_RIGHT"
-                    ),
-                    "detail_lines": [],
-                    "summary_lines": [
-                        "Не выполнено: для part_presence одновременно нужны "
-                        "INPUT_LEFT и INPUT_RIGHT"
-                    ],
-                    "part_absent": False,
-                    "decisive": True,
-                    "consensus": {},
-                })
+            if is_input:
+                rule_rows.append(self._rule_report_row(presence_result))
+
             rule_rows.extend(
                 self._rule_report_row(result)
                 for result in rule_results
@@ -1023,15 +1042,25 @@ class ProductionCycle:
         # majority-алгоритмом как наиболее согласованными с итогом.
         display_frames = dict(frame_runs[-1])
 
+        # Определяем активные позиции для подсветки в UI
+        active_positions = []
+        if accept_input_for_this_step:
+            active_positions.append(self.OFFSET_INPUT)
+        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+            active_positions.append(self.OFFSET_SPIDER)
+
         if accept_input_for_this_step:
             self._set_process(
                 "INPUT_ANALYSIS",
                 "Вход: три прогона моделей и голосование правил 2 из 3",
-                positions=[self.OFFSET_INPUT],
+                positions=active_positions,
             )
             input_result = self._process_input_stage(frame_runs)
             if input_result is not None:
                 display_frames.update(input_result.raw_frames)
+                # Если деталь на входе не обнаружена, убираем подсветку
+                if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
+                    active_positions.remove(self.OFFSET_INPUT)
             self._check_motion_cancelled()
 
         spider_parts = [
@@ -1042,7 +1071,7 @@ class ProductionCycle:
             self._set_process(
                 "SPIDER_CHECK",
                 "Проверка корпуса на +4: три прогона, голосование 2 из 3",
-                positions=[self.OFFSET_SPIDER],
+                positions=active_positions,
             )
             spider_result = self._run_spider_inspection(frame_runs)
             if spider_result is not None:
@@ -1195,7 +1224,10 @@ class ProductionCycle:
         if result.is_empty_tray:
             self._record_frame_analysis("INPUT", None, result)
             self.empty_count += 1
-            self._last_vision_results.update(result.vision_results)
+            # Очищаем детекции для входных камер, чтобы не рисовать прямоугольники
+            # на пустом лотке.
+            for role in self.inspector.INPUT_ROLES:
+                self._last_vision_results[role] = []
             self._last_rule_results.extend(result.rule_results)
             print(
                 f"[EMPTY] Пустой лоток на step {self.current_step} "

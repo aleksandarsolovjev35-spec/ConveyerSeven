@@ -27,7 +27,13 @@ class InputPartPresenceRule(BaseRule):
         ignored_counts = {}
         presence_by_role = {}
 
-        for role in self.ROLES:
+        # Если в vision_results только одна из двух камер (например, при
+        # ручном анализе кадра), проверяем только её.
+        roles_to_check = [r for r in self.ROLES if r in vision_results]
+        if not roles_to_check:
+            roles_to_check = list(self.ROLES)
+
+        for role in roles_to_check:
             confidence_key = f"{role}.input_window_geometry_min_confidence"
             min_confidence = self.thresholds.get(confidence_key)
             if (

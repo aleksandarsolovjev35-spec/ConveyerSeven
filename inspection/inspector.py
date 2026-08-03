@@ -107,6 +107,10 @@ class Inspector:
         )
         consensus = dict(rule_vote)
         consensus["part_presence"] = presence_vote
+
+        # Правило присутствия идёт первым в списке результатов для INPUT.
+        final_rule_results = [presence_result] + final_rule_results
+
         return self._build_consensus_result(
             stage="input",
             part_id=part_id,
@@ -304,7 +308,7 @@ class Inspector:
                 is_empty_tray=True,
             )
 
-        return self._inspect(
+        res = self._inspect(
             stage="input",
             roles=self.INPUT_ROLES,
             part_id=part_id,
@@ -314,6 +318,8 @@ class Inspector:
             vision_results=vision_results,
             stage_frames=stage_frames,
         )
+        res.rule_results = [presence_result] + res.rule_results
+        return res
 
     def inspect_spider(
         self,
