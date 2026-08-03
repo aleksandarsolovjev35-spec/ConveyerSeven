@@ -176,6 +176,24 @@
                     <div class="axis-action">ПОСЛЕДНЯЯ КОМАНДА: <span id="dist-action">—</span></div>
                 </section>
 
+                <!-- Пороги правил выбранной (главной) камеры: над кнопками
+                     ручного управления лентой. Редактирование доступно только
+                     до пуска и после полной остановки. -->
+                <section id="thresholds-panel" class="thresholds-panel is-hidden"
+                         data-ui-block="thresholds" aria-label="Пороги правил">
+                    <div class="thresholds-head">
+                        <span class="thresholds-title">ПОРОГИ ПРАВИЛ</span>
+                        <span id="thresholds-camera-label" class="thresholds-camera">—</span>
+                    </div>
+                    <div id="thresholds-hint" class="thresholds-hint"></div>
+                    <div id="thresholds-body" class="thresholds-body"></div>
+                    <div class="thresholds-actions">
+                        <span id="thresholds-status" class="thresholds-status"></span>
+                        <button id="thresholds-reset" class="btn btn-sm" disabled>СБРОС</button>
+                        <button id="thresholds-save" class="btn btn-sm btn-thresholds-save" disabled>СОХРАНИТЬ</button>
+                    </div>
+                </section>
+
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse" data-ui-block="jog">
                     <div class="jog-header">
                         <h2 class="jog-title">РУЧНОЕ УПРАВЛЕНИЕ ЛЕНТОЙ</h2>
@@ -224,32 +242,14 @@
         </main>
 
         <footer class="footer" data-ui-block="operator-footer">
-            <!-- Пороги правил выбранной (главной) камеры: редактирование
-                 доступно только до пуска и после полной остановки. -->
-            <section id="thresholds-panel" class="thresholds-panel is-hidden"
-                     data-ui-block="thresholds" aria-label="Пороги правил">
-                <div class="thresholds-head">
-                    <span class="thresholds-title">ПОРОГИ ПРАВИЛ</span>
-                    <span id="thresholds-camera-label" class="thresholds-camera">—</span>
-                    <span id="thresholds-hint" class="thresholds-hint"></span>
-                </div>
-                <div id="thresholds-body" class="thresholds-body"></div>
-                <div class="thresholds-actions">
-                    <span id="thresholds-status" class="thresholds-status"></span>
-                    <button id="thresholds-reset" class="btn btn-sm" disabled>СБРОС</button>
-                    <button id="thresholds-save" class="btn btn-sm btn-thresholds-save" disabled>СОХРАНИТЬ</button>
-                </div>
-            </section>
-            <div class="footer-row">
-                <div class="buttons">
-                    <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
-                    <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
-                    <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
-                    <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
-                    <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
-                </div>
-                <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
+            <div class="buttons">
+                <button id="btn-start" class="btn btn-start" disabled>ПУСК</button>
+                <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
+                <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
+                <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
+                <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
+            <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
         </footer>
     </div>
 
