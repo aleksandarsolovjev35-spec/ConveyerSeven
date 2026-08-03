@@ -183,6 +183,7 @@ const els = {
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
     frameAnalysisModels:  $('frame-analysis-models'),
     frameAnalysisRules:   $('frame-analysis-rules'),
+    frameAnalysisModelsToggle: $('frame-analysis-models-toggle'),
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),
     statsService:         $('stats-service'),

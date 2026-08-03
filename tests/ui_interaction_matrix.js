@@ -207,8 +207,10 @@ async function main() {
           {role, model: 'weights/b.pt', ok: true, elapsed_ms: 15, detections: 1},
         ],
         rules: [
-          {name: 'rule_ok', triggered: false, skipped: false, detail: 'Норма'},
-          {name: 'rule_bad', triggered: true, skipped: false, detail: 'Сработало'},
+          {name: 'rule_ok', triggered: false, skipped: false, detail: 'Норма',
+            consensus: {runs: 3, required_votes: 2, states: [false, false, true]}},
+          {name: 'rule_bad', triggered: true, skipped: false, detail: 'Сработало',
+            consensus: {runs: 3, required_votes: 2, states: [true, false, true]}},
         ],
         updated_at: Date.now() / 1000,
       };
@@ -746,6 +748,30 @@ async function main() {
   assert(window.document.getElementById('jog-panel').classList.contains('is-collapsed'), 'manual controls hidden while selected frame is frozen');
   assert(window.document.querySelectorAll('#frame-analysis-models .frame-analysis-item').length === 2, 'selected models listed');
   assert(window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item').length === 2, 'selected rules listed');
+  // Во время анализа кадра блок «Пороги правил» не показывается.
+  assert(window.document.getElementById('thresholds-panel').classList.contains('is-hidden'), 'во время анализа кадра пороги правил скрыты');
+  // Блок «какие модели сработали» свёрнут по умолчанию, разворачивается по клику.
+  const modelsList = window.document.getElementById('frame-analysis-models');
+  const modelsToggle = window.document.getElementById('frame-analysis-models-toggle');
+  assert(modelsList.classList.contains('frame-analysis-list-collapsed'), 'модели свёрнуты по умолчанию');
+  assert(modelsToggle.getAttribute('aria-expanded') === 'false', 'toggle свёрнут по умолчанию');
+  modelsToggle.click();
+  assert(!modelsList.classList.contains('frame-analysis-list-collapsed'), 'модели разворачиваются по клику');
+  assert(modelsToggle.getAttribute('aria-expanded') === 'true', 'toggle развёрнут');
+  // Правила показывают все три прогона и большинство (2 из 3).
+  const ruleItems = [...window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item')];
+  const consensusStrips = ruleItems.map(item =>
+    item.querySelector('.frame-analysis-consensus')
+      ? item.querySelector('.frame-analysis-consensus').textContent
+      : '');
+  assert(
+    consensusStrips.some(text => text.includes('НОРМА') && text.includes('СРАБОТАЛО')),
+    'правило показывает результат каждого из трёх прогонов',
+  );
+  assert(
+    consensusStrips.some(text => text.includes('ПРОГОНЫ (2 из 3)')),
+    'правило показывает голосование 2 из 3',
+  );
   assert(!viewModeToggle.disabled, 'view-mode toggle enabled during selected analysis');
   calls.length = 0;
   await api.setViewMode('RAW');
@@ -980,8 +1006,10 @@ async function main() {
   api.updateMode('RULES');
   assert(badge.classList.contains('is-faded'), 'badge hidden again at rest');
 
-  // 23. Пороги правил: блоки-карточки, значения — числовым полем,
-  // ползунок прокручивает список, СОХРАНИТЬ реально сохраняет.
+  // 23. Пороги правил: блоки-карточки категорий, значения — числовым
+  // полем, у каждой карточки собственный ползунок прокрутки строк
+  // (появляется только при переполнении), навигация между карточками,
+  // СОХРАНИТЬ реально сохраняет.
   // JOG-режим (jog.active) в IDLE включается автоматически и не должен
   // блокировать редактирование — блокирует только реальное движение.
   currentStatus = lineStatus('IDLE', {
@@ -1009,25 +1037,66 @@ async function main() {
     thresholdsBody.querySelectorAll('.thresholds-item input[type="range"]').length === 0,
     'внутри строк порогов нет ползунков значений',
   );
-  const scrollSlider = thresholdsBody.querySelector('input.thresholds-scroll-slider');
-  assert(!!scrollSlider, 'список прокручивается отдельным ползунком');
+  // Одновременно видна одна карточка; у неё собственный вертикальный
+  // ползунок прокрутки строк (сверху вниз).
+  const activeCard = thresholdsBody.querySelector('.thresholds-card.is-active');
+  assert(!!activeCard, 'видна активная карточка правил');
+  assert(
+    activeCard.querySelectorAll('.thresholds-rows .thresholds-item').length === 2,
+    'в активной карточке собраны строки параметров',
+  );
+  const activeCardSlider = activeCard.querySelector('input.thresholds-scroll-slider');
+  assert(!!activeCardSlider, 'у карточки есть собственный ползунок');
 
-  // jsdom не делает раскладку: подставляем размеры прокрутки, чтобы
-  // проверить, что ползунок двигает список.
-  const thresholdCardsEl = thresholdsBody.querySelector('.thresholds-cards');
+  // jsdom не делает раскладку: подставляем размеры прокрутки строк, чтобы
+  // проверить, что ползунок активен и двигает строки своей карточки.
+  const activeRows = activeCard.querySelector('.thresholds-rows');
   const scrollState = {top: 0};
-  Object.defineProperty(thresholdCardsEl, 'scrollHeight', {value: 1000, configurable: true});
-  Object.defineProperty(thresholdCardsEl, 'clientHeight', {value: 400, configurable: true});
-  Object.defineProperty(thresholdCardsEl, 'scrollTop', {
+  Object.defineProperty(activeRows, 'scrollHeight', {value: 1000, configurable: true});
+  Object.defineProperty(activeRows, 'clientHeight', {value: 400, configurable: true});
+  Object.defineProperty(activeRows, 'scrollTop', {
     configurable: true,
     get: () => scrollState.top,
     set: value => { scrollState.top = value; },
   });
-  thresholdCardsEl.dispatchEvent(new window.Event('scroll'));
-  assert(!scrollSlider.disabled, 'ползунок активен, когда список переполнен');
-  scrollSlider.value = '500';
-  scrollSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
-  assert(scrollState.top === 300, 'ползунок прокручивает список порогов');
+  activeRows.dispatchEvent(new window.Event('scroll'));
+  assert(!activeCardSlider.disabled, 'ползунок активен, когда строки не помещаются');
+  activeCardSlider.value = '500';
+  activeCardSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
+  assert(scrollState.top === 300, 'ползунок прокручивает строки карточки');
+
+  // Переключение между карточками: у следующей карточки одна строка —
+  // ползунок не нужен и остаётся отключённым.
+  const navCounter = thresholdsBody.querySelector('.thresholds-nav-counter');
+  assert(navCounter.textContent === '1 / 2', 'навигация показывает позицию');
+  thresholdsBody.querySelector('.thresholds-nav-next').click();
+  assert(
+    thresholdsBody.querySelector('.thresholds-card.is-active').dataset.rule === 'input_part_presence',
+    'стрелка переключает на следующую карточку',
+  );
+  assert(navCounter.textContent === '2 / 2', 'счётчик навигации обновлён');
+  const secondSlider = thresholdsBody.querySelector(
+    '.thresholds-card.is-active input.thresholds-scroll-slider',
+  );
+  assert(secondSlider.disabled, 'карточка без переполнения ползунок не показывает');
+
+  // Стрелка «‹» возвращает к предыдущей карточке; её ползунок снова
+  // синхронизируется с сохранённой прокруткой строк.
+  const prevBtn = thresholdsBody.querySelector('.thresholds-nav-prev');
+  assert(!prevBtn.disabled, 'на второй карточке «‹» доступна');
+  prevBtn.click();
+  assert(
+    thresholdsBody.querySelector('.thresholds-card.is-active').dataset.rule === 'input_window_geometry',
+    'стрелка возвращает на предыдущую карточку',
+  );
+  assert(navCounter.textContent === '1 / 2', 'счётчик вернулся на первую карточку');
+  assert(prevBtn.disabled, 'на первой карточке «‹» заблокирована');
+  assert(
+    thresholdsBody.querySelector(
+      '.thresholds-card.is-active input.thresholds-scroll-slider',
+    ).disabled === false,
+    'ползунок первой карточки снова активен после возврата',
+  );
 
   // Значение задаётся числовым полем; при активном JOG-режиме
   // редактирование остаётся доступным (jog.busy === false).

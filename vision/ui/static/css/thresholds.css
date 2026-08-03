@@ -2,10 +2,13 @@
 
 /* Панель «Пороги правил»: в правой колонке, над кнопками ручного
    управления лентой (JOG). Видна только до пуска и после полной
-   остановки линии. Каждое правило — отдельная карточка-блок
-   (стилистически как карточки распределителя); значение каждого
-   порога задаётся числовым полем, а вертикальный ползунок справа
-   прокручивает список блоков, когда он не помещается. */
+   остановки линии. Каждое правило (категория) — отдельная карточка-блок
+   (стилистически как карточки распределителя); значение каждого порога
+   задаётся числовым полем. Одновременно видна одна карточка; между
+   карточками переключаются стрелками навигации. У карточки собственный
+   вертикальный ползунок сверху вниз, который появляется только когда
+   строки карточки не помещаются. Блок ограничен по высоте, поэтому
+   правую колонку интерфейса не приходится прокручивать. */
 
 .thresholds-panel {
     display: flex;
@@ -62,13 +65,13 @@
     gap: 6px;
 }
 
-/* Обёртка «список + ползунок прокрутки». Список ограничен по высоте:
-   пороги не занимают место кнопок ручного управления — при нехватке
-   места прокручивается только список. */
+/* Обёртка блока порогов. Блок ограничен по высоте, поэтому правая
+   колонка интерфейса не прокручивается; внизу — навигация между
+   карточками категорий. */
 .thresholds-scroll {
     display: flex;
-    align-items: stretch;
-    gap: 7px;
+    flex-direction: column;
+    gap: 6px;
     min-height: 0;
 }
 
@@ -77,14 +80,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    max-height: min(44vh, 340px);
-    overflow-y: auto;
-    /* Прокрутку выполняет стилизованный ползунок справа. */
-    scrollbar-width: none;
 }
-
-.thresholds-cards::-webkit-scrollbar { display: none; }
 
 .thresholds-empty {
     font-family: var(--font-ui);
@@ -105,6 +101,13 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 5px 7px;
+}
+
+/* Одновременно видна только активная карточка; остальные скрыты.
+   Высота блока при этом ограничена высотой одной карточки, поэтому
+   правая колонка не прокручивается. */
+.thresholds-card:not(.is-active) {
+    display: none;
 }
 
 .thresholds-card-head {
@@ -138,11 +141,32 @@
 
 /* ─── Строка параметра: название | число ────────────────────────── */
 
+/* Тело карточки: строки параметров + собственный вертикальный ползунок.
+   Высота строк ограничена: если строк не видно — включается ползунок
+   карточки; если все строки видны — ползунок отключён. */
+.thresholds-card-body {
+    display: flex;
+    align-items: stretch;
+    gap: 7px;
+    min-height: 0;
+}
+
 .thresholds-rows {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 3px;
+    /* Жёсткий потолок блока порогов: карточка не раздувает правую
+       колонку, избыточные строки доступны через ползунок карточки. */
+    max-height: min(32vh, 224px);
+    overflow-y: auto;
+    /* Прокрутку выполняет стилизованный ползунок справа. */
+    scrollbar-width: none;
 }
+
+.thresholds-rows::-webkit-scrollbar { display: none; }
 
 .thresholds-item {
     display: grid;
@@ -194,10 +218,12 @@
     opacity: 0.55;
 }
 
-/* ─── Ползунок прокрутки списка ────────────────────────────────────
+/* ─── Ползунок прокрутки карточки ──────────────────────────────────
    Вертикальный range-инпут в стиле распределителя: дорожка как
    blade-track, бегунок как blade-marker (квадрат 12×14, accent).
-   Прокручивает список блоков; значения порогов не задаёт. */
+   Работает сверху вниз (min сверху, max снизу); прокручивает строки
+   своей карточки; значения порогов не задаёт. Появляется, только
+   когда строки карточки не помещаются по высоте. */
 
 .thresholds-scroll-slider {
     flex: 0 0 auto;
@@ -247,6 +273,49 @@
 .thresholds-scroll-slider:disabled {
     opacity: 0.35;
     cursor: default;
+}
+
+/* ─── Навигация между карточками категорий ────────────────────────
+   Стрелки «‹ N / всего ›»: переключают активную карточку. Ползунки
+   каждой карточки работают сверху вниз независимо. */
+
+.thresholds-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.thresholds-nav-btn {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 22px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-1);
+    color: var(--text-dim);
+    font: 700 13px var(--font-ui);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.thresholds-nav-btn:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.thresholds-nav-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.thresholds-nav-counter {
+    min-width: 46px;
+    text-align: center;
+    font: 700 9px var(--font-mono);
+    color: var(--text-muted);
+    letter-spacing: 0.4px;
 }
 
 .thresholds-actions {

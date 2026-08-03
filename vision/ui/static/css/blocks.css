@@ -105,3 +105,86 @@
 [data-ui-block="calibration-footer"] {
     min-width: 0;
 }
+
+/* ─── Анализ кадра: свёрнутый по умолчанию блок моделей ────────────
+   Заголовок «какие модели сработали» — кнопка-аккордеон: свёрнута по
+   умолчанию, разворачивается по клику для уточнения деталей. */
+.frame-analysis-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    width: 100%;
+    margin-bottom: 4px;
+    padding: 3px 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    color: var(--text-muted);
+    font-size: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.frame-analysis-group-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.frame-analysis-group-chevron {
+    flex: 0 0 auto;
+    font-size: 9px;
+    line-height: 1;
+    transition: transform 180ms var(--ease);
+}
+
+.frame-analysis-group-toggle[aria-expanded="true"] .frame-analysis-group-chevron {
+    transform: rotate(180deg);
+}
+
+.frame-analysis-list-collapsed {
+    display: none;
+}
+
+/* ─── Пороги правила: «правило — его пороги рядом результат» ─────── */
+.rule-summary-title {
+    color: var(--text-muted);
+    font-size: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.rule-summary-metric-result {
+    flex: 0 0 auto;
+    font: 700 8px var(--font-mono);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/* ─── Голосование 2 из 3 в анализе кадра ──────────────────────────── */
+/* Показывает результат каждого из трёх прогонов, чтобы было видно, что
+   вердикт — большинство (2 из 3), а не один выбранный кадр. */
+.frame-analysis-consensus {
+    grid-column: 1 / -1;
+    display: block;
+    padding: 2px 5px;
+    margin-top: 2px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.3px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.frame-analysis-item.triggered .frame-analysis-consensus { color: var(--bad); }
+.frame-analysis-item.ok .frame-analysis-consensus { color: var(--ok); }
+.frame-analysis-item.skipped .frame-analysis-consensus { color: var(--warn); }
+.frame-analysis-item.part-absent .frame-analysis-consensus { color: var(--warn); }
