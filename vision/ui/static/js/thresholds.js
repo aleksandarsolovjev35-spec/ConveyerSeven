@@ -206,13 +206,20 @@ function hasChangedThresholds() {
 
 function updateThresholdsActions() {
     if (!els.thresholdsSave || !els.thresholdsReset) return;
-    const editable = thresholdsEditableNow() && !!thresholdsData;
-    els.thresholdsReset.disabled = !editable || thresholdsSaveBusy;
-    els.thresholdsSave.disabled = (
-        !editable
-        || thresholdsSaveBusy
-        || !hasChangedThresholds()
+    // ``editable`` от API — отдельная защита: панель может быть видимой в
+    // момент, когда backend уже запретил правку (например, начинается пуск).
+    const editable = (
+        thresholdsEditableNow()
+        && !!thresholdsData
+        && thresholdsData.editable !== false
     );
+    // Не полагаемся только на сравнение чисел. Некоторые браузеры присылают
+    // ``change`` для стрелок number-поля позже, чем оператор ожидает, а
+    // ``input`` — при ручном вводе. Флаг гарантирует, что после любого
+    // редактирования кнопка сохранения сразу доступна.
+    const changed = thresholdsDirty || hasChangedThresholds();
+    els.thresholdsReset.disabled = !editable || thresholdsSaveBusy;
+    els.thresholdsSave.disabled = !editable || thresholdsSaveBusy || !changed;
 }
 
 async function saveThresholds() {
@@ -281,13 +288,19 @@ function setupThresholdsControls() {
         els.thresholdsReset.addEventListener('click', resetThresholds);
     }
     if (els.thresholdsBody) {
-        els.thresholdsBody.addEventListener('input', () => {
+        const markThresholdsChanged = event => {
+            // Делегирование сохраняет обработчик и после перестроения полей.
+            if (!event.target.matches('input.thresholds-input')) return;
             thresholdsDirty = true;
             // Если оператор вернул значения как было (0.3 -> 0.5 -> 0.3),
             // изменений больше нет — снимаем блокировку автоподхвата.
             if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
-        });
+        };
+        // ``input`` покрывает набор с клавиатуры, ``change`` — стрелки и
+        // автозаполнение number-поля в браузерах, где input приходит поздно.
+        els.thresholdsBody.addEventListener('input', markThresholdsChanged);
+        els.thresholdsBody.addEventListener('change', markThresholdsChanged);
     }
     updateThresholdsPanel();
 }

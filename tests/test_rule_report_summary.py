@@ -90,6 +90,21 @@ class RuleReportSummaryTests(unittest.TestCase):
         self.assertLessEqual(len(row["summary_lines"]), SUMMARY_LINES_LIMIT + 1)
         self.assertTrue(row["decisive"])
 
+    def test_triggered_rule_exposes_failed_value_threshold_and_conclusion(self):
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="long_omission", triggered=True,
+            details={"per_role": {"SPIDER_LEFT": {
+                "triggered": True,
+                "excess_pixels": 12,
+                "excess_component_min_px": 3,
+            }}},
+        ))
+        breach = row["threshold_breaches"][0]
+        self.assertEqual(breach["label"], "избыток")
+        self.assertEqual(breach["value"], "12 px")
+        self.assertEqual(breach["threshold"], "3 px")
+        self.assertIn("ИЗБЫТОЧНАЯ ТОЛЩИНА", row["threshold_conclusion"])
+
     def test_normal_rule_has_no_summary_noise(self):
         row = build_rule_report_row(SimpleNamespace(
             rule_name="sinks", triggered=False,

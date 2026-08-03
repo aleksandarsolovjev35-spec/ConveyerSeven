@@ -169,3 +169,28 @@
     padding: 4px 12px;
     font-size: 10px;
 }
+
+/* Анализ кадра: показания, вышедшие за порог, и вывод правила. */
+.frame-analysis-thresholds {
+    grid-column: 1 / -1;
+    padding: 4px 5px;
+    border: 1px solid var(--bad);
+    border-radius: 3px;
+    background: var(--bad-bg);
+    color: var(--bad);
+    font: 8px/1.4 var(--font-mono);
+}
+.frame-analysis-thresholds strong {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 8px;
+    letter-spacing: 0.6px;
+}
+.frame-analysis-threshold-line { overflow-wrap: anywhere; }
+.frame-analysis-threshold-conclusion {
+    margin-top: 3px;
+    padding-top: 3px;
+    border-top: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 700;
+}
