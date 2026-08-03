@@ -334,17 +334,32 @@ function _updateDistributorRoute(ls) {
     const panel = els.distributorDiagnostics;
     if (!panel) return;
 
-    panel.classList.remove('route-good', 'route-bad', 'route-cleanup');
+    panel.classList.remove(
+        'route-good', 'route-bad', 'route-cleanup', 'production-ready',
+    );
     const category = _resolveDistributorRoute(ls);
     if (category === 'GOOD') panel.classList.add('route-good');
     else if (category === 'BAD') panel.classList.add('route-bad');
     else if (category === 'CLEANUP') panel.classList.add('route-cleanup');
+    else {
+        // Нет активного маршрута детали: если распределитель в исходном
+        // положении (DIST1 закрыт, линия не работает), показываем зелёную
+        // заливку — сигнал «можно стартовать».
+        const lineState = (ls.state || state.lineState || '').toUpperCase();
+        const parked = ['IDLE', 'STOPPED'].includes(lineState)
+            && String(ls.dist1_state || '').toUpperCase() === 'IDLE'
+            && Number(ls.dist1_position || 0) === 0;
+        if (parked) {
+            panel.classList.add('production-ready');
+        }
+    }
 
     if (els.distRoute) {
-        setIfChanged(
-            els.distRoute,
-            category ? `→ ${categoryLabel(category)}` : '',
-        );
+        const ready = panel.classList.contains('production-ready');
+        const label = category
+            ? `→ ${categoryLabel(category)}`
+            : (ready ? 'ПРОИЗВОДСТВО ГОТОВО' : '');
+        setIfChanged(els.distRoute, label);
     }
 }
 
