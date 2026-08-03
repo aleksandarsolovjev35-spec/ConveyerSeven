@@ -100,6 +100,11 @@ function updateSelectedAnalysisStatus(ls) {
     const allowed = state.selectedAnalysisActive
         ? controls.selected_model_release === true
         : controls.selected_model_analysis === true;
+
+    const lineState = state.lineState;
+    const showAnalysis = (lineState === 'IDLE' || lineState === 'STOPPED') || state.selectedAnalysisActive;
+    els.analyzeSelectedFrame.classList.toggle('is-hidden', !showAnalysis);
+
     els.analyzeSelectedFrame.disabled = (
         !allowed
         || state.selectedAnalysisPending
