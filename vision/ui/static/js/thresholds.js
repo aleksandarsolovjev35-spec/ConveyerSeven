@@ -50,6 +50,13 @@ async function fetchThresholds(role) {
     const data = await apiGet(`/api/thresholds?role=${encodeURIComponent(role)}`);
     thresholdsBusy = false;
     if (!data) return;
+    // Гонка при быстром переключении камер: ответ прилетел после того, как
+    // оператор уже выбрал другую камеру — данные старой камеры отбрасываем
+    // и подгружаем актуальные.
+    if (data.role !== state.currentCamera) {
+        fetchThresholds(state.currentCamera);
+        return;
+    }
     thresholdsData = data;
     renderThresholdsPanel();
 }
@@ -276,6 +283,9 @@ function setupThresholdsControls() {
     if (els.thresholdsBody) {
         els.thresholdsBody.addEventListener('input', () => {
             thresholdsDirty = true;
+            // Если оператор вернул значения как было (0.3 -> 0.5 -> 0.3),
+            // изменений больше нет — снимаем блокировку автоподхвата.
+            if (!hasChangedThresholds()) thresholdsDirty = false;
             updateThresholdsActions();
         });
     }
