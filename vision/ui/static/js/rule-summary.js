@@ -88,15 +88,17 @@ function rowStatusClass(rows) {
     return 'is-neutral';
 }
 
-// В анализ попадают только метрики с настроенным порогом: это исключает
-// служебные данные и оставляет оператору прямое сравнение «порог — факт».
+// В анализе кадра показываются значения замеров: параметр, настроенный
+// порог и фактическое значение на текущем кадре (с подсветкой норма/брак).
+// Раньше показывались только метрики с порогом — теперь все, чтобы оператор
+// видел полную картину: и пороговые, и служебные измерения.
 function renderRuleMeasurements(rule, pictureRun) {
     const wrap = el('div', 'fa-measurements');
     const runCards = Array.isArray(rule.run_cards) ? rule.run_cards : [];
     if (runCards.length) {
         wrap.appendChild(el(
             'div', 'fa-measurements-heading',
-            `ПАРАМЕТР · ПОРОГ · НА КАДРЕ (ПРОГОН ${pictureRun || 1})`,
+            `ПАРАМЕТР · ПОРОГ · ЗНАЧЕНИЕ (ПРОГОН ${pictureRun || 1})`,
         ));
     }
     const statusStrip = renderRunStatusStrip(rule, pictureRun);
@@ -130,11 +132,37 @@ function renderRuleMeasurements(rule, pictureRun) {
         }
     });
 
+    let hasRows = false;
     for (const [role, metrics] of byRole) {
         const roleLabel = role ? cameraRoleLabel(role) : '';
         for (const metric of metrics.values()) {
-            if (metric.limit) wrap.appendChild(buildMeasurementRow(roleLabel, metric, pictureRun));
+            // Показываем все замеры, а не только с порогом — значения нужны
+            // оператору для понимания картины (порог может быть «—»).
+            wrap.appendChild(buildMeasurementRow(roleLabel, metric, pictureRun));
+            hasRows = true;
         }
     }
+
+    // Если по каким-то причинам метрик нет, но есть summary_cards —
+    // показать их как fallback, чтобы анализ не был пустым.
+    if (!hasRows && Array.isArray(rule.summary_cards)) {
+        for (const card of rule.summary_cards) {
+            const roleLabel = card.role ? cameraRoleLabel(card.role) : '';
+            for (const metric of card.metrics || []) {
+                const fakeMetric = {
+                    label: metric.label || metric.key || '—',
+                    key: metric.key || null,
+                    limit: metric.limit || null,
+                    runs: [{
+                        value: metric.value != null ? metric.value : null,
+                        ok: metric.ok == null ? null : metric.ok,
+                    }],
+                };
+                wrap.appendChild(buildMeasurementRow(roleLabel, fakeMetric, 1));
+                hasRows = true;
+            }
+        }
+    }
+
     return wrap;
 }
