@@ -401,6 +401,23 @@ class UiLayoutTests(unittest.TestCase):
         self.assertNotIn("collectThresholdLabels", self.js)
         self.assertNotIn("thresholdsLabelEdits", self.js)
 
+    def test_thresholds_tabs_share_width_so_every_rule_fits(self):
+        # Все вкладки правил делят ширину ленты поровну (flex: 1 1 0) и
+        # всегда умещаются целиком: переключение мышкой не требует ни
+        # прокрутки ленты, ни попадания по краю вкладки. Жёсткий потолок
+        # ширины вкладки (148px) и раскрытие полного названия по наведению
+        # (320px), из-за которых вкладки уезжали за правый край, убраны.
+        thresholds_css = next(
+            path.read_text(encoding="utf-8")
+            for path in css_paths()
+            if path.name == "thresholds.css"
+        )
+        tab_block = thresholds_css.split(".thresholds-tab {", 1)[1].split("}", 1)[0]
+        self.assertIn("flex: 1 1 0", tab_block)
+        self.assertIn("min-width: 0", tab_block)
+        self.assertNotIn("max-width: 148px", thresholds_css)
+        self.assertNotIn("max-width: 320px", thresholds_css)
+
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)
         self.assertIn("window.__TRANSPORTER_UI_TEST_API__", self.js)
