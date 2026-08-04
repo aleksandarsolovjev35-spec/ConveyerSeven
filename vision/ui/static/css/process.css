@@ -299,13 +299,12 @@
 }
 .splash-exit-btn:hover { background: var(--bad); color: var(--bg-0); }
 
-/* Right-column containment: sections scroll instead of overlapping JOG.
-   Видимый ползунок убран (scrollbar-width: none в stats.css). */
+/* Right-column containment: колонка не прокручивается целиком.
+   Переменная по высоте зона — только «Пороги правил» со своим ползунком. */
 .stats-panel {
     position: relative;
     isolation: isolate;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 10px;
     align-content: flex-start;
 }

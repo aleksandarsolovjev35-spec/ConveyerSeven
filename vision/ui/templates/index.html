@@ -6,17 +6,17 @@
     <meta charset="UTF-8">
     <title>Роботехнический комплекс конвейерного типа 7</title>
     <link rel="stylesheet" href="/static/css/base.css?v=27">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=5">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=8">
     <link rel="stylesheet" href="/static/css/camera.css?v=28">
     <link rel="stylesheet" href="/static/css/axis.css?v=27">
     <link rel="stylesheet" href="/static/css/history-strip.css?v=27">
-    <link rel="stylesheet" href="/static/css/stats.css?v=31">
+    <link rel="stylesheet" href="/static/css/stats.css?v=34">
     <link rel="stylesheet" href="/static/css/jog.css?v=25">
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
-    <link rel="stylesheet" href="/static/css/process.css?v=30">
+    <link rel="stylesheet" href="/static/css/process.css?v=31">
     <link rel="stylesheet" href="/static/css/motion.css?v=26">
-    <link rel="stylesheet" href="/static/css/thresholds.css?v=10">
+    <link rel="stylesheet" href="/static/css/thresholds.css?v=11">
 </head>
 <body>
 
@@ -177,14 +177,15 @@
                 </section>
 
                 <!-- Пороги правил выбранной (главной) камеры: над кнопками
-                     ручного управления лентой. Каждое правило (категория) —
-                     отдельный блок-карточка (как у распределителя); значения
-                     задаются числовыми полями. Одновременно видна одна
-                     карточка; между ними переключаются вкладками-заголовками,
-                     выбранная карточка разворачивается. У каждой карточки
-                     свой вертикальный ползунок (виден только при
-                     переполнении строк). Редактирование доступно только
-                     до пуска и после полной остановки. -->
+                     ручного управления лентой. Высота блока фиксирована —
+                     правая колонка HMI не прокручивается. Каждое правило —
+                     отдельная карточка; значения задаются числовыми полями.
+                     Одновременно видна одна карточка; переключение —
+                     вкладками-заголовками. У каждой карточки свой
+                     вертикальный ползунок (дорожка + бегунок): виден только
+                     при переполнении строк и показывает, вверху списка
+                     оператор или внизу. Редактирование — только до пуска
+                     и после полной остановки. -->
                 <section id="thresholds-panel" class="thresholds-panel is-hidden"
                          data-ui-block="thresholds" aria-label="Пороги правил">
                     <div class="thresholds-head">
@@ -216,9 +217,21 @@
                         </button>
                         <div id="frame-analysis-models" class="frame-analysis-list frame-analysis-list-collapsed"></div>
                     </div>
-                    <div class="frame-analysis-group">
-                        <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
-                        <div id="frame-analysis-rules" class="frame-analysis-list"></div>
+                    <div class="frame-analysis-group frame-analysis-rules-group">
+                        <div class="frame-analysis-rules-toolbar">
+                            <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
+                            <div class="frame-analysis-filter" role="group" aria-label="Фильтр правил">
+                                <button type="button" id="frame-analysis-filter-triggered"
+                                        class="frame-analysis-filter-btn is-active"
+                                        aria-pressed="true">СРАБОТАВШИЕ</button>
+                                <button type="button" id="frame-analysis-filter-all"
+                                        class="frame-analysis-filter-btn"
+                                        aria-pressed="false">ВСЕ</button>
+                            </div>
+                        </div>
+                        <div id="frame-analysis-rules-scroll" class="frame-analysis-rules-scroll">
+                            <div id="frame-analysis-rules" class="frame-analysis-list"></div>
+                        </div>
                     </div>
                 </section>
 
@@ -292,14 +305,14 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=31"></script>
+    <script src="/static/js/core.js?v=32"></script>
     <script src="/static/js/boot.js?v=25"></script>
-    <script src="/static/js/diagnostics.js?v=36"></script>
-    <script src="/static/js/rule-summary.js?v=7"></script>
+    <script src="/static/js/diagnostics.js?v=37"></script>
+    <script src="/static/js/rule-summary.js?v=9"></script>
     <script src="/static/js/status.js?v=30"></script>
     <script src="/static/js/controls.js?v=29"></script>
-    <script src="/static/js/thresholds.js?v=8"></script>
-    <script src="/static/js/cameras.js?v=29"></script>
+    <script src="/static/js/thresholds.js?v=9"></script>
+    <script src="/static/js/cameras.js?v=30"></script>
     <script src="/static/js/jog.js?v=29"></script>
     <script src="/static/js/history.js?v=26"></script>
     <script src="/static/js/bootstrap.js?v=29"></script>
