@@ -7,21 +7,21 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     padding: 10px;
-    overflow-y: auto;
-    overflow-x: hidden;
+    /* Правая колонка целиком не прокручивается: все блоки укладываются
+       в высоту экрана. Переменная по размеру зона «Пороги правил»
+       фиксирована и при переполнении строк крутится своим ползунком. */
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 7px;
     min-height: 0;
-    /* Ползунок всей правой панели полностью убран; прокрутка остаётся
-       только колесом/тачпадом. Видимый ползунок есть только у порогов. */
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
 .stats-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
-/* Все внутренние блоки правой панели тоже без видимых ползунков —
-   кроме кастомного скролла порогов (thresholds-scroll-track). */
+/* Внутренние блоки без нативных ползунков — единственный видимый
+   скролл правой колонки: кастомный thresholds-scroll-track. */
 .stats-panel .stats-summary,
 .stats-panel .stats-body,
 .stats-panel .defects-section,
@@ -95,13 +95,23 @@
 }
 
 .frame-analysis-panel {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
+    min-height: 0;
     max-height: none;
-    overflow: visible;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     padding: 8px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     background: var(--panel-raised);
+}
+.frame-analysis-panel > .frame-analysis-header,
+.frame-analysis-panel > .frame-analysis-message,
+.frame-analysis-panel > .frame-analysis-picture,
+.frame-analysis-panel > .frame-analysis-group:not(.frame-analysis-rules-group) {
+    flex: 0 0 auto;
 }
 
 .frame-analysis-header {
@@ -152,6 +162,8 @@
     text-transform: uppercase;
     font-weight: 700;
 }
+/* Заголовок правил — в toolbar (blocks.css), без нижнего margin. */
+.frame-analysis-rules-toolbar h3 { margin-bottom: 0; }
 
 .frame-analysis-list {
     display: flex;
@@ -165,11 +177,20 @@
     gap: 7px;
     align-items: center;
     min-height: 23px;
-    padding: 3px 5px;
+    padding: 5px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
     background: var(--bg-1);
     font: 8px var(--font-mono);
+}
+/* Название правила — крупнее, чем пороги под ним. */
+.frame-analysis-item > span {
+    font: 700 10px var(--font-ui);
+    letter-spacing: 0.3px;
+    color: var(--text);
+}
+.frame-analysis-item > b {
+    font: 700 9px var(--font-mono);
 }
 
 .frame-analysis-item span {
@@ -427,5 +448,3 @@
     font-size: 12px;
     font-weight: 600;
 }
-
-

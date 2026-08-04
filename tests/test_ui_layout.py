@@ -18,18 +18,40 @@ class UiLayoutTests(unittest.TestCase):
         cls.js = load_javascript()
         cls.css = load_css()
 
-    def test_right_column_scrolls_without_visible_scrollbar(self):
-        # Прокрутка правой колонки остаётся (колесо/тачпад), но видимый
-        # ползунок убран: скроллбар не отвлекает оператора.
-        self.assertIn("overflow-y: auto", self.css)
+    def test_right_column_does_not_scroll_thresholds_have_own_slider(self):
+        # Правая колонка целиком не прокручивается: overflow: hidden.
+        # Переменная по высоте зона — «Пороги правил» с фиксированной
+        # высотой и собственным ползунком (только при переполнении строк).
+        stats_block = self.css.split(".stats-panel {", 1)[1].split("}", 1)[0]
+        self.assertIn("overflow: hidden", stats_block)
+        self.assertNotIn("overflow-y: auto", stats_block)
         self.assertIn("scrollbar-width: none", self.css)
         self.assertIn(
-            ".stats-panel::-webkit-scrollbar { display: none; }",
+            ".stats-panel::-webkit-scrollbar { display: none;",
             self.css,
         )
         self.assertIn(".jog-panel.jog-panel-embedded", self.css)
-        self.assertIn("overflow: hidden", self.css)
         self.assertIn("isolation: isolate", self.css)
+        # Фиксированная высота блока порогов — правая колонка не раздувается.
+        thresholds_css = next(
+            path.read_text(encoding="utf-8")
+            for path in css_paths()
+            if path.name == "thresholds.css"
+        )
+        panel_block = thresholds_css.split(".thresholds-panel {", 1)[1].split(
+            "}", 1
+        )[0]
+        self.assertIn("height: 268px", panel_block)
+        self.assertIn("max-height: 268px", panel_block)
+        self.assertIn("overflow: hidden", panel_block)
+        # Кастомный ползунок: дорожка + бегунок, скрыт когда всё видно.
+        self.assertIn(".thresholds-scroll-track", thresholds_css)
+        self.assertIn(".thresholds-scroll-thumb", thresholds_css)
+        self.assertIn(".thresholds-scroll-track.is-idle", thresholds_css)
+        idle_block = thresholds_css.split(
+            ".thresholds-scroll-track.is-idle {", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("display: none", idle_block)
 
     def test_part_path_is_below_main_camera_and_distributor_is_right_panel(self):
         camera = self.html.index('class="camera-container"')
@@ -325,6 +347,9 @@ class UiLayoutTests(unittest.TestCase):
             "frame-analysis-panel",
             "frame-analysis-models",
             "frame-analysis-rules",
+            "frame-analysis-rules-scroll",
+            "frame-analysis-filter-triggered",
+            "frame-analysis-filter-all",
             "distributor-diagnostics",
             "jog-panel",
         ):

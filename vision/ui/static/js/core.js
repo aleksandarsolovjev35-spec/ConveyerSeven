@@ -124,6 +124,8 @@ const state = {
     viewRun: 0,
     runFramesAvailable: 0,
     frameAnalysisRulesCache: null,
+    // Фильтр списка правил в анализе: 'triggered' | 'all'.
+    frameAnalysisRulesFilter: 'triggered',
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,
@@ -190,6 +192,9 @@ const els = {
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
     frameAnalysisModels:  $('frame-analysis-models'),
     frameAnalysisRules:   $('frame-analysis-rules'),
+    frameAnalysisRulesScroll: $('frame-analysis-rules-scroll'),
+    frameAnalysisFilterTriggered: $('frame-analysis-filter-triggered'),
+    frameAnalysisFilterAll: $('frame-analysis-filter-all'),
     frameAnalysisModelsToggle: $('frame-analysis-models-toggle'),
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),

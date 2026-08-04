@@ -222,15 +222,19 @@ async function main() {
             ]},
           {name: 'rule_bad', triggered: true, skipped: false, detail: 'Сработало',
             consensus: {runs: 3, required_votes: 2, states: [true, false, true]},
+            threshold_breaches: [
+              {role: 'TOP', label: 'Мин. размер лишнего фрагмента, px',
+                key: 'min_extra_fragment_px', value: '4 px', threshold: '3 px'},
+            ],
             run_cards: [
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '12 px', limit: '3 px', ok: false, value_raw: 12, limit_raw: 3},
+                {label: 'Мин. размер лишнего фрагмента, px', value: '12 px', limit: '3 px', ok: false, value_raw: 12, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '4 px', limit: '3 px', ok: false, value_raw: 4, limit_raw: 3},
+                {label: 'Мин. размер лишнего фрагмента, px', value: '4 px', limit: '3 px', ok: false, value_raw: 4, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '30 px', limit: '3 px', ok: false, value_raw: 30, limit_raw: 3},
+                {label: 'Мин. размер лишнего фрагмента, px', value: '30 px', limit: '3 px', ok: false, value_raw: 30, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
             ]},
         ],
@@ -774,7 +778,8 @@ async function main() {
   assert(window.document.getElementById('distributor-diagnostics').classList.contains('is-collapsed'), 'distributor hidden while selected frame is frozen');
   assert(window.document.getElementById('jog-panel').classList.contains('is-collapsed'), 'manual controls hidden while selected frame is frozen');
   assert(window.document.querySelectorAll('#frame-analysis-models .frame-analysis-item').length === 2, 'selected models listed');
-  assert(window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item').length === 2, 'selected rules listed');
+  // По умолчанию фильтр «сработавшие» — только rule_bad.
+  assert(window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item').length === 1, 'selected rules listed (triggered filter)');
   // Во время анализа кадра блок «Пороги правил» не показывается.
   assert(window.document.getElementById('thresholds-panel').classList.contains('is-hidden'), 'во время анализа кадра пороги правил скрыты');
   // Блок «какие модели сработали» свёрнут по умолчанию, разворачивается по клику.
@@ -785,55 +790,118 @@ async function main() {
   modelsToggle.click();
   assert(!modelsList.classList.contains('frame-analysis-list-collapsed'), 'модели разворачиваются по клику');
   assert(modelsToggle.getAttribute('aria-expanded') === 'true', 'toggle развёрнут');
-  // Правила показывают компактно: название, рядом порог, под ним три
-  // замера по трём прогонам голосования 2 из 3.
-  const ruleItems = [...window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item')];
+  // Фильтр по умолчанию — «сработавшие»: нормальные правила скрыты.
+  assert(
+    window.document.getElementById('frame-analysis-filter-triggered')
+      .classList.contains('is-active'),
+    'фильтр «сработавшие» активен по умолчанию',
+  );
+  let ruleItems = [...window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item')];
+  assert(ruleItems.length === 1, 'по умолчанию только сработавшие правила');
+  assert(ruleItems[0].textContent.includes('rule_bad'), 'видно сработавшее правило');
+
+  // «ВСЕ» показывает и норму, и брак.
+  window.document.getElementById('frame-analysis-filter-all').click();
+  ruleItems = [...window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item')];
+  assert(ruleItems.length === 2, 'фильтр «все» показывает оба правила');
+  assert(
+    window.document.getElementById('frame-analysis-filter-all')
+      .classList.contains('is-active'),
+    'кнопка «все» активна',
+  );
+
+  // Скролл только у списка правил.
+  assert(
+    !!window.document.getElementById('frame-analysis-rules-scroll'),
+    'список правил в отдельном скролл-контейнере',
+  );
+
+  // Иерархия: правило → порог + значение → три замера (+Δ).
   const measurementBlocks = [...window.document.querySelectorAll(
     '#frame-analysis-rules .fa-measurements',
   )];
-  assert(measurementBlocks.length === 2, 'у каждого правила есть блок замеров');
-  assert(
-    measurementBlocks.every(block => block.querySelector('.fa-measurements-heading')),
-    'у замеров есть понятная подпись порогов и прогонов',
-  );
-  const rows = [...window.document.querySelectorAll(
-    '#frame-analysis-rules .fa-measurement-row',
+  assert(measurementBlocks.length === 2, 'у каждого правила есть блок порогов');
+  const thresholds = [...window.document.querySelectorAll(
+    '#frame-analysis-rules .fa-threshold',
   )];
-  assert(rows.length >= 2, 'под правилом собраны пороги с тремя замерами');
+  assert(thresholds.length >= 2, 'под правилом — блоки порогов');
   assert(
-    rows.some(row => row.querySelector('.fa-measurement-limit')?.textContent === '0.8 px'),
-    'рядом с правилом показывается порог',
+    thresholds.some(t => t.querySelector('.fa-threshold-name')?.textContent
+      .includes('Допуск отклонения уровня контактов')),
+    'под правилом — название порога',
   );
   assert(
-    rows.some(row => row.textContent.includes('0.5 px') && row.textContent.includes('0.79 px')),
-    'под порогом три замера по прогонам',
+    thresholds.some(t => t.querySelector('.fa-threshold-limit')?.textContent === '0.8 px'),
+    'около названия порога — численное значение порога',
+  );
+  assert(
+    thresholds.some(t => {
+      const chips = [...t.querySelectorAll('.fa-measurement-value')];
+      if (chips.length !== 3) return false;
+      const vals = chips.map(c => c.querySelector('.fa-mv-value')?.textContent);
+      return vals[0] === '0.5 px' && vals[1] === '0.79 px' && vals[2] === '0.9 px';
+    }),
+    'под порогом три замера с трёх прогонов',
+  );
+  // Δ к порогу: value − limit.
+  assert(
+    thresholds.some(t => {
+      const deltas = [...t.querySelectorAll('.fa-mv-delta')].map(d => d.textContent);
+      return deltas.includes('−0.3') || deltas.includes('+0.1') || deltas.includes('−0.01');
+    }),
+    'под замером показана Δ к порогу',
+  );
+  // Решающий порог сработавшего правила выделен.
+  assert(
+    thresholds.some(t => (
+      t.classList.contains('is-decisive')
+      && t.querySelector('.fa-threshold-name')?.textContent
+        .includes('Мин. размер лишнего фрагмента')
+    )),
+    'решающий порог выделен',
   );
   // Замер выбранного для картинки прогона (picture_run=2) помечается.
   assert(
-    rows.some(row => row.querySelector('.fa-measurement-value.is-picture-run')),
+    thresholds.some(t => t.querySelectorAll('.fa-measurement-value')[1]
+      ?.classList.contains('is-picture-run')),
     'замер выбранного для картинки прогона помечен',
   );
   assert(
-    rows.some(row => row.querySelector('.fa-measurement-value.is-bad')),
+    thresholds.some(t => t.querySelector('.fa-measurement-value.is-bad')),
     'замер за порогом подсвечен',
   );
-  // Пропущенная метрика в одном из прогонов не сдвигает замеры: слоты
-  // фиксированы номерами прогонов, отсутствующий замер — прочерк.
+  assert(
+    thresholds.some(t => t.querySelector('.fa-measurement-value[data-run="1"]')),
+    'у замера есть data-run для клика',
+  );
+
+  // Пропущенная метрика в одном из прогонов не сдвигает замеры.
+  api.setFrameAnalysisRulesFilter('all');
   const synthetic = {
     name: 'synth_rule', triggered: false, skipped: false, status_label: 'НОРМА',
     run_cards: [
-      [{role: 'TOP', metrics: [{label: 'Метрика', value: '1 px', limit: '3 px', ok: true}]}],
+      [{role: 'TOP', metrics: [{label: 'Метрика', value: '1 px', limit: '3 px', ok: true, value_raw: 1, limit_raw: 3}]}],
       [],
-      [{role: 'TOP', metrics: [{label: 'Метрика', value: '3 px', limit: '3 px', ok: true}]}],
+      [{role: 'TOP', metrics: [{label: 'Метрика', value: '3 px', limit: '3 px', ok: true, value_raw: 3, limit_raw: 3}]}],
     ],
   };
   window.eval(`renderFrameAnalysisRules(${JSON.stringify([synthetic])}, 3);`);
-  const synthRow = window.document.querySelector('#frame-analysis-rules .fa-measurement-row');
-  const synthChips = [...synthRow.querySelectorAll('.fa-measurement-value')];
+  const synthBlock = window.document.querySelector('#frame-analysis-rules .fa-threshold');
+  const synthChips = [...synthBlock.querySelectorAll('.fa-measurement-value')];
   assert(synthChips.length === 3, 'три слота замеров даже при пропуске в прогоне');
-  assert(synthChips[0].textContent === '1: 1 px', 'замер первого прогона на своём месте');
-  assert(synthChips[1].textContent === '2: —', 'пропущенный замер — прочерк');
+  assert(
+    synthChips[0].querySelector('.fa-mv-value')?.textContent === '1 px',
+    'замер первого прогона на своём месте',
+  );
+  assert(
+    synthChips[1].querySelector('.fa-mv-value')?.textContent === '—',
+    'пропущенный замер — прочерк',
+  );
   assert(synthChips[2].classList.contains('is-picture-run'), 'рамка выбранного прогона не сдвинулась');
+  assert(
+    synthBlock.querySelector('.fa-threshold-limit')?.textContent === '3 px',
+    'значение порога рядом с названием',
+  );
 
   // Правило с непостроенной областью (fail-closed): показывается полоса
   // статусов прогонов «ОБЛАСТЬ НЕ ПОСТРОЕНА», даже без замеров.
@@ -893,9 +961,25 @@ async function main() {
   assert(
     [...window.document.querySelectorAll(
       '#frame-analysis-rules .fa-measurement-value.is-picture-run',
-    )].some(chip => chip.textContent === '3: 0.9 px'),
+    )].some(chip => chip.querySelector('.fa-mv-value')?.textContent === '0.9 px'),
     'рамка замера следует за выбранным прогоном',
   );
+
+  // Клик по замеру переключает прогон на главной камере (обратная связь).
+  const clickableChip = window.document.querySelector(
+    '#frame-analysis-rules .fa-measurement-value[data-run="1"]',
+  );
+  assert(!!clickableChip, 'замер прогона 1 кликабелен');
+  clickableChip.dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
+  assert(api.state.viewRun === 1, 'клик по замеру переключает на прогон 1');
+  assert(
+    window.document.getElementById('main-camera').src.includes('run=1'),
+    'главный кадр после клика по замеру — прогон 1',
+  );
+  // Возвращаем прогон 3 для дальнейших проверок цикла.
+  api.setMainCameraRun(3);
+  assert(api.state.viewRun === 3, 'setMainCameraRun возвращает прогон 3');
+
   // Настоящий клик по контейнеру камеры циклит дальше (1/3).
   window.document.querySelector('.camera-container')
     .dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
@@ -1206,15 +1290,17 @@ async function main() {
     activeCard.querySelectorAll('.thresholds-rows .thresholds-item').length === 2,
     'в активной карточке собраны строки параметров',
   );
-  const activeCardSlider = activeCard.querySelector('input.thresholds-scroll-slider');
-  assert(!!activeCardSlider, 'у карточки есть собственный ползунок');
+  const activeCardTrack = activeCard.querySelector('.thresholds-scroll-track');
+  const activeCardThumb = activeCard.querySelector('.thresholds-scroll-thumb');
+  assert(!!activeCardTrack, 'у карточки есть собственный ползунок (дорожка)');
+  assert(!!activeCardThumb, 'у ползунка есть бегунок-положение');
   assert(
     activeCard.classList.contains('is-expanded'),
-    'выбранная карточка правила развёрнута',
+    'выбранная карточка правила активна',
   );
 
   // jsdom не делает раскладку: подставляем размеры прокрутки строк, чтобы
-  // проверить, что ползунок активен и двигает строки своей карточки.
+  // проверить, что ползунок активен, виден и двигает строки карточки.
   const activeRows = activeCard.querySelector('.thresholds-rows');
   const scrollState = {top: 0};
   Object.defineProperty(activeRows, 'scrollHeight', {value: 1000, configurable: true});
@@ -1224,15 +1310,23 @@ async function main() {
     get: () => scrollState.top,
     set: value => { scrollState.top = value; },
   });
+  Object.defineProperty(activeCardTrack, 'clientHeight', {value: 200, configurable: true});
   activeRows.dispatchEvent(new window.Event('scroll'));
-  assert(!activeCardSlider.disabled, 'ползунок активен, когда строки не помещаются');
   assert(
-    !activeCardSlider.classList.contains('is-idle'),
+    !activeCardTrack.classList.contains('is-idle'),
     'при переполнении ползунок видим',
   );
-  activeCardSlider.value = '500';
-  activeCardSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
-  assert(scrollState.top === 300, 'ползунок прокручивает строки карточки');
+  // Клик по середине дорожки: бегунок прыгает, строки прокручиваются.
+  activeCardTrack.getBoundingClientRect = () => ({
+    top: 0, left: 0, bottom: 200, right: 10, width: 10, height: 200,
+  });
+  Object.defineProperty(activeCardThumb, 'offsetHeight', {
+    value: 28, configurable: true,
+  });
+  activeCardTrack.dispatchEvent(new window.MouseEvent('mousedown', {
+    bubbles: true, clientY: 100, clientX: 5,
+  }));
+  assert(scrollState.top > 0, 'ползунок прокручивает строки карточки');
 
   // Переключение между правилами — заголовки-вкладки, как в браузере:
   // у следующей карточки одна строка — ползунок не нужен и остаётся
@@ -1303,18 +1397,28 @@ async function main() {
     hoverTab.style.flexBasis === '',
     'уход с вкладки возвращает ленту к равным долям',
   );
-  const secondSlider = thresholdsBody.querySelector(
-    '.thresholds-card.is-active input.thresholds-scroll-slider',
+  const secondTrack = thresholdsBody.querySelector(
+    '.thresholds-card.is-active .thresholds-scroll-track',
   );
-  assert(secondSlider.disabled, 'карточка без переполнения ползунок не показывает');
+  // У второй карточки одна строка — в jsdom clientHeight/scrollHeight
+  // по умолчанию 0, maxScroll=0 → is-idle. Явно задаём «всё видно».
+  const secondRows = thresholdsBody.querySelector(
+    '.thresholds-card.is-active .thresholds-rows',
+  );
+  Object.defineProperty(secondRows, 'scrollHeight', {value: 80, configurable: true});
+  Object.defineProperty(secondRows, 'clientHeight', {value: 200, configurable: true});
+  Object.defineProperty(secondRows, 'scrollTop', {
+    configurable: true, get: () => 0, set: () => {},
+  });
+  secondRows.dispatchEvent(new window.Event('scroll'));
   assert(
-    secondSlider.classList.contains('is-idle'),
+    secondTrack.classList.contains('is-idle'),
     'когда все строки видны, ползунок полностью скрыт',
   );
   assert(
     thresholdsBody.querySelector('.thresholds-card.is-active')
       .classList.contains('is-expanded'),
-    'карточка выбранного правила разворачивается при переключении вкладок',
+    'карточка выбранного правила активна при переключении вкладок',
   );
 
   // Клик по первой вкладке возвращает к первой карточке; её ползунок
@@ -1325,26 +1429,31 @@ async function main() {
     'вкладка возвращает на первую карточку',
   );
   assert(tabs[0].classList.contains('is-active'), 'первая вкладка снова активна');
+  const firstTrackAgain = thresholdsBody.querySelector(
+    '.thresholds-card.is-active .thresholds-scroll-track',
+  );
+  const firstRowsAgain = thresholdsBody.querySelector(
+    '.thresholds-card.is-active .thresholds-rows',
+  );
+  Object.defineProperty(firstRowsAgain, 'scrollHeight', {value: 1000, configurable: true});
+  Object.defineProperty(firstRowsAgain, 'clientHeight', {value: 400, configurable: true});
+  Object.defineProperty(firstRowsAgain, 'scrollTop', {
+    configurable: true, get: () => 100, set: () => {},
+  });
+  Object.defineProperty(firstTrackAgain, 'clientHeight', {value: 200, configurable: true});
+  firstRowsAgain.dispatchEvent(new window.Event('scroll'));
   assert(
-    thresholdsBody.querySelector(
-      '.thresholds-card.is-active input.thresholds-scroll-slider',
-    ).disabled === false,
+    !firstTrackAgain.classList.contains('is-idle'),
     'ползунок первой карточки снова активен после возврата',
   );
 
-  // Повторный клик по активной вкладке сворачивает карточку правила,
-  // ещё один клик — разворачивает обратно.
-  tabs[0].click();
-  assert(
-    !thresholdsBody.querySelector('.thresholds-card.is-active')
-      .classList.contains('is-expanded'),
-    'клик по активной вкладке сворачивает карточку',
-  );
+  // Повторный клик по активной вкладке не сворачивает карточку:
+  // высота панели фиксирована, expand/collapse больше не нужен.
   tabs[0].click();
   assert(
     thresholdsBody.querySelector('.thresholds-card.is-active')
       .classList.contains('is-expanded'),
-    'повторный клик по активной вкладке разворачивает карточку',
+    'клик по активной вкладке оставляет карточку развёрнутой',
   );
 
   // Значение задаётся числовым полем; при активном JOG-режиме

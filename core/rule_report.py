@@ -810,6 +810,7 @@ def _threshold_breaches(summary_cards: list) -> list:
             breaches.append({
                 "role": card.get("role", ""),
                 "label": metric.get("label", "показатель"),
+                "key": metric.get("key"),
                 "value": metric.get("value", "—"),
                 "threshold": metric.get("limit"),
             })

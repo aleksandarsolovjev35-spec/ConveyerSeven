@@ -360,16 +360,31 @@ class RuleSummaryCardTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("renderRuleMeasurements", js)
-        self.assertIn("fa-measurement-row", js)
-        self.assertIn("порог:", js)
+        self.assertIn("fa-threshold", js)
+        self.assertIn("buildThresholdBlock", js)
+        self.assertIn("fa-threshold-runs", js)
+        self.assertIn("formatDeltaSimple", js)
+        self.assertIn("is-decisive", js)
+        self.assertIn("data-run", js)
         diagnostics = (ROOT / "vision/ui/static/js/diagnostics.js").read_text(
             encoding="utf-8"
         )
         self.assertIn("renderRuleMeasurements(rule, pictureRun)", diagnostics)
         self.assertIn("report.picture_run", diagnostics)
-        css = (ROOT / "vision/ui/static/css/thresholds.css").read_text(
+        self.assertIn("setFrameAnalysisRulesFilter", diagnostics)
+        self.assertIn("setupFrameAnalysisRunClicks", diagnostics)
+        cameras = (ROOT / "vision/ui/static/js/cameras.js").read_text(
             encoding="utf-8"
         )
+        self.assertIn("function setMainCameraRun", cameras)
+        css = (ROOT / "vision/ui/static/css/blocks.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".fa-threshold", css)
+        self.assertIn(".fa-threshold.is-decisive", css)
+        self.assertIn(".fa-mv-delta", css)
+        self.assertIn(".frame-analysis-rules-scroll", css)
+        self.assertIn(".frame-analysis-filter-btn", css)
         self.assertIn(".fa-measurement-value.is-ok", css)
         self.assertIn(".fa-measurement-value.is-bad", css)
         self.assertIn(".fa-measurement-value.is-picture-run", css)

@@ -34,21 +34,31 @@ function updateRunCycleAvailability() {
         : '';
 }
 
-function cycleMainCameraRun() {
-    if (state.splashActive || state.offline) return;
-    // Переключение прогонов относится только к статичным кадрам анализа:
-    // замороженный кадр выбранной камеры или стоп-кадр рабочего цикла.
-    // Во время движения (поток) или JOG-хода кадры прогонов неактуальны.
+// Показать конкретный прогон (1..N) на главной камере и в замерах.
+// Вызывается кликом по замеру в анализе кадра и циклом N/клик по кадру.
+function setMainCameraRun(runNumber) {
+    if (state.splashActive || state.offline) return false;
     const staticShown = state.selectedAnalysisActive
         || (!state.liveStreaming && state.liveStatic);
-    if (!staticShown) return;
-    if (state.runFramesAvailable < 3) return;
-
-    state.viewRun = (state.viewRun % state.runFramesAvailable) + 1;
+    if (!staticShown) return false;
+    if (state.runFramesAvailable < 3) return false;
+    const target = Number(runNumber);
+    if (!Number.isFinite(target) || target < 1) return false;
+    const next = ((Math.floor(target) - 1) % state.runFramesAvailable) + 1;
+    if (state.viewRun === next) {
+        // Уже этот прогон — только подсветить рамку в списке.
+        if (
+            typeof renderFrameAnalysisRules === 'function'
+            && state.frameAnalysisRulesCache
+        ) {
+            renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+        }
+        return true;
+    }
+    state.viewRun = next;
 
     clearLivePullTimer();
     if (state.selectedAnalysisActive) {
-        // Замороженный кадр анализа: перезапрашиваем с новым run.
         showSelectedAnalysisFrame(
             state.selectedAnalysisRole || state.currentCamera,
         );
@@ -61,13 +71,21 @@ function cycleMainCameraRun() {
     }
 
     if (typeof applyLiveBadge === 'function') applyLiveBadge(state.jogActive);
-    // Рамка выбранного замера следует за просматриваемым прогоном.
     if (
         typeof renderFrameAnalysisRules === 'function'
         && state.frameAnalysisRulesCache
     ) {
         renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
     }
+    return true;
+}
+
+function cycleMainCameraRun() {
+    if (state.runFramesAvailable < 3) return;
+    const next = state.viewRun > 0
+        ? (state.viewRun % state.runFramesAvailable) + 1
+        : 1;
+    setMainCameraRun(next);
 }
 
 function setupMainCameraRunCycle() {

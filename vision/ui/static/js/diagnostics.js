@@ -202,13 +202,8 @@ function updateFrameAnalysisStatus(ls) {
         setIfChanged(els.frameAnalysisPicture, '');
     }
     setIfChanged(els.frameAnalysisModelsTitle, `МОДЕЛИ · ${models.length}`);
-    const decisive = decisiveRules(rules);
-    setIfChanged(
-        els.frameAnalysisRulesTitle,
-        decisive.length === rules.length
-            ? `ПРАВИЛА · ${rules.length}`
-            : `ПРАВИЛА · ${decisive.length}/${rules.length}`,
-    );
+    updateFrameAnalysisFilterButtons();
+    updateFrameAnalysisRulesTitle(rules);
 
     const renderKey = JSON.stringify({
         kind: report.kind,
@@ -218,20 +213,23 @@ function updateFrameAnalysisStatus(ls) {
         models,
         rules,
     });
-    if (state.lastFrameAnalysisRenderKey === renderKey) return;
+    if (state.lastFrameAnalysisRenderKey === renderKey) {
+        // Данные те же — только фильтр/прогон могли смениться снаружи.
+        return;
+    }
     state.lastFrameAnalysisRenderKey = renderKey;
 
-    // Прогон, по которому построена картинка (кадр с разметкой): его
-    // замеры в строках «три замера порога» помечаются рамкой. При новом
-    // анализе показываем выбранный сервером прогон; по клику на главный
-    // кадр оператор переключает его (state.viewRun).
+    // Прогон картинки: при новом анализе берём серверный picture_run,
+    // если оператор ещё не листает прогоны вручную.
     const pictureRun = Number(report.picture_run) || 0;
     state.frameAnalysisRulesCache = rules;
-    // Порядок показа кадров — всегда хронологический. picture_run нужен
-    // только для метаданных/подсветки, но не должен перескакивать картинку
-    // сразу на наиболее согласованный прогон.
     if (!(state.runFramesAvailable >= 3 && state.viewRun >= 1)) {
         state.viewRun = pictureRun;
+    }
+    // Новый отчёт — по умолчанию «сработавшие», чтобы не раздувать список.
+    if (state.frameAnalysisRulesFilter !== 'all'
+        && state.frameAnalysisRulesFilter !== 'triggered') {
+        state.frameAnalysisRulesFilter = 'triggered';
     }
     renderFrameAnalysisModels(models);
     renderFrameAnalysisRules(rules, state.viewRun);
@@ -316,6 +314,64 @@ function decisiveRules(rules) {
     return rules;
 }
 
+// Правила, влияющие на решение: сработавшие / пропуск / нет корпуса.
+function triggeredRules(rules) {
+    const base = decisiveRules(rules);
+    const filtered = base.filter(rule => (
+        rule.part_absent === true
+        || rule.triggered === true
+        || rule.skipped === true
+    ));
+    // Если все в норме — показываем полный список, иначе пустой фильтр
+    // выглядел бы как «анализа нет».
+    return filtered.length ? filtered : base;
+}
+
+function visibleFrameAnalysisRules(rules) {
+    const base = decisiveRules(rules);
+    if (state.frameAnalysisRulesFilter === 'all') return base;
+    return triggeredRules(rules);
+}
+
+function updateFrameAnalysisRulesTitle(rules) {
+    if (!els.frameAnalysisRulesTitle) return;
+    const all = decisiveRules(rules || []);
+    const bad = triggeredRules(rules || []);
+    const showing = state.frameAnalysisRulesFilter === 'all' ? all : bad;
+    // Если фильтр «сработавшие», а брака нет — bad === all (fallback).
+    const label = state.frameAnalysisRulesFilter === 'all'
+        ? `ПРАВИЛА · ${showing.length}`
+        : (bad.length === all.length && !all.some(r => r.triggered || r.part_absent || r.skipped)
+            ? `ПРАВИЛА · ${showing.length}`
+            : `ПРАВИЛА · ${showing.length}/${all.length}`);
+    setIfChanged(els.frameAnalysisRulesTitle, label);
+}
+
+function updateFrameAnalysisFilterButtons() {
+    const filter = state.frameAnalysisRulesFilter === 'all' ? 'all' : 'triggered';
+    if (els.frameAnalysisFilterTriggered) {
+        const on = filter === 'triggered';
+        els.frameAnalysisFilterTriggered.classList.toggle('is-active', on);
+        els.frameAnalysisFilterTriggered.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    if (els.frameAnalysisFilterAll) {
+        const on = filter === 'all';
+        els.frameAnalysisFilterAll.classList.toggle('is-active', on);
+        els.frameAnalysisFilterAll.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
+
+function setFrameAnalysisRulesFilter(next) {
+    const value = next === 'all' ? 'all' : 'triggered';
+    if (state.frameAnalysisRulesFilter === value) return;
+    state.frameAnalysisRulesFilter = value;
+    updateFrameAnalysisFilterButtons();
+    if (state.frameAnalysisRulesCache) {
+        updateFrameAnalysisRulesTitle(state.frameAnalysisRulesCache);
+        renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+    }
+}
+
 function ruleSummaryLines(rule) {
     if (Array.isArray(rule.summary_lines) && rule.summary_lines.length) {
         return rule.summary_lines.filter(Boolean).map(String);
@@ -329,6 +385,8 @@ function ruleSummaryLines(rule) {
 
 function renderFrameAnalysisRules(rules, pictureRun) {
     els.frameAnalysisRules.replaceChildren();
+    updateFrameAnalysisFilterButtons();
+    updateFrameAnalysisRulesTitle(rules);
     if (!rules.length) {
         appendFrameAnalysisEmpty(
             els.frameAnalysisRules,
@@ -336,7 +394,16 @@ function renderFrameAnalysisRules(rules, pictureRun) {
         );
         return;
     }
-    const visibleRules = decisiveRules(rules);
+    const visibleRules = visibleFrameAnalysisRules(rules);
+    if (!visibleRules.length) {
+        appendFrameAnalysisEmpty(
+            els.frameAnalysisRules,
+            state.frameAnalysisRulesFilter === 'triggered'
+                ? 'Сработавших правил нет'
+                : 'Ожидание результатов правил',
+        );
+        return;
+    }
     for (const rule of visibleRules) {
         const item = document.createElement('div');
         const stateClass = rule.neutral
@@ -371,8 +438,7 @@ function renderFrameAnalysisRules(rules, pictureRun) {
             item.classList.add('has-human-cause');
         }
 
-        // Компактно: под правилом — все пороги с тремя замерами по прогонам
-        // (значение выбранного для картинки прогона помечается рамкой).
+        // Пороги + три замера; решающий порог выделен в rule-summary.js.
         const measurements = renderRuleMeasurements(rule, pictureRun);
         if (measurements.children.length) {
             item.classList.add('has-detail');
@@ -416,6 +482,43 @@ function setupFrameAnalysisModelsCollapse() {
     });
 }
 
+// Клик по замеру → тот же прогон на главной камере.
+function setupFrameAnalysisRunClicks() {
+    const list = els.frameAnalysisRules;
+    if (!list || list.dataset.runClicksBound === '1') return;
+    list.dataset.runClicksBound = '1';
+    const activate = (event) => {
+        const chip = event.target.closest('.fa-measurement-value[data-run]');
+        if (!chip || !list.contains(chip)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const run = Number(chip.dataset.run);
+        if (!run) return;
+        if (typeof setMainCameraRun === 'function') {
+            setMainCameraRun(run);
+        }
+    };
+    list.addEventListener('click', activate);
+    list.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        activate(event);
+    });
+}
+
+function setupFrameAnalysisFilter() {
+    if (els.frameAnalysisFilterTriggered) {
+        els.frameAnalysisFilterTriggered.addEventListener('click', () => {
+            setFrameAnalysisRulesFilter('triggered');
+        });
+    }
+    if (els.frameAnalysisFilterAll) {
+        els.frameAnalysisFilterAll.addEventListener('click', () => {
+            setFrameAnalysisRulesFilter('all');
+        });
+    }
+    updateFrameAnalysisFilterButtons();
+}
+
 function showPendingSelectedFrameAnalysis() {
     if (!els.frameAnalysisPanel) return;
     state.frameAnalysisRulesCache = null;
@@ -439,6 +542,8 @@ function showPendingSelectedFrameAnalysis() {
 
 function setupSelectedFrameAnalysis() {
     setupFrameAnalysisModelsCollapse();
+    setupFrameAnalysisRunClicks();
+    setupFrameAnalysisFilter();
     if (!els.analyzeSelectedFrame) return;
     els.analyzeSelectedFrame.addEventListener('click', async () => {
         if (els.analyzeSelectedFrame.disabled || state.selectedAnalysisPending) return;
