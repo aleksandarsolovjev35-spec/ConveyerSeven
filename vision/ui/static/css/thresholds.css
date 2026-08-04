@@ -121,9 +121,9 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px; /* tighter gap для компактности */
     min-height: 22px;
-    padding: 3px 6px 4px;
+    padding: 2px 4px 3px; /* tighter padding: меньше пустого пространства */
     border: 1px solid var(--border);
     border-bottom: none;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;

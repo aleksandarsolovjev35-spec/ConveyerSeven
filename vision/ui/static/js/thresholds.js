@@ -243,15 +243,13 @@ function renderThresholdsBody() {
     });
 
     // Раскрытие заголовка по наведению: вкладка «разъезжается» до
-    // полного названия, соседние вкладки уступают ширину. flex-basis:
-    // auto CSS анимировать не умеет (auto — не длина), поэтому измеряем
-    // полную ширину названия и подставляем её пикселями — раскрытие
-    // получается плавным (transition на flex-basis в thresholds.css).
-    // Сжатие вкладки остаётся разрешённым, так что лента никогда не
-    // выходит за правый край. На устройствах без наведения (тачскрины)
-    // лента не дёргается: полное название остаётся в подсказке title.
-    const THRESHOLDS_TAB_GAP = 4;   // зазор между названием и счётчиком
-    const THRESHOLDS_TAB_PAD = 14;  // поля 6+6 и рамки 1+1 вкладки
+    // **только полного названия** (без лишних пустых мест).
+    // Измеряем точную ширину текста + счётчика + минимальные поля.
+    // flex-basis: auto CSS анимировать не умеет, поэтому подставляем
+    // пиксели — раскрытие плавное. Сжатие разрешено, лента не выезжает
+    // за край. На тачскринах — только title.
+    const THRESHOLDS_TAB_GAP = 2;   // минимальный зазор между названием и счётчиком
+    const THRESHOLDS_TAB_PAD = 8;   // только padding + border, без лишних пустот (tight fit)
     const hoverCapable = !window.matchMedia
         || window.matchMedia('(hover: hover)').matches;
     tabs.addEventListener('pointerover', event => {
@@ -262,18 +260,15 @@ function renderThresholdsBody() {
         const count = tab.querySelector('.thresholds-tab-count');
         const textWidth = label ? label.scrollWidth : 0;
         const countWidth = count ? count.offsetWidth : 0;
-        tab.style.flexBasis = String(
-            textWidth + THRESHOLDS_TAB_GAP + countWidth + THRESHOLDS_TAB_PAD,
-        ) + 'px';
+        // Точная ширина: только название + счётчик + минимальные поля
+        const needed = textWidth + THRESHOLDS_TAB_GAP + countWidth + THRESHOLDS_TAB_PAD;
+        tab.style.flexBasis = needed + 'px';
     });
     tabs.addEventListener('pointerout', event => {
         if (!hoverCapable) return;
         const tab = event.target.closest('.thresholds-tab');
         if (!tab) return;
         const next = event.relatedTarget;
-        // Переход на элемент внутри вкладки (например, на счётчик)
-        // раскрытие не отменяет; уход на другую вкладку или за пределы
-        // ленты возвращает её к равным долям.
         if (next && tab.contains(next)) return;
         tab.style.flexBasis = '';
     });
