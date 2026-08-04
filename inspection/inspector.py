@@ -310,6 +310,7 @@ class Inspector:
                 if run_rule_results is not None
                 else [[], [], []]
             ),
+            run_vision_results=[dict(item) for item in vision_runs],
         )
 
     # Одиночный прогон для диагностики и offline-анализа

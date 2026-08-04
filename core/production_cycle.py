@@ -1398,6 +1398,9 @@ class ProductionCycle:
                 raw_frames=result.raw_frames,
                 annotated_frames=result.annotated,
                 raw_overlay_frames=result.raw_overlay_frames,
+                run_frames=getattr(result, "run_frames", None),
+                run_rule_results=getattr(result, "run_rule_results", None),
+                run_vision_results=getattr(result, "run_vision_results", None),
             )
 
         print(
@@ -1454,6 +1457,9 @@ class ProductionCycle:
                     raw_frames=result.raw_frames,
                     annotated_frames=result.annotated,
                     raw_overlay_frames=result.raw_overlay_frames,
+                    run_frames=getattr(result, "run_frames", None),
+                    run_rule_results=getattr(result, "run_rule_results", None),
+                    run_vision_results=getattr(result, "run_vision_results", None),
                 )
 
             print(

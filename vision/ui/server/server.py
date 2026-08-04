@@ -713,7 +713,7 @@ class UIServer:
             # кадром. Это особенно важно при переключении трёх кадров: если
             # роль отсутствует в наборе стадии, fallback показывал старую
             # деталь и выглядел как случайно «не тот» прогон.
-            if frame is None and not requested_run_is_valid:
+            if frame is None:
                 frame = self.frames.get(role)
             if frame is None:
                 return None
