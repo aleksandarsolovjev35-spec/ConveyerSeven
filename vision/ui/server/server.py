@@ -610,6 +610,11 @@ class UIServer:
                 list(rows) if isinstance(rows, (list, tuple)) else []
                 for rows in rows_by_run
             ]
+            # Правила приходят сразу после кадров. Инвалидируем уже
+            # начавшийся рендер, иначе первый запрос мог закэшировать кадр
+            # без разметки, а параллельный запрос — устаревшую разметку.
+            self._jpeg_cache.clear()
+            self._cache_version += 1
 
     def get_frame_version(self, role: str) -> int:
         with self.lock:
@@ -693,14 +698,22 @@ class UIServer:
                 return cached
             frame = None
             run_index = None
+            requested_run_is_valid = False
             if run:
                 run_index = run - 1
-                if (
+                requested_run_is_valid = (
                     0 <= run_index < len(self.run_frames)
+                )
+                if (
+                    requested_run_is_valid
                     and role in self.run_frames[run_index]
                 ):
                     frame = self.run_frames[run_index][role]
-            if frame is None:
+            # Не подменяем запрошенный кадр прогона текущим live/evidence
+            # кадром. Это особенно важно при переключении трёх кадров: если
+            # роль отсутствует в наборе стадии, fallback показывал старую
+            # деталь и выглядел как случайно «не тот» прогон.
+            if frame is None and not requested_run_is_valid:
                 frame = self.frames.get(role)
             if frame is None:
                 return None

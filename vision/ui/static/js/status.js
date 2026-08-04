@@ -68,6 +68,16 @@ async function fetchStatus() {
     if (typeof status.frame_runs === 'number') {
         const available = Math.max(0, Math.floor(status.frame_runs));
         if (available !== state.runFramesAvailable) {
+            // Первый показ всегда начинается с первого фактически снятого
+            // кадра. Не выбираем evidence/picture_run автоматически: это
+            // может быть третий прогон и ломает хронологический порядок.
+            if (state.runFramesAvailable === 0 && available > 0) {
+                state.viewRun = 1;
+            } else if (available === 0) {
+                state.viewRun = 0;
+            } else if (state.viewRun > available) {
+                state.viewRun = 1;
+            }
             state.runFramesAvailable = available;
             if (typeof updateRunCycleAvailability === 'function') {
                 updateRunCycleAvailability();
