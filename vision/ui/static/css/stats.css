@@ -8,15 +8,47 @@
     border-radius: var(--radius);
     padding: 10px;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 7px;
     min-height: 0;
-    /* Ползунок правой колонки убран; прокрутка остаётся (колесо/тачпад). */
+    /* Ползунок всей правой панели полностью убран; прокрутка остаётся
+       только колесом/тачпадом. Видимый ползунок есть только у порогов. */
     scrollbar-width: none;
+    -ms-overflow-style: none;
 }
+.stats-panel::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
-.stats-panel::-webkit-scrollbar { display: none; }
+/* Все внутренние блоки правой панели тоже без видимых ползунков —
+   кроме кастомного скролла порогов (thresholds-scroll-track). */
+.stats-panel .stats-summary,
+.stats-panel .stats-body,
+.stats-panel .defects-section,
+.stats-panel .stats-service,
+.stats-panel .distributor-panel,
+.stats-panel .frame-analysis-panel,
+.stats-panel .jog-panel,
+.stats-panel .thresholds-panel,
+.stats-panel .thresholds-tabs,
+.stats-panel .thresholds-rows {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.stats-panel .stats-summary::-webkit-scrollbar,
+.stats-panel .stats-body::-webkit-scrollbar,
+.stats-panel .defects-section::-webkit-scrollbar,
+.stats-panel .stats-service::-webkit-scrollbar,
+.stats-panel .distributor-panel::-webkit-scrollbar,
+.stats-panel .frame-analysis-panel::-webkit-scrollbar,
+.stats-panel .jog-panel::-webkit-scrollbar,
+.stats-panel .thresholds-panel::-webkit-scrollbar,
+.stats-panel .thresholds-tabs::-webkit-scrollbar,
+.stats-panel .thresholds-rows::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
 
 .stats-summary {
     display: block;

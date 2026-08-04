@@ -264,13 +264,60 @@
 }
 
 /* ─── Ползунок прокрутки карточки ──────────────────────────────────
-   Вертикальный range-инпут в стиле распределителя: дорожка как
-   blade-track, бегунок как blade-marker (квадрат 12×14, accent).
-   Работает сверху вниз (min сверху, max снизу — положение бегунка
-   повторяет прокрутку строк: верх шкалы = верх списка); прокручивает
-   строки своей карточки; значения порогов не задаёт. Видим, только
-   когда строки карточки не помещаются по высоте. */
+   Кастомный вертикальный скролл в стиле приложения: дорожка как
+   blade-track (bg-2 + border-strong + 999px), бегунок-квадратик как
+   blade-marker (12×14, accent, radius 2px). Сверху вниз: верх шкалы —
+   начало списка, низ — конец. Квадратик своим положением показывает,
+   в какой части списка находится оператор. Виден только когда строки
+   не помещаются; если всё видно — полностью скрыт. */
 
+.thresholds-scroll-track {
+    flex: 0 0 auto;
+    width: 8px;
+    min-height: 56px;
+    align-self: stretch;
+    position: relative;
+    margin: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.thresholds-scroll-thumb {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 12px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--accent);
+    border: none;
+    transform: translateX(-50%);
+    cursor: grab;
+    will-change: top, height;
+    transition: background 150ms var(--ease), height 120ms var(--ease);
+}
+
+.thresholds-scroll-thumb:active,
+.thresholds-scroll-track.is-dragging .thresholds-scroll-thumb {
+    cursor: grabbing;
+    background: var(--accent);
+    filter: brightness(1.15);
+}
+
+.thresholds-scroll-track:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* Все строки карточки видны — ползунок не нужен и полностью скрыт. */
+.thresholds-scroll-track.is-idle {
+    display: none;
+}
+
+/* Совместимость со старым классом range, если он где-то остался */
 .thresholds-scroll-slider {
     flex: 0 0 auto;
     width: 8px;
@@ -279,14 +326,12 @@
     margin: 0;
     -webkit-appearance: none;
     appearance: none;
-    /* Вертикальная ориентация: min сверху, max снизу. */
     writing-mode: vertical-lr;
     background: var(--bg-2);
     border: 1px solid var(--border-strong);
     border-radius: 999px;
     cursor: pointer;
 }
-
 .thresholds-scroll-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -296,7 +341,6 @@
     background: var(--accent);
     border: none;
 }
-
 .thresholds-scroll-slider::-moz-range-thumb {
     width: 12px;
     height: 14px;
@@ -304,23 +348,18 @@
     background: var(--accent);
     border: none;
 }
-
 .thresholds-scroll-slider::-moz-range-track {
     background: transparent;
     border: none;
 }
-
 .thresholds-scroll-slider:focus-visible {
     outline: 1px solid var(--accent);
     outline-offset: 2px;
 }
-
 .thresholds-scroll-slider:disabled {
     opacity: 0.35;
     cursor: default;
 }
-
-/* Все строки карточки видны — ползунок не нужен и полностью скрыт. */
 .thresholds-scroll-slider.is-idle {
     display: none;
 }
@@ -383,34 +422,37 @@
 
 .fa-measurements-heading {
     color: var(--text-muted);
-    font: 700 7px var(--font-mono);
-    letter-spacing: 0.25px;
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.4px;
 }
 
 .fa-measurement-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 5px;
+    gap: 6px;
     align-items: center;
     min-width: 0;
-    padding: 3px 4px;
-    border-radius: 2px;
+    padding: 4px 6px;
+    border-radius: 3px;
     background: var(--bg-1);
+    border: 1px solid var(--border);
 }
 
 .fa-measurement-label {
     min-width: 0;
     overflow: hidden;
     color: var(--text-dim);
-    font: 8px var(--font-mono);
+    font: 700 9px var(--font-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .fa-measurement-limit,
 .fa-measurement-current {
-    font: 700 8px var(--font-mono);
+    font: 700 9px var(--font-mono);
     white-space: nowrap;
+    padding: 1px 4px;
+    border-radius: 2px;
 }
 .fa-measurement-limit { color: var(--text-muted); }
 .fa-measurement-current { color: var(--text); }

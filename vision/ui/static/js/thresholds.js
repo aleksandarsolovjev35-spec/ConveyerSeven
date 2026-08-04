@@ -290,17 +290,18 @@ function renderThresholdsBody() {
         }
         cardBody.appendChild(rows);
 
-        const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.className = 'thresholds-scroll-slider thresholds-card-slider';
-        slider.min = 0;
-        slider.max = 1000;
-        slider.step = 1;
-        slider.value = 0;
-        slider.disabled = true;
-        slider.setAttribute('aria-label', 'Прокрутка карточки правил');
-        slider.title = 'Прокрутка карточки правил';
-        cardBody.appendChild(slider);
+        // Кастомный скролл в стиле приложения: дорожка + квадратик.
+        // Квадратик своим положением показывает, где находится оператор:
+        // сверху — начало списка, снизу — конец.
+        const track = document.createElement('div');
+        track.className = 'thresholds-scroll-track thresholds-card-scroll-track';
+        track.setAttribute('aria-label', 'Прокрутка карточки правил');
+        track.title = 'Прокрутка карточки правил';
+        track.tabIndex = 0;
+        const thumb = document.createElement('div');
+        thumb.className = 'thresholds-scroll-thumb';
+        track.appendChild(thumb);
+        cardBody.appendChild(track);
 
         card.appendChild(cardBody);
         cards.appendChild(card);
@@ -358,39 +359,161 @@ function renderThresholdsBody() {
     };
 
     // Ползунок каждой карточки прокручивает только её строки.
+    // Кастомный скролл: дорожка + квадратик. Квадратик показывает
+    // положение (верх = начало, низ = конец) и перетаскивается мышью.
+    let dragState = null;
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function onDocMouseMove(e) {
+        if (!dragState) return;
+        const {rows, track, thumb, startY, startTop, maxScroll, maxThumbTop} = dragState;
+        const deltaY = e.clientY - startY;
+        const newTop = clamp(startTop + deltaY, 0, maxThumbTop);
+        thumb.style.top = newTop + 'px';
+        if (maxThumbTop > 0 && maxScroll > 0) {
+            rows.scrollTop = (newTop / maxThumbTop) * maxScroll;
+        }
+    }
+
+    function onDocMouseUp() {
+        if (!dragState) return;
+        const {track} = dragState;
+        track.classList.remove('is-dragging');
+        dragState = null;
+        document.removeEventListener('mousemove', onDocMouseMove);
+        document.removeEventListener('mouseup', onDocMouseUp);
+    }
+
     cards.querySelectorAll('.thresholds-card').forEach(card => {
         const rows = card.querySelector('.thresholds-rows');
+        const track = card.querySelector('.thresholds-scroll-track');
+        const thumb = track ? track.querySelector('.thresholds-scroll-thumb') : null;
         const slider = card.querySelector('.thresholds-scroll-slider');
-        if (!rows || !slider) return;
-        rows.addEventListener('scroll', () => thresholdsSyncCard(rows, slider));
-        slider.addEventListener('input', () => {
-            const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
-            if (maxScroll <= 0) return;
-            rows.scrollTop = (Number(slider.value) || 0) / 1000 * maxScroll;
-        });
+        if (!rows) return;
+
+        // Новый кастомный скролл
+        if (track && thumb) {
+            rows.addEventListener('scroll', () => thresholdsSyncCard(rows, track, thumb));
+
+            // Клик по дорожке — прыжок к месту клика
+            track.addEventListener('mousedown', (e) => {
+                if (e.target === thumb) return;
+                if (track.classList.contains('is-idle')) return;
+                const trackRect = track.getBoundingClientRect();
+                const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
+                if (maxScroll <= 0) return;
+                const trackHeight = track.clientHeight;
+                const thumbHeight = thumb.offsetHeight || 14;
+                const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+                const clickY = e.clientY - trackRect.top;
+                const desiredTop = clamp(clickY - thumbHeight / 2, 0, maxThumbTop);
+                thumb.style.top = desiredTop + 'px';
+                rows.scrollTop = maxThumbTop > 0 ? (desiredTop / maxThumbTop) * maxScroll : 0;
+            });
+
+            // Перетаскивание квадратика
+            thumb.addEventListener('mousedown', (e) => {
+                if (track.classList.contains('is-idle')) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const trackHeight = track.clientHeight;
+                const thumbHeight = thumb.offsetHeight || 14;
+                const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
+                const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+                const currentTop = parseFloat(thumb.style.top) || 0;
+                dragState = {
+                    rows, track, thumb,
+                    startY: e.clientY,
+                    startTop: currentTop,
+                    maxScroll,
+                    maxThumbTop,
+                };
+                track.classList.add('is-dragging');
+                document.addEventListener('mousemove', onDocMouseMove);
+                document.addEventListener('mouseup', onDocMouseUp);
+            });
+
+            // Колесо мыши над дорожкой тоже прокручивает список
+            track.addEventListener('wheel', (e) => {
+                if (track.classList.contains('is-idle')) return;
+                e.preventDefault();
+                rows.scrollTop += e.deltaY;
+            }, {passive: false});
+        }
+
+        // Совместимость со старым range-слайдером, если вдруг остался
+        if (slider) {
+            rows.addEventListener('scroll', () => thresholdsSyncCard(rows, slider));
+            slider.addEventListener('input', () => {
+                const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
+                if (maxScroll <= 0) return;
+                rows.scrollTop = (Number(slider.value) || 0) / 1000 * maxScroll;
+            });
+        }
     });
 
     updateCardVisibility();
 }
 
 // Синхронизация ползунка конкретной карточки с фактической прокруткой.
-// Ползунок нужен, только когда строки карточки не помещаются; если все
-// строки видны — он полностью скрыт (значение порогов он не задаёт).
-// Положение бегунка повторяет прокрутку: верх шкалы — верх списка.
-function thresholdsSyncCard(rows, slider) {
-    if (!rows || !slider) return;
+// Поддерживает и новый кастомный трек+квадратик, и старый range.
+// Ползунок виден только когда строки не помещаются; если всё видно —
+// полностью скрыт. Квадратик сверху = начало, снизу = конец.
+function thresholdsSyncCard(rows, trackOrSlider, maybeThumb) {
+    if (!rows) return;
+
+    // Новый API: track + thumb
+    let track = null;
+    let thumb = null;
+    let slider = null;
+
+    if (maybeThumb) {
+        track = trackOrSlider;
+        thumb = maybeThumb;
+    } else if (trackOrSlider && trackOrSlider.classList.contains('thresholds-scroll-track')) {
+        track = trackOrSlider;
+        thumb = track.querySelector('.thresholds-scroll-thumb');
+    } else {
+        slider = trackOrSlider;
+    }
+
     const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
-    if (maxScroll <= 0) {
-        slider.disabled = true;
-        slider.value = 0;
-        slider.classList.add('is-idle');
-        if (rows.scrollTop) rows.scrollTop = 0;
+
+    if (track && thumb) {
+        if (maxScroll <= 0) {
+            track.classList.add('is-idle');
+            thumb.style.top = '0px';
+            if (rows.scrollTop) rows.scrollTop = 0;
+            return;
+        }
+        track.classList.remove('is-idle');
+        const trackHeight = track.clientHeight || 56;
+        const ratio = rows.clientHeight / rows.scrollHeight;
+        const thumbHeight = Math.max(14, Math.min(trackHeight * 0.6, Math.round(trackHeight * ratio)));
+        const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+        const top = maxScroll > 0 ? (rows.scrollTop / maxScroll) * maxThumbTop : 0;
+        thumb.style.height = thumbHeight + 'px';
+        thumb.style.top = top + 'px';
         return;
     }
-    slider.classList.remove('is-idle');
-    slider.disabled = false;
-    slider.value = Math.max(0, Math.min(1000,
-        Math.round(rows.scrollTop / maxScroll * 1000)));
+
+    // Старый range-слайдер (fallback)
+    if (slider) {
+        if (maxScroll <= 0) {
+            slider.disabled = true;
+            slider.value = 0;
+            slider.classList.add('is-idle');
+            if (rows.scrollTop) rows.scrollTop = 0;
+            return;
+        }
+        slider.classList.remove('is-idle');
+        slider.disabled = false;
+        slider.value = Math.max(0, Math.min(1000,
+            Math.round(rows.scrollTop / maxScroll * 1000)));
+    }
 }
 
 // Синхронизация ползунка активной карточки (после показа панели,
@@ -400,10 +523,15 @@ function thresholdsSyncScroll() {
     if (!body) return;
     const card = body.querySelector('.thresholds-card.is-active');
     if (!card) return;
-    thresholdsSyncCard(
-        card.querySelector('.thresholds-rows'),
-        card.querySelector('.thresholds-scroll-slider'),
-    );
+    const rows = card.querySelector('.thresholds-rows');
+    const track = card.querySelector('.thresholds-scroll-track');
+    const thumb = track ? track.querySelector('.thresholds-scroll-thumb') : null;
+    if (track && thumb) {
+        thresholdsSyncCard(rows, track, thumb);
+    } else {
+        const slider = card.querySelector('.thresholds-scroll-slider');
+        thresholdsSyncCard(rows, slider);
+    }
 }
 
 // Держим активную вкладку в зоне видимости ленты: при переключении
