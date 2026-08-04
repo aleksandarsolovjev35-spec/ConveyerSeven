@@ -32,7 +32,6 @@ CYCLE_JOIN_TIMEOUT   = 15.0
 INIT_JOIN_TIMEOUT    = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
 COMPRESS_TIMEOUT     = 60.0
-CAMERA_READY_MEAN_MIN = 8.0
 
 
 def main():
@@ -726,24 +725,21 @@ def _env_clamped_float(
 
 
 def _weak_camera_warmup_reasons(stats: dict) -> dict:
-    """Вернуть роли, которые после прогрева всё ещё не похожи на живые."""
+    """Вернуть роли, которые после прогрева не отдали ни одного кадра.
+
+    Проверка яркости убрана: тёмные кадры после проявления AGC — это
+    нормальный переходный процесс. Production-захват ``_grab()`` повторяет
+    чтение до 30 раз (2.4 с), пока кадр не станет валидным. Прогрев
+    только убеждается, что камера жива и отдаёт поток.
+    """
     reasons = {}
     for role, row in (stats or {}).items():
         try:
             reads = int(row.get("reads", 0) or 0)
         except Exception:
             reads = 0
-        try:
-            brightest = float(row.get("brightest", 0.0) or 0.0)
-        except Exception:
-            brightest = 0.0
         if reads <= 0:
             reasons[role] = "нет кадров"
-        elif brightest < CAMERA_READY_MEAN_MIN:
-            reasons[role] = (
-                f"тёмные кадры: max luminance {brightest:.1f} "
-                f"< {CAMERA_READY_MEAN_MIN:.1f}"
-            )
     return reasons
 
 

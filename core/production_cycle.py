@@ -349,6 +349,12 @@ class ProductionCycle:
                 return False
             self._set_diagnostic_running("CAMERAS", "Проверка семи камер")
             self._set_process("CAMERA_DIAGNOSTIC", "Проверка семи камер")
+            # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
+            # cap.read() может вернуть устаревший кадр. См. комментарий
+            # в _stage_capture().
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
+                drain()
             frames = self.cameras.capture_all()
             camera_rows = []
             for role, frame in frames.items():
@@ -395,6 +401,12 @@ class ProductionCycle:
                 "Запуск всех моделей и правил дефектов без движения линии",
                 positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
             )
+            # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
+            # cap.read() может вернуть устаревший кадр. См. комментарий
+            # в _stage_capture().
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
+                drain()
             frames = self.cameras.capture_all()
             vision_results = self.inspector.vision.process_all(frames)
             presence_rule = InputPartPresenceRule(
@@ -514,6 +526,13 @@ class ProductionCycle:
                 raise RuntimeError(
                     "Live-просмотр не освободил камеры для анализа кадров"
                 )
+            # Сброс буфера драйвера: после паузы live cap.read()
+            # может вернуть устаревший кадр. См. комментарий
+            # в _stage_capture().
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
+                drain((role,))
+
             self._selected_analysis_active = True
             self._selected_analysis_role = role
             self._set_diagnostic_running(
@@ -1074,6 +1093,17 @@ class ProductionCycle:
     def _stage_capture(self):
         """CAPTURE: три синхронных набора кадров неподвижной детали."""
         self.stages.enter_capture()
+
+        # Сброс буфера драйвера: UVC-драйверы игнорируют
+        # CAP_PROP_BUFFERSIZE=1 и копят кадры во внутреннем кольцевом
+        # буфере. Пока live-просмотр читал камеры — буфер дренировался.
+        # После паузы live cap.read() вернёт самый старый кадр из буфера,
+        # а не самый свежий. drain_buffers() отбрасывает устаревшие кадры,
+        # чтобы capture_all() гарантированно получил кадр неподвижной
+        # детали, а не кадр с прошлого шага или из фазы движения.
+        drain = getattr(self.cameras, "drain_buffers", None)
+        if callable(drain):
+            drain()
 
         active_cam_positions = []
         if self.sm.accepts_new_parts:
