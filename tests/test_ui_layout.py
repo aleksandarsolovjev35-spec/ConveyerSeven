@@ -401,12 +401,17 @@ class UiLayoutTests(unittest.TestCase):
         self.assertNotIn("collectThresholdLabels", self.js)
         self.assertNotIn("thresholdsLabelEdits", self.js)
 
-    def test_thresholds_tabs_share_width_so_every_rule_fits(self):
+    def test_thresholds_tabs_share_width_and_expand_on_hover(self):
         # Все вкладки правил делят ширину ленты поровну (flex: 1 1 0) и
-        # всегда умещаются целиком: переключение мышкой не требует ни
-        # прокрутки ленты, ни попадания по краю вкладки. Жёсткий потолок
-        # ширины вкладки (148px) и раскрытие полного названия по наведению
-        # (320px), из-за которых вкладки уезжали за правый край, убраны.
+        # всегда умещаются целиком. Раскрытие по наведению делает JS:
+        # thresholds.js измеряет ширину названия и подставляет её во
+        # flex-basis пикселями — поэтому раскрытие анимируется в обе
+        # стороны (flex-basis: auto не анимируется, поэтому CSS-правила
+        # :hover с flex: 1 1 auto нет — иначе был бы скачок). Сжатие
+        # остаётся разрешённым (flex-shrink: 1), лента не выходит за
+        # правый край; прежние max-width-потолки (148px и 320px) не
+        # возвращаются. При фокусе с клавиатуры вкладка раскрывается
+        # через focus-visible.
         thresholds_css = next(
             path.read_text(encoding="utf-8")
             for path in css_paths()
@@ -415,8 +420,41 @@ class UiLayoutTests(unittest.TestCase):
         tab_block = thresholds_css.split(".thresholds-tab {", 1)[1].split("}", 1)[0]
         self.assertIn("flex: 1 1 0", tab_block)
         self.assertIn("min-width: 0", tab_block)
+        self.assertIn("flex-basis 160ms", tab_block)
+        focus_block = thresholds_css.split(
+            ".thresholds-tab:focus-visible", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("flex: 1 1 auto", focus_block)
+        self.assertNotIn("0 0 auto", focus_block)
+        # Единственное :hover-правило вкладки — смена цвета текста;
+        # раскладку (flex) при наведении CSS не трогает, иначе было бы
+        # два конкурирующих механизма и скачок на flex-basis: auto.
+        hover_color_block = thresholds_css.split(
+            ".thresholds-tab:hover:not(.is-active) {", 1
+        )[1].split("}", 1)[0]
+        self.assertIn("color:", hover_color_block)
+        self.assertNotIn("flex:", hover_color_block)
         self.assertNotIn("max-width: 148px", thresholds_css)
         self.assertNotIn("max-width: 320px", thresholds_css)
+
+    def test_thresholds_tab_hover_expands_via_measured_flex_basis(self):
+        # Раскрытие заголовка по наведению делает thresholds.js: полная
+        # ширина названия измеряется (scrollWidth) и подставляется во
+        # flex-basis пикселями, чтобы раскрытие анимировалось (CSS не
+        # анимирует flex-basis: auto); уход с вкладки возвращает ленту
+        # к равным долям. На тачскринах (без hover) лента не дёргается,
+        # а системная подсказка title остаётся запасным вариантом.
+        thresholds_js = next(
+            path.read_text(encoding="utf-8")
+            for path in javascript_paths()
+            if path.name == "thresholds.js"
+        )
+        self.assertIn("pointerover", thresholds_js)
+        self.assertIn("scrollWidth", thresholds_js)
+        self.assertIn("style.flexBasis", thresholds_js)
+        self.assertIn("pointerout", thresholds_js)
+        self.assertIn("relatedTarget", thresholds_js)
+        self.assertIn("matchMedia", thresholds_js)
 
     def test_jsdom_interaction_suite_is_gated_out_of_production(self):
         self.assertIn("window.__TRANSPORTER_UI_TEST__ === true", self.js)

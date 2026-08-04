@@ -1158,9 +1158,17 @@ async function main() {
   // 23. Пороги правил: блоки-карточки категорий, значения — числовым
   // полем, у каждой карточки собственный ползунок прокрутки строк
   // (появляется только при переполнении), навигация между карточками,
-  // СОХРАНИТЬ реально сохраняет.
+  // СОХРАНИТЬ реально сохраняет. Заголовки правил «разъезжаются» по
+  // наведению — вкладка раскрывается до полного названия.
   // JOG-режим (jog.active) в IDLE включается автоматически и не должен
   // блокировать редактирование — блокирует только реальное движение.
+  // jsdom не знает matchMedia: подменяем до первого рендера панели,
+  // иначе раскрытие заголовков по наведению не подключится.
+  window.matchMedia = () => ({
+    matches: true, media: '', onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {},
+    removeEventListener() {}, dispatchEvent() { return false; },
+  });
   currentStatus = lineStatus('IDLE', {
     diagnostic_allowed: true,
     jog: {
@@ -1261,6 +1269,37 @@ async function main() {
     tabs[0].getAttribute('aria-selected') === 'false',
     'прежняя вкладка снимается',
   );
+
+  // Наведение «разъезжает» заголовок: вкладка раскрывается до полного
+  // названия (JS измеряет ширину текста и подставляет во flex-basis);
+  // переход на элемент внутри вкладки раскрытие не отменяет, а уход с
+  // вкладки возвращает ленту к равным долям.
+  const tabsBar = thresholdsBody.querySelector('.thresholds-tabs');
+  const hoverTab = tabsBar.querySelector('.thresholds-tab');
+  const hoverLabel = hoverTab.querySelector('.thresholds-tab-label');
+  const hoverCount = hoverTab.querySelector('.thresholds-tab-count');
+  Object.defineProperty(hoverLabel, 'scrollWidth', {value: 200, configurable: true});
+  hoverTab.dispatchEvent(new window.MouseEvent('pointerover', {bubbles: true}));
+  assert(
+    hoverTab.style.flexBasis === '218px',
+    'наведение раскрывает заголовок до полного названия',
+  );
+  hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
+    bubbles: true,
+    relatedTarget: hoverCount,
+  }));
+  assert(
+    hoverTab.style.flexBasis === '218px',
+    'переход на счётчик внутри вкладки не сворачивает заголовок',
+  );
+  hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
+    bubbles: true,
+    relatedTarget: tabsBar,
+  }));
+  assert(
+    hoverTab.style.flexBasis === '',
+    'уход с вкладки возвращает ленту к равным долям',
+  );
   const secondSlider = thresholdsBody.querySelector(
     '.thresholds-card.is-active input.thresholds-scroll-slider',
   );
@@ -1340,6 +1379,31 @@ async function main() {
   assert(
     window.document.getElementById('thresholds-save').disabled,
     'после сохранения изменений нет — СОХРАНИТЬ снова заблокирована',
+  );
+
+  // На устройствах без наведения (тачскрины, matchMedia hover: none)
+  // раскрытие заголовков не подключается: лента не дёргается, полное
+  // название остаётся в подсказке title. Возможность наведения
+  // проверяется при построении ленты, поэтому перестраиваем её уже
+  // с новым matchMedia (смена камеры перечитывает пороги и строит
+  // ленту заново).
+  window.matchMedia = () => ({
+    matches: false, media: '', onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {},
+    removeEventListener() {}, dispatchEvent() { return false; },
+  });
+  api.selectCamera('INPUT_LEFT');
+  await sleep(30);
+  const touchTab = thresholdsBody.querySelector('.thresholds-tab');
+  touchTab.dispatchEvent(new window.MouseEvent('pointerover', {bubbles: true}));
+  assert(
+    touchTab.style.flexBasis === '',
+    'без hover раскрытие заголовков не включается',
+  );
+  touchTab.dispatchEvent(new window.MouseEvent('pointerout', {bubbles: true}));
+  assert(
+    touchTab.style.flexBasis === '',
+    'без hover уход с вкладки ничего не меняет',
   );
 
   console.log('UI INTERACTION MATRIX PASS: 23 groups');
