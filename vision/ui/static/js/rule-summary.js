@@ -103,7 +103,28 @@ function renderRuleMeasurements(rule, pictureRun) {
     }
     const statusStrip = renderRunStatusStrip(rule, pictureRun);
     if (statusStrip) wrap.appendChild(statusStrip);
-    if (!runCards.length) return wrap;
+    if (!runCards.length) {
+        // Fallback: если нет run_cards, но есть summary_cards — показать их,
+        // чтобы анализ не был пустым и значения были видны.
+        if (Array.isArray(rule.summary_cards)) {
+            for (const card of rule.summary_cards) {
+                const roleLabel = card.role ? cameraRoleLabel(card.role) : '';
+                for (const metric of card.metrics || []) {
+                    const fakeMetric = {
+                        label: metric.label || metric.key || '—',
+                        key: metric.key || null,
+                        limit: metric.limit || null,
+                        runs: [{
+                            value: metric.value != null ? metric.value : null,
+                            ok: metric.ok == null ? null : metric.ok,
+                        }],
+                    };
+                    wrap.appendChild(buildMeasurementRow(roleLabel, fakeMetric, 1));
+                }
+            }
+        }
+        return wrap;
+    }
 
     const byRole = new Map();
     runCards.forEach((cards, runIndex) => {
