@@ -13,6 +13,7 @@ from core.step_stages import (
 )
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
+    CONSENSUS_MIN_VOTES,
     INSPECTION_RUNS,
     combine_presence_results,
     combine_rule_results,
@@ -581,9 +582,19 @@ class ProductionCycle:
                 )
 
                 if presence_result.details.get("empty_tray"):
+                    # Пустой лоток: defect-правила не выполняются (проверять
+                    # нечего), итог — только по part_presence. Важно:
+                    # combine_rule_results здесь вызывать нельзя — прогонов
+                    # defect-правил нет (0 из 3), голосование невозможно.
                     rule_results = []
                     evidence_index = presence_evidence
-                    consensus = {"part_presence": presence_vote}
+                    consensus = {
+                        "runs": INSPECTION_RUNS,
+                        "required_votes": CONSENSUS_MIN_VOTES,
+                        "evidence_run": presence_evidence + 1,
+                        "part_presence": presence_vote,
+                        "rules": {},
+                    }
                     # Пустой лоток: картинка по самому пограничному flatness
                     # (ближайший к порогу ложных срабатываний прогон).
                     picture_index = select_picture_run([presence_result])
@@ -603,10 +614,10 @@ class ProductionCycle:
                                 frames={role: frame},
                             )
                         )
-                rule_results, consensus, evidence_index = (
-                    combine_rule_results(rule_results_by_run)
-                )
-                consensus["part_presence"] = presence_vote
+                    rule_results, consensus, evidence_index = (
+                        combine_rule_results(rule_results_by_run)
+                    )
+                    consensus["part_presence"] = presence_vote
             else:
                 presence_result = None
                 for v_res, frame in zip(vision_runs, frame_runs):
