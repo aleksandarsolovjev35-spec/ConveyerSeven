@@ -272,6 +272,9 @@ function renderThresholdsBody() {
         const countWidth = count ? count.scrollWidth : 0;
         // Точная ширина: только название + счётчик + минимальные поля
         const needed = textWidth + THRESHOLDS_TAB_GAP + countWidth + THRESHOLDS_TAB_PAD;
+        // В раскрытой области название визуально находится по центру;
+        // счётчик остаётся у правого края и не смещает текст.
+        tab.classList.add('is-title-expanded');
         tab.style.flexBasis = needed + 'px';
     });
     tabs.addEventListener('pointerout', event => {
@@ -280,6 +283,7 @@ function renderThresholdsBody() {
         if (!tab) return;
         const next = event.relatedTarget;
         if (next && tab.contains(next)) return;
+        tab.classList.remove('is-title-expanded');
         tab.style.flexBasis = '';
     });
     scroll.appendChild(tabs);
