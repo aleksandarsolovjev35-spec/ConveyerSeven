@@ -1381,6 +1381,31 @@ async function main() {
     'после сохранения изменений нет — СОХРАНИТЬ снова заблокирована',
   );
 
+  // На устройствах без наведения (тачскрины, matchMedia hover: none)
+  // раскрытие заголовков не подключается: лента не дёргается, полное
+  // название остаётся в подсказке title. Возможность наведения
+  // проверяется при построении ленты, поэтому перестраиваем её уже
+  // с новым matchMedia (смена камеры перечитывает пороги и строит
+  // ленту заново).
+  window.matchMedia = () => ({
+    matches: false, media: '', onchange: null,
+    addListener() {}, removeListener() {}, addEventListener() {},
+    removeEventListener() {}, dispatchEvent() { return false; },
+  });
+  api.selectCamera('INPUT_LEFT');
+  await sleep(30);
+  const touchTab = thresholdsBody.querySelector('.thresholds-tab');
+  touchTab.dispatchEvent(new window.MouseEvent('pointerover', {bubbles: true}));
+  assert(
+    touchTab.style.flexBasis === '',
+    'без hover раскрытие заголовков не включается',
+  );
+  touchTab.dispatchEvent(new window.MouseEvent('pointerout', {bubbles: true}));
+  assert(
+    touchTab.style.flexBasis === '',
+    'без hover уход с вкладки ничего не меняет',
+  );
+
   console.log('UI INTERACTION MATRIX PASS: 23 groups');
   dom.window.close();
 }
