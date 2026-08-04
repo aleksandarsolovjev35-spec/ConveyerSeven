@@ -118,6 +118,12 @@ const state = {
     pendingActiveCamera:  null,
     activeCameraRequestBusy: false,
     thresholdsRevision:   null,
+
+    // Переключение прогонов на главной камере: 0 — кадр по умолчанию
+    // (evidence, выбранный сервером), 1..3 — выбранный оператором прогон.
+    viewRun: 0,
+    runFramesAvailable: 0,
+    frameAnalysisRulesCache: null,
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,
@@ -179,6 +185,7 @@ const els = {
     frameAnalysisTitle:   $('frame-analysis-title'),
     frameAnalysisContext: $('frame-analysis-context'),
     frameAnalysisMessage: $('frame-analysis-message'),
+    frameAnalysisPicture: $('frame-analysis-picture'),
     frameAnalysisModelsTitle: $('frame-analysis-models-title'),
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
     frameAnalysisModels:  $('frame-analysis-models'),

@@ -20,6 +20,67 @@ function setupCameraHover() {
     });
 }
 
+// ─── Переключение прогонов на главной камере ───────────────────
+
+// Доступность: три кадра прогонов есть только у статичного анализа
+// (лента стоит). Подсказка курсором и tooltip'ом появляется в этом случае.
+function updateRunCycleAvailability() {
+    const container = els.cameraContainer;
+    if (!container) return;
+    const available = state.runFramesAvailable >= 3 && !state.splashActive;
+    container.classList.toggle('run-cyclable', available);
+    container.title = available
+        ? 'Клик — кадры трёх прогонов анализа'
+        : '';
+}
+
+function cycleMainCameraRun() {
+    if (state.splashActive || state.offline) return;
+    // Переключение прогонов относится только к статичным кадрам анализа:
+    // замороженный кадр выбранной камеры или стоп-кадр рабочего цикла.
+    // Во время движения (поток) или JOG-хода кадры прогонов неактуальны.
+    const staticShown = state.selectedAnalysisActive
+        || (!state.liveStreaming && state.liveStatic);
+    if (!staticShown) return;
+    if (state.runFramesAvailable < 3) return;
+
+    state.viewRun = (state.viewRun % state.runFramesAvailable) + 1;
+
+    clearLivePullTimer();
+    if (state.selectedAnalysisActive) {
+        // Замороженный кадр анализа: перезапрашиваем с новым run.
+        showSelectedAnalysisFrame(
+            state.selectedAnalysisRole || state.currentCamera,
+        );
+    } else {
+        state.mainCamMode = 'pull';
+        state.mainCamStreamRole = null;
+        state.mainCamStreamView = null;
+        mainBufferLoading = false;
+        maybeRequestMainFrame();
+    }
+
+    if (typeof applyLiveBadge === 'function') applyLiveBadge(state.jogActive);
+    // Рамка выбранного замера следует за просматриваемым прогоном.
+    if (
+        typeof renderFrameAnalysisRules === 'function'
+        && state.frameAnalysisRulesCache
+    ) {
+        renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+    }
+}
+
+function setupMainCameraRunCycle() {
+    const container = els.cameraContainer;
+    if (!container) return;
+    container.addEventListener('click', (event) => {
+        if (event.target.closest('button, input, select, a')) return;
+        if (event.target.closest('.camera-live-controls')) return;
+        cycleMainCameraRun();
+    });
+    updateRunCycleAvailability();
+}
+
 // ─── Mode ────────────────────────────────────────────────────
 
 function updateMode(mode) {
@@ -223,7 +284,10 @@ function showSelectedAnalysisFrame(role) {
     if (!role) return;
     setIfChanged(els.cameraLabel, `${cameraRoleLabel(role)} · АНАЛИЗ`);
     clearLivePullTimer();
-    const analysisKey = `${role}|${state.mode}|${state.currentVersion}`;
+    const run = (
+        state.viewRun > 0 && state.runFramesAvailable >= 3
+    ) ? state.viewRun : 0;
+    const analysisKey = `${role}|${state.mode}|${state.currentVersion}|${run}`;
     if (
         state.mainCamMode === 'analysis'
         && state.mainCamAnalysisKey === analysisKey
@@ -239,6 +303,7 @@ function showSelectedAnalysisFrame(role) {
         `/frame/${encodeURIComponent(role)}`
         + `?mode=${encodeURIComponent(state.mode)}`
         + `&v=${state.currentVersion}&analysis=1`
+        + (run ? `&run=${run}` : '')
     );
 }
 
@@ -353,9 +418,16 @@ function maybeRequestMainFrame() {
     const versionQuery = state.mainCamMode === 'live-pull'
         ? `live=1&t=${Date.now()}`
         : `v=${state.currentVersion}`;
+    // В статичном режиме добавляем номер прогона: по клику на главный кадр
+    // оператор переключает кадры трёх прогонов голосования 2 из 3.
+    const runQuery = (
+        state.mainCamMode === 'pull'
+        && state.viewRun > 0
+        && state.runFramesAvailable >= 3
+    ) ? `&run=${state.viewRun}` : '';
     mainBuffer.src =
         `/frame/${state.currentCamera}`
-        + `?mode=${state.mode}&${versionQuery}`;
+        + `?mode=${state.mode}&${versionQuery}${runQuery}`;
 }
 
 function refreshPreviewStrip() {

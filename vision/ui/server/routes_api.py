@@ -79,6 +79,9 @@ def setup_api_routes(app, server):
                 "frame_versions": dict(server._latest_frames_ver),
                 "active_camera": server.active_camera_role,
                 "thresholds_revision": server.thresholds_revision,
+                # Число прогонов текущей стадии (0 или 3): по нему фронт
+                # включает переключение кадров на главной камере.
+                "frame_runs": server.get_frame_count(),
             })
 
     @app.get("/api/mode")

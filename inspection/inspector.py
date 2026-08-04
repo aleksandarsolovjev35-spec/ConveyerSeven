@@ -8,6 +8,8 @@ from inspection.consensus import (
     InspectionConsensusError,
     combine_presence_results,
     combine_rule_results,
+    describe_picture_run,
+    select_picture_run,
     summarize_model_health,
 )
 from inspection.result import InspectionResult
@@ -64,8 +66,27 @@ class Inspector:
         )
 
         if bool(presence_result.details.get("empty_tray")):
-            evidence_frames = stage_frame_runs[presence_evidence]
-            evidence_vision = vision_runs[presence_evidence]
+            consensus = {
+                "runs": INSPECTION_RUNS,
+                "required_votes": CONSENSUS_MIN_VOTES,
+                "evidence_run": presence_evidence + 1,
+                "part_presence": presence_vote,
+                "rules": {},
+            }
+            evidence_index = presence_evidence
+            # Пустой лоток — тоже картинка по близости к порогу: показываем
+            # прогон с самым пограничным flatness (обычно там, где «призрак»
+            # детали ближе всего к порогу ложных срабатываний).
+            picture_index = select_picture_run([presence_result])
+            if picture_index is None:
+                picture_index = evidence_index
+            consensus["picture_run"] = picture_index + 1
+            consensus["picture_reason"] = describe_picture_run(
+                [presence_result], picture_index,
+            )
+            evidence_index = picture_index
+            evidence_frames = stage_frame_runs[evidence_index]
+            evidence_vision = vision_runs[evidence_index]
             left_count = int(presence_result.details.get("flatness_left") or 0)
             right_count = int(presence_result.details.get("flatness_right") or 0)
             print(
@@ -81,14 +102,10 @@ class Inspector:
                 raw_frames=evidence_frames,
                 raw_overlay_frames={},
                 is_empty_tray=True,
-                consensus={
-                    "runs": INSPECTION_RUNS,
-                    "required_votes": CONSENSUS_MIN_VOTES,
-                    "evidence_run": presence_evidence + 1,
-                    "part_presence": presence_vote,
-                    "rules": {},
-                },
+                consensus=consensus,
                 model_health=model_health,
+                run_frames=stage_frame_runs,
+                run_rule_results=[[], [], []],
             )
 
         rule_results_by_run = [
@@ -111,6 +128,17 @@ class Inspector:
         # Правило присутствия идёт первым в списке результатов для INPUT.
         final_rule_results = [presence_result] + final_rule_results
 
+        # Картинка строится по прогону, чей замер ближе всего к порогу
+        # (в норме), либо ближайшему к порогу браку, если все три — брак.
+        picture_index = select_picture_run(final_rule_results)
+        if picture_index is None:
+            picture_index = evidence_index
+        consensus["picture_run"] = picture_index + 1
+        consensus["picture_reason"] = describe_picture_run(
+            final_rule_results, picture_index,
+        )
+        evidence_index = picture_index
+
         return self._build_consensus_result(
             stage="input",
             part_id=part_id,
@@ -122,6 +150,7 @@ class Inspector:
             evidence_index=evidence_index,
             consensus=consensus,
             model_health=model_health,
+            run_rule_results=rule_results_by_run,
         )
 
     def inspect_spider_consensus(
@@ -157,6 +186,16 @@ class Inspector:
         final_rule_results, consensus, evidence_index = combine_rule_results(
             rule_results_by_run
         )
+        # Картинка — по прогону, ближайшему к порогу (в норме), либо
+        # ближайшему к порогу браку, если все три замера — брак.
+        picture_index = select_picture_run(final_rule_results)
+        if picture_index is None:
+            picture_index = evidence_index
+        consensus["picture_run"] = picture_index + 1
+        consensus["picture_reason"] = describe_picture_run(
+            final_rule_results, picture_index,
+        )
+        evidence_index = picture_index
         return self._build_consensus_result(
             stage="spider",
             part_id=part_id,
@@ -168,6 +207,7 @@ class Inspector:
             evidence_index=evidence_index,
             consensus=consensus,
             model_health=model_health,
+            run_rule_results=rule_results_by_run,
         )
 
     @staticmethod
@@ -231,6 +271,7 @@ class Inspector:
         evidence_index: int,
         consensus: dict,
         model_health: list[dict],
+        run_rule_results: list | None = None,
     ) -> InspectionResult:
         defects = [
             result.defect
@@ -263,6 +304,12 @@ class Inspector:
             is_empty_tray=False,
             consensus=consensus,
             model_health=model_health,
+            run_frames=stage_frame_runs,
+            run_rule_results=(
+                [list(rows) for rows in run_rule_results]
+                if run_rule_results is not None
+                else [[], [], []]
+            ),
         )
 
     # Одиночный прогон для диагностики и offline-анализа

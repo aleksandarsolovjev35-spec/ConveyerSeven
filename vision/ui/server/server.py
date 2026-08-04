@@ -48,6 +48,25 @@ CAMERA_ORDER = [
     "TOP",
 ]
 
+# Правило отчёта -> группа порогов (RULE_GROUPS в thresholds.json). Нужна
+# только для ручных названий порогов (_label.*): по полному имени параметра
+# подставляется пользовательское название вместо встроенного перевода.
+RULE_THRESHOLD_GROUPS = {
+    "part_presence": "input_part_presence",
+    "window_geometry": "input_window_geometry",
+    "window_sinks": "input_window_sinks",
+    "contacts_long": "spider_contacts_long",
+    "contacts_short": "spider_contacts_short",
+    "long_omission": "spider_long_omission",
+    "short_omission": "spider_short_omission",
+    "top_contacts": "top_contacts",
+    "top_platform": "top_platform",
+    "platform_contacts_overlap": "top_platform_overlap",
+    "sinks": "top_sinks",
+    "glass": "top_glass",
+    "glass_on_contacts": "top_glass",
+}
+
 
 class UIServer:
 
@@ -58,6 +77,14 @@ class UIServer:
 
     def __init__(self):
         self.frames: dict         = {}
+        # Три набора кадров текущей стадии (по одному на прогон голосования
+        # 2 из 3): UI переключает прогон на главной камере по клику.
+        # Каждый элемент — dict {role: кадр}. Пусто — переключение недоступно.
+        self.run_frames: list = []
+        # Правила, посчитанные по каждому прогону (run_cards): для кадра
+        # run=N разметка строится по правилам именно этого прогона, чтобы
+        # оверлей совпадал с кадром. Каждый элемент — список строк отчёта.
+        self.run_rule_results: list = []
         self.vision_results: dict = {}
         self.rule_results: list   = []
         self.line_status: dict    = {}
@@ -145,10 +172,24 @@ class UIServer:
         rule_results=None,
         line_status=None,
         recent_parts=None,
+        run_frames=None,
     ):
         with self.lock:
             should_invalidate = False
             stream_overlay_changed = False
+            if run_frames is not None:
+                # None — не трогаем (например, обычный тик статуса); пустой
+                # список — очищаем (анализ завершён); список из трёх —
+                # заменяем кадры прогонов текущей стадии.
+                self.run_frames = [
+                    dict(item)
+                    for item in run_frames
+                    if isinstance(item, dict)
+                ]
+                # Оверлеи прогонов сбрасываем: кадры новые, старые правила
+                # к ним не относятся (см. _get_or_render по run).
+                self.run_rule_results = []
+                should_invalidate = True
             if frames is not None:
                 for role, frame in frames.items():
                     self.frames[role] = frame
@@ -166,6 +207,7 @@ class UIServer:
                 stream_overlay_changed = True
             if line_status is not None:
                 self.line_status = line_status
+                self._apply_custom_threshold_labels(line_status)
             if recent_parts is not None:
                 self.recent_parts = list(recent_parts)
             if should_invalidate:
@@ -173,6 +215,50 @@ class UIServer:
                 if stream_overlay_changed:
                     self._latest_stream_jpeg.clear()
                 self._cache_version += 1
+
+    def _apply_custom_threshold_labels(self, line_status: dict) -> None:
+        """Подставить ручные названия порогов (_label.*) в анализ кадра.
+
+        Каждое правило несёт ``run_cards`` — три замера по прогонам с
+        ключами метрик. Для метрик, у которых есть ручное название в
+        thresholds.json (``_label.<параметр>``), заменяем встроенный перевод
+        на пользовательский, как и в панели «Пороги правил».
+        """
+        custom_labels = dict(self.threshold_labels or {})
+        if not custom_labels:
+            return
+        frame_analysis = (line_status or {}).get("frame_analysis")
+        rules = (
+            frame_analysis.get("rules")
+            if isinstance(frame_analysis, dict) else None
+        )
+        if not isinstance(rules, list):
+            return
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            group_id = RULE_THRESHOLD_GROUPS.get(rule.get("name"))
+            if not group_id:
+                continue
+            for cards in rule.get("run_cards") or []:
+                if not isinstance(cards, list):
+                    continue
+                for card in cards:
+                    if not isinstance(card, dict):
+                        continue
+                    role = card.get("role")
+                    if not role:
+                        continue
+                    for metric in card.get("metrics") or []:
+                        if not isinstance(metric, dict):
+                            continue
+                        key = metric.get("key")
+                        if not key:
+                            continue
+                        full_key = f"{group_id}_{key}"
+                        custom = custom_labels.get(f"{role}.{full_key}")
+                        if custom:
+                            metric["label"] = custom
 
     def set_active_camera_role(self, role: str) -> bool:
         with self.lock:
@@ -506,6 +592,25 @@ class UIServer:
 
     # Stream helpers
 
+    def get_frame_count(self) -> int:
+        """Число доступных прогонов (кадров) текущей стадии: 0 или 3."""
+        return len(self.run_frames)
+
+    def set_run_rule_results(self, rows_by_run) -> None:
+        """Сохранить правила по прогонам для согласованной разметки.
+
+        ``rows_by_run`` — список из трёх элементов (по одному на прогон);
+        каждый — список строк отчёта правил, посчитанных по этому прогону.
+        Кадр ``run=N`` рендерится с оверлеем именно этого прогона.
+        """
+        if not isinstance(rows_by_run, (list, tuple)) or not rows_by_run:
+            return
+        with self.lock:
+            self.run_rule_results = [
+                list(rows) if isinstance(rows, (list, tuple)) else []
+                for rows in rows_by_run
+            ]
+
     def get_frame_version(self, role: str) -> int:
         with self.lock:
             return self._latest_frames_ver.get(role, 0)
@@ -576,13 +681,27 @@ class UIServer:
 
     # Rendering & caching (pull)
 
-    def _get_or_render(self, role, mode, size_kind):
-        cache_key = (role, mode, size_kind)
+    def _get_or_render(self, role, mode, size_kind, run=None):
+        """Кадр камеры (JPEG). ``run`` — номер прогона 1..3 текущей стадии:
+        кадр того же ракурса, снятый в этом прогоне голосования 2 из 3.
+        Без ``run`` (или вне диапазона) — текущий кадр (evidence).
+        """
+        cache_key = (role, mode, size_kind, run or 0)
         with self.lock:
             cached = self._jpeg_cache.get(cache_key)
             if cached is not None:
                 return cached
-            frame = self.frames.get(role)
+            frame = None
+            run_index = None
+            if run:
+                run_index = run - 1
+                if (
+                    0 <= run_index < len(self.run_frames)
+                    and role in self.run_frames[run_index]
+                ):
+                    frame = self.run_frames[run_index][role]
+            if frame is None:
+                frame = self.frames.get(role)
             if frame is None:
                 return None
             version_before = self._cache_version
@@ -591,10 +710,19 @@ class UIServer:
                 list(self.vision_results.get(role, []))
                 if mode == "RAW" else None
             )
-            rule_results = (
-                list(self.rule_results)
-                if mode == "RULES" else None
-            )
+            # Оверлей кадра прогона: правила, посчитанные по этому же
+            # прогону; без прогона — общий набор (evidence).
+            if mode == "RULES":
+                if run_index is not None and 0 <= run_index < len(
+                    self.run_rule_results,
+                ):
+                    rule_results = list(
+                        self.run_rule_results[run_index],
+                    )
+                else:
+                    rule_results = list(self.rule_results)
+            else:
+                rule_results = None
 
         rendered = self._render(
             frame_copy, role, mode, vision_dets, rule_results,

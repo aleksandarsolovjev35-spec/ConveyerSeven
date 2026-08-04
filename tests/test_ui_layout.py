@@ -18,9 +18,15 @@ class UiLayoutTests(unittest.TestCase):
         cls.js = load_javascript()
         cls.css = load_css()
 
-    def test_right_column_scrolls_without_overlapping_jog(self):
+    def test_right_column_scrolls_without_visible_scrollbar(self):
+        # Прокрутка правой колонки остаётся (колесо/тачпад), но видимый
+        # ползунок убран: скроллбар не отвлекает оператора.
         self.assertIn("overflow-y: auto", self.css)
-        self.assertIn("scrollbar-gutter: stable", self.css)
+        self.assertIn("scrollbar-width: none", self.css)
+        self.assertIn(
+            ".stats-panel::-webkit-scrollbar { display: none; }",
+            self.css,
+        )
         self.assertIn(".jog-panel.jog-panel-embedded", self.css)
         self.assertIn("overflow: hidden", self.css)
         self.assertIn("isolation: isolate", self.css)

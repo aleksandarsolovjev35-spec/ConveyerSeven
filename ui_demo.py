@@ -14,63 +14,184 @@ import numpy as np
 import webview
 
 from core.rule_report import build_rule_report_rows
+from core.rule_summary import build_presence_summary, build_rule_summary
 from domain.threshold_loader import ThresholdLoader
 from vision.ui import LiveMonitor
 
 
+def _demo_run_cards(rule_name, variants):
+    """Карточки трёх прогонов для демо-правила (значения чуть различаются).
+
+    Для ``part_presence`` варианты — полные details (flatness на верхнем
+    уровне), для остальных правил — per_role.
+    """
+    cards = []
+    for variant in variants:
+        if rule_name == "part_presence":
+            cards.append(build_presence_summary(variant))
+        else:
+            cards.append(build_rule_summary(
+                rule_name, {"per_role": variant},
+            ))
+    return cards
+
+
 def demo_rule_rows():
     """Демонстрационные правила в продакшн-формате отчёта."""
-    return build_rule_report_rows([
-        SimpleNamespace(
-            rule_name="part_presence",
-            triggered=False,
-            details={
-                "empty_tray": False,
-                "flatness_left": 6,
-                "flatness_right": 5,
-                "effective_flatness_left": 6,
-                "effective_flatness_right": 5,
-                "false_positive_max_count_by_role": {
-                    "INPUT_LEFT": 2, "INPUT_RIGHT": 2,
-                },
+    presence_details = {
+        "empty_tray": False,
+        "flatness_left": 6,
+        "flatness_right": 5,
+        "effective_flatness_left": 6,
+        "effective_flatness_right": 5,
+        "false_positive_max_count_by_role": {
+            "INPUT_LEFT": 2, "INPUT_RIGHT": 2,
+        },
+    }
+    presence = SimpleNamespace(
+        rule_name="part_presence",
+        triggered=False,
+        details={**presence_details, "consensus": {
+            "runs": 3, "required_votes": 2,
+            "run_cards": _demo_run_cards("part_presence", [
+                presence_details, presence_details, presence_details,
+            ]),
+            "run_status": [
+                [{"role": "INPUT", "status": "КОРПУС", "reason": None}],
+                [{"role": "INPUT", "status": "КОРПУС", "reason": None}],
+                [{"role": "INPUT", "status": "КОРПУС", "reason": None}],
+            ],
+        }},
+    )
+
+    omission_variants = [
+        {
+            "SPIDER_LEFT": {
+                "triggered": True, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 5,
+                "largest_component_pixels": 5,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 18.0,
+                "top_line_actual_max_residual_px": 1.2,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
             },
-        ),
-        SimpleNamespace(
-            rule_name="long_omission",
-            triggered=True,
-            details={"per_role": {
-                "SPIDER_LEFT": {
-                    "triggered": True, "reason": None,
-                    "allowed_thickness_px": 20.0, "excess_pixels": 340,
-                    "largest_component_pixels": 340,
-                    "excess_component_min_px": 3,
-                    "max_excess_depth_px": 18.0,
-                    "top_line_actual_max_residual_px": 1.2,
-                    "top_line_max_residual_px": 3.0,
-                    "found": 5, "expected_count": 5,
-                },
-                "SPIDER_RIGHT": {
-                    "triggered": False, "reason": None,
-                    "allowed_thickness_px": 20.0, "excess_pixels": 0,
-                    "excess_component_min_px": 3,
-                    "max_excess_depth_px": 0.0,
-                    "top_line_actual_max_residual_px": 0.4,
-                    "top_line_max_residual_px": 3.0,
-                    "found": 5, "expected_count": 5,
-                },
-            }},
-        ),
-        SimpleNamespace(
-            rule_name="top_platform",
-            triggered=False,
-            details={"per_role": {"TOP": {
+            "SPIDER_RIGHT": {
+                "triggered": False, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 0,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 0.0,
+                "top_line_actual_max_residual_px": 0.4,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
+            },
+        },
+        {
+            "SPIDER_LEFT": {
+                "triggered": False, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 2,
+                "largest_component_pixels": 2,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 18.0,
+                "top_line_actual_max_residual_px": 2.7,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
+            },
+            "SPIDER_RIGHT": {
+                "triggered": False, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 0,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 0.0,
+                "top_line_actual_max_residual_px": 0.4,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
+            },
+        },
+        {
+            "SPIDER_LEFT": {
+                "triggered": True, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 340,
+                "largest_component_pixels": 340,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 18.0,
+                "top_line_actual_max_residual_px": 1.2,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
+            },
+            "SPIDER_RIGHT": {
+                "triggered": False, "reason": None,
+                "allowed_thickness_px": 20.0, "excess_pixels": 0,
+                "excess_component_min_px": 3,
+                "max_excess_depth_px": 0.0,
+                "top_line_actual_max_residual_px": 0.4,
+                "top_line_max_residual_px": 3.0,
+                "found": 5, "expected_count": 5,
+            },
+        },
+    ]
+    omission = SimpleNamespace(
+        rule_name="long_omission",
+        triggered=True,
+        details={"per_role": omission_variants[0], "consensus": {
+            "runs": 3, "required_votes": 2,
+            "triggered_votes": 2, "normal_votes": 1,
+            "decision": "triggered",
+            "states": [True, False, True],
+            "run_cards": _demo_run_cards("long_omission", omission_variants),
+            "run_status": [
+                [{"role": "SPIDER_LEFT", "status": "ОТКЛОНЕНИЕ", "reason": None},
+                 {"role": "SPIDER_RIGHT", "status": "В НОРМЕ", "reason": None}],
+                [{"role": "SPIDER_LEFT", "status": "В НОРМЕ", "reason": None},
+                 {"role": "SPIDER_RIGHT", "status": "В НОРМЕ", "reason": None}],
+                [{"role": "SPIDER_LEFT", "status": "ОТКЛОНЕНИЕ", "reason": None},
+                 {"role": "SPIDER_RIGHT", "status": "В НОРМЕ", "reason": None}],
+            ],
+        }},
+    )
+
+    platform_variants = [
+        {
+            "TOP": {
                 "triggered": False, "reason": None,
                 "placement": "centered", "shift_distance_px": 1.8,
                 "angle_deg": 0.4, "rect_width_px": 262,
                 "rect_height_px": 121, "found": 1, "expected_count": 1,
-            }}},
-        ),
-    ])
+            },
+        },
+        {
+            "TOP": {
+                "triggered": False, "reason": None,
+                "placement": "centered", "shift_distance_px": 2.6,
+                "angle_deg": 0.5, "rect_width_px": 262,
+                "rect_height_px": 121, "found": 1, "expected_count": 1,
+            },
+        },
+        {
+            "TOP": {
+                "triggered": False, "reason": None,
+                "placement": "shifted", "shift_distance_px": 4.1,
+                "angle_deg": 0.6, "rect_width_px": 262,
+                "rect_height_px": 121, "found": 1, "expected_count": 1,
+            },
+        },
+    ]
+    platform = SimpleNamespace(
+        rule_name="top_platform",
+        triggered=False,
+        details={"per_role": platform_variants[0], "consensus": {
+            "runs": 3, "required_votes": 2,
+            "triggered_votes": 0, "normal_votes": 3,
+            "decision": "normal",
+            "states": [False, False, False],
+            "run_cards": _demo_run_cards("top_platform", platform_variants),
+            "run_status": [
+                [{"role": "TOP", "status": "В НОРМЕ", "reason": None}],
+                [{"role": "TOP", "status": "В НОРМЕ", "reason": None}],
+                [{"role": "TOP", "status": "В НОРМЕ", "reason": None}],
+            ],
+        }},
+    )
+    return build_rule_report_rows([presence, omission, platform])
 
 ROLES = (
     "INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT",
@@ -258,6 +379,10 @@ class UiDemo:
                     }
                 ],
                 "rules": demo_rule_rows(),
+                # Прогон и причина считаются той же логикой, что в
+                # production (ближе всего к порогу, норма в приоритете) —
+                # демо показывает реальное поведение выбора картинки.
+                **self._demo_picture_choice(),
                 "updated_at": time.time(),
             }
         elif selected_report:
@@ -348,7 +473,56 @@ class UiDemo:
             # empty list here made the demo history stay permanently blank,
             # hiding whether sorting had actually happened.
             recent_parts=list(self.recent_parts),
+            # Три кадра прогонов анализа: в демо это те же сцены со слегка
+            # разной яркостью, чтобы клик по главному кадру был заметен.
+            run_frames=self._run_frames(),
         )
+        # Разметка каждого кадра прогона — правила этого же прогона
+        # (в демо — одни и те же демо-правила).
+        self.monitor.server.set_run_rule_results(
+            [demo_rule_rows(), demo_rule_rows(), demo_rule_rows()],
+        )
+
+    def _run_frames(self):
+        """Три набора кадров (по одному на прогон) для переключения."""
+        if not self.frames:
+            return []
+        runs = []
+        for delta in (-18, 0, 22):
+            runs.append({
+                role: cv2.addWeighted(
+                    frame, 1.0,
+                    np.full(frame.shape, max(0, delta), dtype=np.uint8),
+                    0.0, 0.0,
+                )
+                for role, frame in self.frames.items()
+            })
+        return runs
+
+    def _demo_picture_choice(self):
+        """Прогон картинки и причина — как в production (select_picture_run).
+
+        Демо не хардкодит прогон: выбор выполняется той же логикой, что в
+        рабочем цикле, поэтому витрина показывает реальное поведение.
+        """
+        from inspection.consensus import describe_picture_run, select_picture_run
+
+        rows = demo_rule_rows()
+        results = [
+            SimpleNamespace(
+                rule_name=row["name"],
+                triggered=row["triggered"],
+                details={"consensus": row.get("consensus") or {}},
+            )
+            for row in rows
+        ]
+        picture_index = select_picture_run(results)
+        if picture_index is None:
+            picture_index = 1
+        return {
+            "picture_run": picture_index + 1,
+            "picture_reason": describe_picture_run(results, picture_index),
+        }
 
     def start(self):
         with self.lock:

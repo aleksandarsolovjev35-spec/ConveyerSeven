@@ -16,6 +16,8 @@ from inspection.consensus import (
     INSPECTION_RUNS,
     combine_presence_results,
     combine_rule_results,
+    describe_picture_run,
+    select_picture_run,
     summarize_model_health,
 )
 from domain.part import (
@@ -582,6 +584,16 @@ class ProductionCycle:
                     rule_results = []
                     evidence_index = presence_evidence
                     consensus = {"part_presence": presence_vote}
+                    # Пустой лоток: картинка по самому пограничному flatness
+                    # (ближайший к порогу ложных срабатываний прогон).
+                    picture_index = select_picture_run([presence_result])
+                    if picture_index is None:
+                        picture_index = evidence_index
+                    consensus["picture_run"] = picture_index + 1
+                    consensus["picture_reason"] = describe_picture_run(
+                        [presence_result], picture_index,
+                    )
+                    evidence_index = picture_index
                 else:
                     for v_res, frame in zip(vision_runs, frame_runs):
                         rule_results_by_run.append(
@@ -591,10 +603,10 @@ class ProductionCycle:
                                 frames={role: frame},
                             )
                         )
-                    rule_results, consensus, evidence_index = (
-                        combine_rule_results(rule_results_by_run)
-                    )
-                    consensus["part_presence"] = presence_vote
+                rule_results, consensus, evidence_index = (
+                    combine_rule_results(rule_results_by_run)
+                )
+                consensus["part_presence"] = presence_vote
             else:
                 presence_result = None
                 for v_res, frame in zip(vision_runs, frame_runs):
@@ -608,6 +620,21 @@ class ProductionCycle:
                 rule_results, consensus, evidence_index = (
                     combine_rule_results(rule_results_by_run)
                 )
+
+            # Картинка — по прогону, ближе всего к порогу (в норме), либо
+            # ближайшему к порогу браку, если все три замера — брак.
+            if is_input:
+                picture_candidates = [presence_result] + list(rule_results)
+            else:
+                picture_candidates = rule_results
+            picture_index = select_picture_run(picture_candidates)
+            if picture_index is None:
+                picture_index = evidence_index
+            consensus["picture_run"] = picture_index + 1
+            consensus["picture_reason"] = describe_picture_run(
+                picture_candidates, picture_index,
+            )
+            evidence_index = picture_index
 
             evidence_frame = frame_runs[evidence_index]
             vision_results = vision_runs[evidence_index]
@@ -655,13 +682,34 @@ class ProductionCycle:
                 "models": model_rows,
                 "rules": rule_rows,
                 "consensus": consensus,
+                "picture_run": (
+                    int(consensus.get("picture_run"))
+                    if consensus and consensus.get("picture_run") else None
+                ),
+                "picture_reason": (
+                    str(consensus.get("picture_reason"))
+                    if consensus and consensus.get("picture_reason") else None
+                ),
                 "updated_at": time.time(),
             }
             self._set_process(
                 "SELECTED_MODEL_READY",
                 f"Анализ кадра {role} завершён; поток приостановлен",
             )
-            self._refresh_monitor(stage_frames)
+            self._refresh_monitor(
+                stage_frames,
+                run_frames=[{role: frame_runs[index]}
+                            for index in range(INSPECTION_RUNS)],
+            )
+            if self.monitor:
+                # Разметка каждого кадра прогона — по правилам этого прогона
+                # (raw-результаты каждого прогона, до majority-слияния).
+                run_rules = (
+                    rule_results_by_run
+                    if rule_results_by_run
+                    else [[], [], []]
+                )
+                self.monitor.server.set_run_rule_results(run_rules)
             return True
         except Exception as exc:
             self._selected_analysis_active = False
@@ -703,11 +751,12 @@ class ProductionCycle:
             try:
                 fresh_frames = self.cameras.capture_all()
                 # Публикуем свежие кадры без оверлеев — возврат к живому виду.
-                self._refresh_monitor(fresh_frames)
+                # Три кадра анализа больше неактуальны: очищаем.
+                self._refresh_monitor(fresh_frames, run_frames=[])
             except Exception:
                 # Если захват недоступен (камеры заняты / ошибка), хотя бы
                 # гарантируем очистку оверлеев и обновление статуса.
-                self._refresh_monitor()
+                self._refresh_monitor(run_frames=[])
             self._set_process(
                 "LIVE_SELECTED_CAMERA",
                 f"Поток восстановлен: {role}",
@@ -1041,6 +1090,8 @@ class ProductionCycle:
         # выполненной стадии он заменяется evidence-кадрами, выбранными
         # majority-алгоритмом как наиболее согласованными с итогом.
         display_frames = dict(frame_runs[-1])
+        run_frames = []
+        run_rule_results = []
 
         # Определяем активные позиции для подсветки в UI
         active_positions = []
@@ -1058,6 +1109,13 @@ class ProductionCycle:
             input_result = self._process_input_stage(frame_runs)
             if input_result is not None:
                 display_frames.update(input_result.raw_frames)
+                run_frames = self._merge_run_frames(
+                    run_frames,
+                    getattr(input_result, "run_frames", None) or [],
+                )
+                run_rules = getattr(input_result, "run_rule_results", None) or []
+                if run_rules:
+                    run_rule_results.extend(run_rules)
                 # Если деталь на входе не обнаружена, убираем подсветку
                 if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
                     active_positions.remove(self.OFFSET_INPUT)
@@ -1076,8 +1134,50 @@ class ProductionCycle:
             spider_result = self._run_spider_inspection(frame_runs)
             if spider_result is not None:
                 display_frames.update(spider_result.raw_frames)
+                run_frames = self._merge_run_frames(
+                    run_frames,
+                    getattr(spider_result, "run_frames", None) or [],
+                )
+                run_rules = getattr(spider_result, "run_rule_results", None) or []
+                if run_rules:
+                    run_rule_results = self._merge_run_rule_rows(
+                        run_rule_results, run_rules,
+                    )
             self._check_motion_cancelled()
+
+        # Все три набора кадров стадии уходят в UI: по клику на главный
+        # кадр оператор переключает прогон 1..3 (см. /frame?run=N).
+        if run_frames:
+            self._refresh_monitor(display_frames, run_frames=run_frames)
+            if run_rule_results and self.monitor:
+                self.monitor.server.set_run_rule_results(run_rule_results)
         return display_frames
+
+    @staticmethod
+    def _merge_run_frames(acc: list, incoming: list) -> list:
+        """Слить три набора кадров по номерам прогонов (INPUT + SPIDER)."""
+        if not incoming:
+            return acc
+        merged = []
+        for index in range(INSPECTION_RUNS):
+            base = dict(acc[index]) if index < len(acc) else {}
+            if index < len(incoming) and isinstance(incoming[index], dict):
+                base.update(incoming[index])
+            merged.append(base)
+        return merged
+
+    @staticmethod
+    def _merge_run_rule_rows(acc: list, incoming: list) -> list:
+        """Слить правила по прогонам (INPUT + SPIDER) для разметки кадров."""
+        if not incoming:
+            return acc
+        merged = []
+        for index in range(INSPECTION_RUNS):
+            base = list(acc[index]) if index < len(acc) else []
+            if index < len(incoming) and isinstance(incoming[index], list):
+                base.extend(incoming[index])
+            merged.append(base)
+        return merged
 
     def _stage_review(self, display_frames):
         """REVIEW: пауза на просмотр работы нейросетей после анализа.
@@ -1480,6 +1580,8 @@ class ProductionCycle:
             "part_id": None,
             "rule_results": [],
             "models": [],
+            "picture_run": None,
+            "picture_reason": None,
             "updated_at": None,
         }
 
@@ -1502,12 +1604,21 @@ class ProductionCycle:
         if not isinstance(rows, list) or not rows:
             vision = getattr(self.inspector, "vision", None)
             rows = getattr(vision, "last_health", None) or []
+        consensus = getattr(result, "consensus", None) or {}
         self._frame_analysis_groups[group] = {
             "part_id": part_id,
             "rule_results": list(result.rule_results),
             "models": [
                 dict(item) for item in rows if isinstance(item, dict)
             ],
+            "picture_run": (
+                int(consensus.get("picture_run"))
+                if consensus.get("picture_run") else None
+            ),
+            "picture_reason": (
+                str(consensus.get("picture_reason"))
+                if consensus.get("picture_reason") else None
+            ),
             "updated_at": time.time(),
         }
 
@@ -1706,6 +1817,8 @@ class ProductionCycle:
                 ),
                 "models": [dict(item) for item in entry["models"]],
                 "rules": self._rule_report_rows(entry["rule_results"]),
+                "picture_run": entry.get("picture_run"),
+                "picture_reason": entry.get("picture_reason"),
                 "updated_at": entry["updated_at"],
             }
 
@@ -1725,6 +1838,8 @@ class ProductionCycle:
                 "cameras": [dict(item) for item in report.get("cameras", [])],
                 "models": [dict(item) for item in report.get("models", [])],
                 "rules": [dict(item) for item in report.get("rules", [])],
+                "picture_run": report.get("picture_run"),
+                "picture_reason": report.get("picture_reason"),
                 "updated_at": report.get("updated_at"),
             }
 
@@ -1738,6 +1853,8 @@ class ProductionCycle:
             "message": None,
             "models": [],
             "rules": [],
+            "picture_run": None,
+            "picture_reason": None,
             "updated_at": None,
         }
 
@@ -1895,7 +2012,11 @@ class ProductionCycle:
 
         return status
 
-    def _refresh_monitor(self, frames: dict | None = None):
+    def _refresh_monitor(
+        self,
+        frames: dict | None = None,
+        run_frames: list | None = None,
+    ):
         if not self.monitor:
             return
         status = self._build_status()
@@ -1906,9 +2027,11 @@ class ProductionCycle:
                 rule_results=self._last_rule_results,
                 line_status=status,
                 recent_parts=list(self.recent_parts),
+                run_frames=run_frames,
             )
         else:
             self.monitor.update(
                 line_status=status,
                 recent_parts=list(self.recent_parts),
+                run_frames=run_frames,
             )

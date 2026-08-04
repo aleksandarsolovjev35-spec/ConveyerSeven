@@ -161,6 +161,8 @@ function updateFrameAnalysisStatus(ls) {
 
     if (!available) {
         state.lastFrameAnalysisRenderKey = null;
+        state.frameAnalysisRulesCache = null;
+        state.viewRun = 0;
         return;
     }
 
@@ -188,6 +190,17 @@ function updateFrameAnalysisStatus(ls) {
             || report.message
             || 'Ожидание результатов анализа',
     );
+    // Почему выбран именно этот прогон для картинки (ближе всего к порогу).
+    if (report.picture_reason && els.frameAnalysisPicture) {
+        els.frameAnalysisPicture.classList.remove('is-hidden');
+        setIfChanged(
+            els.frameAnalysisPicture,
+            `КАРТИНКА · ПРОГОН ${report.picture_run || '—'}: ${report.picture_reason}`,
+        );
+    } else if (els.frameAnalysisPicture) {
+        els.frameAnalysisPicture.classList.add('is-hidden');
+        setIfChanged(els.frameAnalysisPicture, '');
+    }
     setIfChanged(els.frameAnalysisModelsTitle, `МОДЕЛИ · ${models.length}`);
     const decisive = decisiveRules(rules);
     setIfChanged(
@@ -208,8 +221,15 @@ function updateFrameAnalysisStatus(ls) {
     if (state.lastFrameAnalysisRenderKey === renderKey) return;
     state.lastFrameAnalysisRenderKey = renderKey;
 
+    // Прогон, по которому построена картинка (кадр с разметкой): его
+    // замеры в строках «три замера порога» помечаются рамкой. При новом
+    // анализе показываем выбранный сервером прогон; по клику на главный
+    // кадр оператор переключает его (state.viewRun).
+    const pictureRun = Number(report.picture_run) || 0;
+    state.frameAnalysisRulesCache = rules;
+    state.viewRun = pictureRun;
     renderFrameAnalysisModels(models);
-    renderFrameAnalysisRules(rules);
+    renderFrameAnalysisRules(rules, state.viewRun);
     animateUiElement(els.frameAnalysisModels, 'ui-content-change');
     animateUiElement(els.frameAnalysisRules, 'ui-content-change');
 }
@@ -291,45 +311,6 @@ function decisiveRules(rules) {
     return rules;
 }
 
-function renderThresholdBreaches(rule) {
-    const breaches = Array.isArray(rule.threshold_breaches)
-        ? rule.threshold_breaches : [];
-    // Выводим блок только для сработавшего правила: нормальные показатели
-    // остаются в карточках ниже, а оператор сразу видит причину брака.
-    if (!rule.triggered) return null;
-
-    const block = document.createElement('div');
-    block.className = 'frame-analysis-thresholds';
-    const title = document.createElement('strong');
-    title.textContent = breaches.length ? 'ВНЕ ПОРОГА' : 'ВЫВОД ПО ПОРОГАМ';
-    block.appendChild(title);
-
-    for (const breach of breaches) {
-        const line = document.createElement('div');
-        line.className = 'frame-analysis-threshold-line';
-        const role = breach.role ? `${cameraRoleLabel(breach.role)} · ` : '';
-        const threshold = breach.threshold == null
-            ? 'порог не задан'
-            : `порог: ${breach.threshold}`;
-        line.textContent = `${role}${breach.label}: ${breach.value} (${threshold})`;
-        block.appendChild(line);
-    }
-
-    if (!breaches.length) {
-        const note = document.createElement('div');
-        note.className = 'frame-analysis-threshold-line';
-        note.textContent = 'Отклонение зафиксировано; подробные измерения — ниже';
-        block.appendChild(note);
-    }
-
-    const conclusion = document.createElement('div');
-    conclusion.className = 'frame-analysis-threshold-conclusion';
-    conclusion.textContent = rule.threshold_conclusion
-        || 'Значение вышло за заданный порог — правило сработало';
-    block.appendChild(conclusion);
-    return block;
-}
-
 function ruleSummaryLines(rule) {
     if (Array.isArray(rule.summary_lines) && rule.summary_lines.length) {
         return rule.summary_lines.filter(Boolean).map(String);
@@ -341,37 +322,7 @@ function ruleSummaryLines(rule) {
     return rule.detail ? [String(rule.detail)] : [];
 }
 
-// Полоса «голосование 2 из 3»: результат каждого из трёх прогонов, чтобы
-// оператор видел, что финальный вердикт — большинство, а не один кадр.
-// Данные приходят с сервера (consensus.states — результат каждого прогона).
-function renderRuleRuns(rule) {
-    const consensus = rule.consensus && typeof rule.consensus === 'object'
-        ? rule.consensus : null;
-    const states = consensus && Array.isArray(consensus.states)
-        ? consensus.states : null;
-    const runs = consensus && consensus.runs ? Number(consensus.runs) : 0;
-    const required = consensus && consensus.required_votes
-        ? Number(consensus.required_votes) : 0;
-    if (!states || !runs) return null;
-
-    const runLabels = states.map(state => {
-        if (typeof state === 'boolean') return state ? 'СРАБОТАЛО' : 'НОРМА';
-        const text = String(state);
-        if (text === 'empty') return 'ПУСТО';
-        if (text === 'present') return 'КОРПУС';
-        return text;
-    });
-
-    const wrap = document.createElement('div');
-    wrap.className = 'frame-analysis-consensus';
-    const voteText = required
-        ? `${required} из ${runs}`
-        : `${runs} прогона`;
-    wrap.textContent = `ПРОГОНЫ (${voteText}): ${runLabels.join(' · ')}`;
-    return wrap;
-}
-
-function renderFrameAnalysisRules(rules) {
+function renderFrameAnalysisRules(rules, pictureRun) {
     els.frameAnalysisRules.replaceChildren();
     if (!rules.length) {
         appendFrameAnalysisEmpty(
@@ -401,13 +352,6 @@ function renderFrameAnalysisRules(rules) {
         );
         item.append(name, result);
 
-        // Голосование 2 из 3: все три прогона и большинство.
-        const runStrip = renderRuleRuns(rule);
-        if (runStrip) {
-            item.classList.add('has-detail');
-            item.appendChild(runStrip);
-        }
-
         if (rule.part_absent) {
             const absent = document.createElement('div');
             absent.className = 'frame-analysis-human-cause';
@@ -422,18 +366,12 @@ function renderFrameAnalysisRules(rules) {
             item.classList.add('has-human-cause');
         }
 
-        // Сначала причина срабатывания: фактическое значение, порог и вывод.
-        const thresholdBreaches = renderThresholdBreaches(rule);
-        if (thresholdBreaches) {
+        // Компактно: под правилом — все пороги с тремя замерами по прогонам
+        // (значение выбранного для картинки прогона помечается рамкой).
+        const measurements = renderRuleMeasurements(rule, pictureRun);
+        if (measurements.children.length) {
             item.classList.add('has-detail');
-            item.appendChild(thresholdBreaches);
-        }
-
-        // Наглядная сводка: что обнаружено и какие получились показатели.
-        const cards = Array.isArray(rule.summary_cards) ? rule.summary_cards : [];
-        if (cards.length) {
-            item.classList.add('has-detail');
-            item.appendChild(renderRuleSummaryCards(cards));
+            item.appendChild(measurements);
         } else {
             const summary = ruleSummaryLines(rule);
             const showSummary = (
@@ -475,6 +413,8 @@ function setupFrameAnalysisModelsCollapse() {
 
 function showPendingSelectedFrameAnalysis() {
     if (!els.frameAnalysisPanel) return;
+    state.frameAnalysisRulesCache = null;
+    state.viewRun = 0;
     els.frameAnalysisPanel.classList.remove('is-collapsed');
     if (els.statsSummary) els.statsSummary.classList.add('is-collapsed');
     if (els.distributorDiagnostics) {

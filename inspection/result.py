@@ -20,3 +20,13 @@ class InspectionResult:
     # диагностики/offline-анализа остаются пустыми.
     consensus: dict = field(default_factory=dict)
     model_health: list = field(default_factory=list)
+
+    # Все три набора кадров стадии (по одному на прогон): UI может показать
+    # на главной камере любой из трёх прогонов по клику. Каждый элемент —
+    # dict {role: кадр}; только roles этой стадии (INPUT или SPIDER/TOP).
+    run_frames: list = field(default_factory=list)
+
+    # Правила, посчитанные по каждому прогону (до majority-слияния): кадр
+    # run=N размечается drawings именно этого прогона, чтобы оверлей
+    # совпадал с кадром. Каждый элемент — список RuleResult'ов прогона.
+    run_rule_results: list = field(default_factory=list)

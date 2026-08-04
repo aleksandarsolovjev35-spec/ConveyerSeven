@@ -299,13 +299,13 @@
 }
 .splash-exit-btn:hover { background: var(--bad); color: var(--bg-0); }
 
-/* Right-column containment: sections scroll instead of overlapping JOG. */
+/* Right-column containment: sections scroll instead of overlapping JOG.
+   Видимый ползунок убран (scrollbar-width: none в stats.css). */
 .stats-panel {
     position: relative;
     isolation: isolate;
     overflow-x: hidden;
     overflow-y: auto;
-    scrollbar-gutter: stable;
     padding: 10px;
     align-content: flex-start;
 }

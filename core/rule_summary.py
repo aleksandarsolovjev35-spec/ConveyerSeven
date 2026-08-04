@@ -28,16 +28,29 @@ def _number(value, digits=1):
     return f"{number:.{digits}f}"
 
 
-def _metric(label, value, limit=None, ok=None, unit=""):
+def _metric(label, value, limit=None, ok=None, unit="", key=None):
     value_text = _number(value)
     if value_text is None:
         return None
     limit_text = _number(limit)
+    # Числовые представления для выбора «прогона для картинки» по близости
+    # к порогу (на сервере). Для текстовых/составных значений — None.
+    value_raw = None
+    limit_raw = None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        value_raw = float(value)
+    if isinstance(limit, (int, float)) and not isinstance(limit, bool):
+        limit_raw = float(limit)
     return {
         "label": label,
         "value": f"{value_text}{unit}",
         "limit": f"{limit_text}{unit}" if limit_text is not None else None,
         "ok": None if ok is None else bool(ok),
+        "value_raw": value_raw,
+        "limit_raw": limit_raw,
+        # Ключ настроенного порога (суффикс параметра в thresholds.json):
+        # по нему UI подставляет понятное название из «Порогов правил».
+        "key": key,
     }
 
 
@@ -99,6 +112,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         add(_metric(
             "избыток", excess, role_details.get("excess_component_min_px"),
             ok=not role_details.get("triggered"), unit=" px",
+            key="excess_component_min_px",
         ))
         add(_metric("допустимая толщина", thickness, unit=" px"))
         add(_metric(
@@ -109,6 +123,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         add(_metric(
             "отклонение линии", residual, residual_max,
             ok=_within(residual, residual_max), unit=" px",
+            key="top_line_max_residual_px",
         ))
 
     elif rule_name in ("contacts_long", "contacts_short"):
@@ -125,6 +140,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 add(_metric(
                     label, role_details.get(key), tolerance,
                     ok=_within(role_details.get(key), tolerance), unit=" px",
+                    key="line_tolerance_px",
                 ))
         tilt = role_details.get("omission_tilt_check") or {}
         ratio = tilt.get("distance_trend_ratio")
@@ -134,6 +150,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         if ratio is not None:
             add(_metric(
                 "наклон", ratio, ratio_max, ok=_within(ratio, ratio_max),
+                key="omission_tilt_ratio_max",
             ))
         rect_width = role_details.get("rect_width_px")
         rect_height = role_details.get("rect_height_px")
@@ -154,6 +171,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             add(_metric(
                 f"группа {group}", deviation, allowed,
                 ok=_within(deviation, allowed), unit=" px",
+                key="edge_distance_deviation_ratio",
             ))
 
     elif rule_name == "top_platform":
@@ -177,6 +195,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             "заплыв", role_details.get("excess_pixels"),
             role_details.get("excess_component_min_px"),
             ok=not role_details.get("triggered"), unit=" px",
+            key="excess_component_min_px",
         ))
         add(_metric(
             "макс. компонент",
@@ -219,7 +238,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         hits = role_details.get("hits") or []
         add(_metric(
             "пересечений", len(hits), role_details.get("overlap_min_px"),
-            ok=not hits,
+            ok=not hits, key="overlap_min_px",
         ))
         if hits:
             worst = max(
@@ -229,6 +248,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             add(_metric(
                 "макс. перекрытие", worst,
                 role_details.get("overlap_min_px"), ok=False, unit=" px",
+                key="overlap_min_px",
             ))
 
     elif rule_name in ("glass", "glass_on_contacts"):
@@ -348,6 +368,7 @@ def build_presence_summary(details: dict) -> list:
                 _metric(
                     "flatness", found, limit,
                     ok=present if present is not None else None,
+                    key="false_positive_max_count",
                 ),
                 _metric("зачтено", details.get(effective_key)),
             ) if metric is not None

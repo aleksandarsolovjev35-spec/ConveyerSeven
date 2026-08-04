@@ -12,12 +12,21 @@ STREAM_INITIAL_WAIT  = 5.0    # ждать до 5с появления перв�
 def setup_frame_routes(app, server):
 
     @app.get("/frame/{role}")
-    async def get_frame(role: str, mode: str | None = None, preview: int = 0):
+    async def get_frame(
+        role: str,
+        mode: str | None = None,
+        preview: int = 0,
+        run: int | None = None,
+    ):
         actual_mode = (
             mode if mode in ("RAW", "RULES") else server.mode
         )
         size_kind = "preview" if preview else "main"
-        jpeg = server._get_or_render(role, actual_mode, size_kind)
+        # Номер прогона 1..3 (кадры трёх прогонов голосования 2 из 3);
+        # вне диапазона — текущий кадр.
+        if run is not None and not (1 <= run <= server.get_frame_count()):
+            run = None
+        jpeg = server._get_or_render(role, actual_mode, size_kind, run)
         if jpeg is None:
             raise HTTPException(404, f"No frame for role: {role}")
         return Response(

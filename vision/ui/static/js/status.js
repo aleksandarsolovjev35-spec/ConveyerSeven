@@ -63,6 +63,18 @@ async function fetchStatus() {
         state.frameVersions = {...status.frame_versions};
     }
 
+    // Число прогонов текущей стадии: включает переключение кадров на
+    // главной камере по клику (0 — переключение недоступно).
+    if (typeof status.frame_runs === 'number') {
+        const available = Math.max(0, Math.floor(status.frame_runs));
+        if (available !== state.runFramesAvailable) {
+            state.runFramesAvailable = available;
+            if (typeof updateRunCycleAvailability === 'function') {
+                updateRunCycleAvailability();
+            }
+        }
+    }
+
     // Пороги правил подтягиваются из thresholds.json автоматически: когда
     // backend перечитал файл и увеличил revision, обновляем панель.
     if (typeof status.thresholds_revision === 'number') {

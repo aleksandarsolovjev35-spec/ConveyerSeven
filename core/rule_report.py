@@ -6,6 +6,37 @@
 сработавших ролей через :func:`_generic_failure_rows`.
 """
 
+# Названия порогов для анализа кадра: (правило, ключ метрики) -> понятный
+# оператору label (как в панели «Пороги правил»). UI показывает порог
+# рядом с названием правила и три замера по прогонам под ним.
+METRIC_PARAM_LABELS = {
+    ("long_omission", "excess_component_min_px"):
+        "Мин. размер лишнего фрагмента, px",
+    ("long_omission", "top_line_max_residual_px"):
+        "Макс. отклонение верхней линии, px",
+    ("short_omission", "excess_component_min_px"):
+        "Мин. размер лишнего фрагмента, px",
+    ("short_omission", "top_line_max_residual_px"):
+        "Макс. отклонение верхней линии, px",
+    ("contacts_long", "line_tolerance_px"):
+        "Допуск отклонения контактов от линии",
+    ("contacts_short", "line_tolerance_px"):
+        "Допуск отклонения уровня контактов",
+    ("contacts_long", "omission_tilt_ratio_max"):
+        "Макс. наклон пропуска (от высоты)",
+    ("contacts_short", "omission_tilt_ratio_max"):
+        "Макс. наклон пропуска (от высоты)",
+    ("top_contacts", "edge_distance_deviation_ratio"):
+        "Допуск расстояния контактов до края",
+    ("platform_contacts_overlap", "excess_component_min_px"):
+        "Мин. размер лишнего фрагмента, px",
+    ("window_sinks", "overlap_min_px"):
+        "Мин. перекрытие заплава с окном, px",
+    ("sinks", "overlap_min_px"): "Мин. перекрытие, px",
+    ("part_presence", "false_positive_max_count"):
+        "Допустимо ложных срабатываний, шт.",
+}
+
 # Правила, у которых есть развёрнутая построчная телеметрия в правой панели.
 DETAILED_RULES = (
     "window_geometry",
@@ -796,6 +827,35 @@ def _threshold_conclusion(
     return human_cause or "Правило сработало: проверьте причину и измерения"
 
 
+def _fallback_run_status(run_cards: list) -> list:
+    """Статус прогонов из карточек замеров (без данных consensus).
+
+    Используется для ручных/демо-строк: по ``ok`` карточек прогона —
+    «В НОРМЕ» / «ОТКЛОНЕНИЕ» / «НЕТ ИЗМЕРЕНИЯ». Отличить «область не
+    построена» от «отклонение» по карточкам нельзя (нет причины) — для
+    production-путей статус приходит точный из consensus.
+    """
+    statuses = []
+    for cards in run_cards or []:
+        if not isinstance(cards, list) or not cards:
+            statuses.append([])
+            continue
+        rows = []
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            ok = card.get("ok")
+            role = card.get("role", "")
+            if ok is True:
+                rows.append({"role": role, "status": "В НОРМЕ", "reason": None})
+            elif ok is False:
+                rows.append({"role": role, "status": "ОТКЛОНЕНИЕ", "reason": None})
+            else:
+                rows.append({"role": role, "status": "НЕТ ИЗМЕРЕНИЯ", "reason": None})
+        statuses.append(rows)
+    return statuses
+
+
 def filter_rule_report_rows(rows) -> list:
     """Оставить только решающие правила.
 
@@ -891,6 +951,27 @@ def build_rule_report_row(result) -> dict:
         triggered, human_cause, threshold_breaches,
     )
 
+    # Три замера по прогонам для анализа кадра: значение каждой метрики
+    # в каждом из трёх прогонов с порогом. Метрики помечаются понятными
+    # названиями порогов (METRIC_PARAM_LABELS), как в панели «Пороги
+    # правил»; без сопоставления остаётся название самой метрики.
+    import copy
+    run_cards = copy.deepcopy(consensus.get("run_cards") or [])
+    for cards in run_cards:
+        for card in cards:
+            for metric in card.get("metrics") or []:
+                key = metric.get("key")
+                if not key:
+                    continue
+                label = METRIC_PARAM_LABELS.get((rule_name, key))
+                if label:
+                    metric["label"] = label
+
+    # Статус области по прогонам («ОБЛАСТЬ НЕ ПОСТРОЕНА» и т.п.). В
+    # production-путях приходит из consensus (см. combine_rule_results);
+    # для ручных/демо-строк выводим из карточек замеров.
+    run_status = consensus.get("run_status") or _fallback_run_status(run_cards)
+
     return {
         "name": result.rule_name,
         "triggered": triggered,
@@ -903,6 +984,10 @@ def build_rule_report_row(result) -> dict:
         "detail_lines": detail_lines,
         "summary_lines": summary_lines,
         "summary_cards": summary_cards,
+        # Три замера порога по прогонам (для анализа кадра).
+        "run_cards": run_cards,
+        # Статус области по прогонам (для fail-closed дефектов).
+        "run_status": copy.deepcopy(run_status),
         # Значения, не прошедшие проверку, их пороги и итог для HMI.
         "threshold_breaches": threshold_breaches,
         "threshold_conclusion": threshold_conclusion,

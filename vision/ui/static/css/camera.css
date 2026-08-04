@@ -84,6 +84,12 @@
     transition: opacity 0.05s;
 }
 
+/* Когда доступны три кадра прогонов анализа, клик по главному кадру
+   переключает прогон 1..3 — курсор и tooltip подсказывают оператору. */
+.camera-container.run-cyclable .main-camera {
+    cursor: pointer;
+}
+
 .main-camera:not([src]) {
     visibility: hidden;
 }
