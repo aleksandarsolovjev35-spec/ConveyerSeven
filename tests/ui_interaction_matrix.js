@@ -792,12 +792,16 @@ async function main() {
     '#frame-analysis-rules .fa-measurements',
   )];
   assert(measurementBlocks.length === 2, 'у каждого правила есть блок замеров');
+  assert(
+    measurementBlocks.every(block => block.querySelector('.fa-measurements-heading')),
+    'у замеров есть понятная подпись порогов и прогонов',
+  );
   const rows = [...window.document.querySelectorAll(
     '#frame-analysis-rules .fa-measurement-row',
   )];
   assert(rows.length >= 2, 'под правилом собраны пороги с тремя замерами');
   assert(
-    rows.some(row => row.textContent.includes('порог: 0.8 px')),
+    rows.some(row => row.querySelector('.fa-measurement-limit')?.textContent === '0.8 px'),
     'рядом с правилом показывается порог',
   );
   assert(
@@ -827,8 +831,8 @@ async function main() {
   const synthRow = window.document.querySelector('#frame-analysis-rules .fa-measurement-row');
   const synthChips = [...synthRow.querySelectorAll('.fa-measurement-value')];
   assert(synthChips.length === 3, 'три слота замеров даже при пропуске в прогоне');
-  assert(synthChips[0].textContent === '1 px', 'замер первого прогона на своём месте');
-  assert(synthChips[1].textContent === '—', 'пропущенный замер — прочерк');
+  assert(synthChips[0].textContent === '1: 1 px', 'замер первого прогона на своём месте');
+  assert(synthChips[1].textContent === '2: —', 'пропущенный замер — прочерк');
   assert(synthChips[2].classList.contains('is-picture-run'), 'рамка выбранного прогона не сдвинулась');
 
   // Правило с непостроенной областью (fail-closed): показывается полоса
@@ -889,7 +893,7 @@ async function main() {
   assert(
     [...window.document.querySelectorAll(
       '#frame-analysis-rules .fa-measurement-value.is-picture-run',
-    )].some(chip => chip.textContent === '0.9 px'),
+    )].some(chip => chip.textContent === '3: 0.9 px'),
     'рамка замера следует за выбранным прогоном',
   );
   // Настоящий клик по контейнеру камеры циклит дальше (1/3).
@@ -1277,20 +1281,19 @@ async function main() {
   const tabsBar = thresholdsBody.querySelector('.thresholds-tabs');
   const hoverTab = tabsBar.querySelector('.thresholds-tab');
   const hoverLabel = hoverTab.querySelector('.thresholds-tab-label');
-  const hoverCount = hoverTab.querySelector('.thresholds-tab-count');
   Object.defineProperty(hoverLabel, 'scrollWidth', {value: 200, configurable: true});
   hoverTab.dispatchEvent(new window.MouseEvent('pointerover', {bubbles: true}));
   assert(
-    hoverTab.style.flexBasis === '218px',
+    hoverTab.style.flexBasis === '216px',
     'наведение раскрывает заголовок до полного названия',
   );
-  hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
-    bubbles: true,
-    relatedTarget: hoverCount,
-  }));
   assert(
-    hoverTab.style.flexBasis === '218px',
-    'переход на счётчик внутри вкладки не сворачивает заголовок',
+    hoverTab.classList.contains('is-title-expanded'),
+    'название центрируется в раскрытой вкладке',
+  );
+  assert(
+    !hoverTab.querySelector('.thresholds-tab-count'),
+    'счётчик параметров скрыт из вкладки',
   );
   hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
     bubbles: true,

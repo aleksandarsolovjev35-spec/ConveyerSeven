@@ -1,5 +1,4 @@
 /* thresholds.css — Line Monitor UI module */
-
 /* Панель «Пороги правил»: в правой колонке, над кнопками ручного
    управления лентой (JOG). Видна только до пуска и после полной
    остановки линии. Каждое правило (категория) — отдельная компактная
@@ -11,7 +10,6 @@
    виден только когда строки карточки не помещаются; если все строки
    видны — ползунок скрыт. Блок ограничен по высоте, поэтому правую
    колонку интерфейса не приходится прокручивать. */
-
 .thresholds-panel {
     display: flex;
     flex-direction: column;
@@ -21,7 +19,6 @@
     border-radius: var(--radius-sm);
     padding: 6px 7px;
 }
-
 .thresholds-head {
     display: flex;
     align-items: baseline;
@@ -29,7 +26,6 @@
     gap: 8px;
     min-width: 0;
 }
-
 .thresholds-title {
     font-family: var(--font-ui);
     font-size: 10px;
@@ -38,7 +34,6 @@
     color: var(--text-dim);
     white-space: nowrap;
 }
-
 .thresholds-camera {
     font-family: var(--font-ui);
     font-size: 10px;
@@ -50,7 +45,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
-
 .thresholds-hint {
     min-width: 0;
     overflow: hidden;
@@ -60,13 +54,11 @@
     font-size: 9px;
     color: var(--text-muted);
 }
-
 .thresholds-body {
     display: flex;
     flex-direction: column;
     gap: 6px;
 }
-
 /* Обёртка блока порогов. Блок ограничен по высоте, поэтому правая
    колонка интерфейса не прокручивается; внизу — навигация между
    карточками категорий. */
@@ -76,21 +68,18 @@
     gap: 6px;
     min-height: 0;
 }
-
 .thresholds-cards {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
 }
-
 .thresholds-empty {
     font-family: var(--font-ui);
     font-size: 11px;
     color: var(--text-muted);
     padding: 2px 0;
 }
-
 /* ─── Вкладки-заголовки правил (как в браузере) ────────────────────
    Одна вкладка на правило; активная выделяется сдержанно — только
    чуть заметной обводкой. Все вкладки делят ширину ленты поровну
@@ -100,7 +89,6 @@
    ширину, но сжатие разрешено — вкладки не уезжают за правый край.
    Точную ширину названия измеряет thresholds.js (flex-basis);
    подсказка (title) — запасной вариант. */
-
 .thresholds-tabs {
     display: flex;
     align-items: stretch;
@@ -111,9 +99,7 @@
     scrollbar-width: none;
     border-bottom: 1px solid var(--border);
 }
-
 .thresholds-tabs::-webkit-scrollbar { display: none; }
-
 .thresholds-tab {
     /* Равные доли ленты: сколько бы ни было правил, вкладки не
        разъезжаются за правый край, а сжимаются и остаются видимыми. */
@@ -145,27 +131,28 @@
 .thresholds-tab:focus-visible {
     flex: 1 1 auto;
 }
-
 /* Активная вкладка выделяется сдержанно: только чуть заметной
    обводкой, без подсветки и смены фона. */
 .thresholds-tab.is-active {
     border-color: var(--border-strong);
     color: var(--text-dim);
 }
-
 .thresholds-tab:hover:not(.is-active) { color: var(--text-dim); }
-
 .thresholds-tab-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-
-.thresholds-tab-count {
-    flex: 0 0 auto;
-    font: 700 7px var(--font-mono);
-    color: var(--text-muted);
+/* Название раскрытой вкладки — по центру всей её области. */
+.thresholds-tab.is-title-expanded,
+.thresholds-tab:focus-visible {
+    justify-content: center;
+}
+.thresholds-tab.is-title-expanded .thresholds-tab-label,
+.thresholds-tab:focus-visible .thresholds-tab-label {
+    flex: 0 1 auto;
+    text-align: center;
 }
 
 /* ─── Карточка правила ───────────────────────────────────────────── */
@@ -394,13 +381,19 @@
     border-top: 1px solid var(--border);
 }
 
+.fa-measurements-heading {
+    color: var(--text-muted);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.25px;
+}
+
 .fa-measurement-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: baseline;
-    gap: 6px;
+    gap: 5px;
+    align-items: center;
     min-width: 0;
-    padding: 2px 4px;
+    padding: 3px 4px;
     border-radius: 2px;
     background: var(--bg-1);
 }
@@ -414,44 +407,35 @@
     white-space: nowrap;
 }
 
-.fa-measurement-limit {
-    flex: 0 0 auto;
-    color: var(--text-muted);
+.fa-measurement-limit,
+.fa-measurement-current {
     font: 700 8px var(--font-mono);
     white-space: nowrap;
 }
+.fa-measurement-limit { color: var(--text-muted); }
+.fa-measurement-current { color: var(--text); }
+.fa-measurement-current.is-ok { color: var(--ok); }
+.fa-measurement-current.is-bad { color: var(--bad); background: var(--bad-bg); }
+.fa-measurement-current.is-neutral { color: var(--text-muted); }
 
-.fa-measurement-values {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
-    justify-content: flex-end;
+.fa-measurement-all-runs {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font: 7px var(--font-mono);
 }
-
+.fa-measurement-all-runs summary { cursor: pointer; }
+.fa-measurement-values { display: flex; flex-wrap: wrap; gap: 3px; padding-top: 3px; }
 .fa-measurement-value {
-    flex: 0 0 auto;
-    min-width: 18px;
-    padding: 0 3px;
+    padding: 1px 3px;
     border: 1px solid transparent;
     border-radius: 2px;
-    text-align: center;
     font: 700 8px var(--font-mono);
     white-space: nowrap;
 }
-
 .fa-measurement-value.is-ok { color: var(--ok); }
-.fa-measurement-value.is-bad {
-    color: var(--bad);
-    background: var(--bad-bg);
-    border-color: var(--bad);
-}
+.fa-measurement-value.is-bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
 .fa-measurement-value.is-neutral { color: var(--text-muted); }
-
-.fa-measurement-value.is-picture-run {
-    outline: 1px dashed var(--accent);
-    outline-offset: 1px;
-    color: var(--accent);
-}
+.fa-measurement-value.is-picture-run { outline: 1px dashed var(--accent); outline-offset: 1px; color: var(--accent); }
 
 /* Статусы прогонов: «ОБЛАСТЬ НЕ ПОСТРОЕНА» для fail-closed дефектов
    (omission/стекло без областей), «ОТКЛОНЕНИЕ», «В НОРМЕ». Полоса видна

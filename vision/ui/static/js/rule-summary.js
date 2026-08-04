@@ -1,4 +1,4 @@
-// rule-summary.js — компактные «три замера порога» в анализе кадра
+// rule-summary.js — пороги правил и фактические замеры в анализе кадра
 'use strict';
 
 function el(tag, className, text) {
@@ -8,9 +8,15 @@ function el(tag, className, text) {
     return node;
 }
 
-// Строка «порог + три замера» по одной метрике правила. Замер — значение
-// метрики в одном из трёх прогонов; вышедший за порог подсвечивается,
-// замер выбранного для картинки прогона (pictureRun) помечается рамкой.
+function measurementClass(run) {
+    if (run && run.ok === true) return 'is-ok';
+    if (run && run.ok === false) return 'is-bad';
+    return 'is-neutral';
+}
+
+// Одна строка — один порог: слева его имя, рядом настроенное значение,
+// справа — факт именно на открытом оператором кадре. Остальные прогоны
+// доступны по раскрытию и не мешают первичному сравнению.
 function buildMeasurementRow(roleLabel, metric, pictureRun) {
     const row = el('div', 'fa-measurement-row');
     const label = el('span', 'fa-measurement-label');
@@ -20,83 +26,83 @@ function buildMeasurementRow(roleLabel, metric, pictureRun) {
     row.appendChild(label);
 
     const limit = el('span', 'fa-measurement-limit');
-    limit.textContent = metric.limit
-        ? `порог: ${metric.limit}`
-        : 'порог: —';
+    limit.textContent = metric.limit || '—';
     row.appendChild(limit);
 
-    const values = el('span', 'fa-measurement-values');
     const runs = Array.isArray(metric.runs) ? metric.runs : [];
+    const selectedIndex = pictureRun > 0 ? pictureRun - 1 : 0;
+    const selectedRun = runs[selectedIndex] || null;
+    const current = el('span', `fa-measurement-current ${measurementClass(selectedRun)}`);
+    current.textContent = selectedRun && selectedRun.value != null
+        ? String(selectedRun.value) : 'нет замера';
+    current.title = `Значение на кадре прогона ${selectedIndex + 1}`;
+    row.appendChild(current);
+
+    const allRuns = document.createElement('details');
+    allRuns.className = 'fa-measurement-all-runs';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Все прогоны';
+    allRuns.appendChild(summary);
+    const values = el('span', 'fa-measurement-values');
     runs.forEach((run, index) => {
-        const value = el('span', 'fa-measurement-value');
-        // Слот фиксирован номером прогона: отсутствующий замер — прочерк,
-        // а не сдвиг соседних значений к началу.
-        if (run && run.ok === true) value.classList.add('is-ok');
-        else if (run && run.ok === false) value.classList.add('is-bad');
-        else value.classList.add('is-neutral');
-        if (pictureRun && index + 1 === pictureRun) {
+        const value = el('span', `fa-measurement-value ${measurementClass(run)}`);
+        const runNumber = index + 1;
+        const measuredValue = run && run.value != null ? String(run.value) : '—';
+        value.textContent = `${runNumber}: ${measuredValue}`;
+        value.title = `Прогон ${runNumber}: ${measuredValue}`;
+        if (pictureRun && runNumber === pictureRun) {
             value.classList.add('is-picture-run');
         }
-        value.textContent = run && run.value != null ? String(run.value) : '—';
         values.appendChild(value);
     });
-    row.appendChild(values);
+    allRuns.appendChild(values);
+    row.appendChild(allRuns);
     return row;
 }
 
-// Полоса статусов прогонов: «ОБЛАСТЬ НЕ ПОСТРОЕНА» для fail-closed
-// дефектов (omission/стекло без областей), «ОТКЛОНЕНИЕ», «В НОРМЕ».
-// Показывается даже когда замеров нет (область не построена).
 function renderRunStatusStrip(rule, pictureRun) {
     const statuses = Array.isArray(rule.run_status) ? rule.run_status : [];
     if (!statuses.length) return null;
-
     const wrap = el('div', 'fa-run-status');
     statuses.forEach((rows, index) => {
         const chip = el('span', 'fa-run-status-chip');
         const texts = rows.map(row => {
             const role = row.role ? `${cameraRoleLabel(row.role)} · ` : '';
-            const reason = row.reason
-                ? ` (${row.reason})`
-                : '';
+            const reason = row.reason ? ` (${row.reason})` : '';
             return `${role}${row.status || '—'}${reason}`;
         });
         chip.textContent = `ПРОГОН ${index + 1}: ${texts.join(' · ') || '—'}`;
         if (rowStatusClass(rows) === 'is-bad') chip.classList.add('is-bad');
         else if (rowStatusClass(rows) === 'is-ok') chip.classList.add('is-ok');
-        if (pictureRun && index + 1 === pictureRun) {
-            chip.classList.add('is-picture-run');
-        }
+        if (pictureRun && index + 1 === pictureRun) chip.classList.add('is-picture-run');
         wrap.appendChild(chip);
     });
     return wrap;
 }
 
-// Класс статуса прогона: есть «область не построена»/«отклонение» — плохо;
-// все «в норме»/«корпус» — хорошо; иначе нейтрально.
 function rowStatusClass(rows) {
     if (!rows || !rows.length) return 'is-neutral';
     const statuses = rows.map(row => String(row.status || ''));
-    if (statuses.some(s => s === 'ОБЛАСТЬ НЕ ПОСТРОЕНА' || s === 'ОТКЛОНЕНИЕ' || s === 'ПУСТО')) {
-        return 'is-bad';
-    }
+    if (statuses.some(s => s === 'ОБЛАСТЬ НЕ ПОСТРОЕНА' || s === 'ОТКЛОНЕНИЕ' || s === 'ПУСТО')) return 'is-bad';
     if (statuses.every(s => s === 'В НОРМЕ' || s === 'КОРПУС')) return 'is-ok';
     return 'is-neutral';
 }
 
-// Компактная сводка правила: под названием и вердиктом — все пороги
-// правила (labels из «Порогов правил»), под каждым — три замера по
-// трём прогонам голосования 2 из 3.
+// В анализ попадают только метрики с настроенным порогом: это исключает
+// служебные данные и оставляет оператору прямое сравнение «порог — факт».
 function renderRuleMeasurements(rule, pictureRun) {
     const wrap = el('div', 'fa-measurements');
     const runCards = Array.isArray(rule.run_cards) ? rule.run_cards : [];
+    if (runCards.length) {
+        wrap.appendChild(el(
+            'div', 'fa-measurements-heading',
+            `ПАРАМЕТР · ПОРОГ · НА КАДРЕ (ПРОГОН ${pictureRun || 1})`,
+        ));
+    }
     const statusStrip = renderRunStatusStrip(rule, pictureRun);
     if (statusStrip) wrap.appendChild(statusStrip);
     if (!runCards.length) return wrap;
 
-    // Собираем метрики по ролям (объединение по названию: у части прогонов
-    // метрики может не быть — тогда замер «—»). Замеры раскладываются по
-    // слотам номеров прогонов, чтобы не сдвигаться при пропуске.
     const byRole = new Map();
     runCards.forEach((cards, runIndex) => {
         for (const card of cards) {
@@ -105,13 +111,12 @@ function renderRuleMeasurements(rule, pictureRun) {
             const metrics = byRole.get(role);
             for (const metric of card.metrics || []) {
                 const key = metric.label || metric.key;
+                if (!key) continue;
                 if (!metrics.has(key)) {
                     metrics.set(key, {
                         label: metric.label || metric.key,
                         key: metric.key || null,
                         limit: metric.limit || null,
-                        // Слоты фиксированы номерами прогонов; явные null,
-                        // чтобы forEach не пропускал «дырки» массива.
                         runs: runCards.map(() => null),
                     });
                 }
@@ -127,15 +132,8 @@ function renderRuleMeasurements(rule, pictureRun) {
 
     for (const [role, metrics] of byRole) {
         const roleLabel = role ? cameraRoleLabel(role) : '';
-        // Сначала пороги с измеренными значениями (есть лимит), затем —
-        // остальные метрики (без порога, для полноты картины).
-        const rows = [...metrics.values()].sort((a, b) => {
-            const aHas = a.limit ? 0 : 1;
-            const bHas = b.limit ? 0 : 1;
-            return aHas - bHas;
-        });
-        for (const metric of rows) {
-            wrap.appendChild(buildMeasurementRow(roleLabel, metric, pictureRun));
+        for (const metric of metrics.values()) {
+            if (metric.limit) wrap.appendChild(buildMeasurementRow(roleLabel, metric, pictureRun));
         }
     }
     return wrap;
