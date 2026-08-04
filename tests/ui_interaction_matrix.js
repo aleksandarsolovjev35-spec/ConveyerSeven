@@ -801,7 +801,7 @@ async function main() {
   )];
   assert(rows.length >= 2, 'под правилом собраны пороги с тремя замерами');
   assert(
-    rows.some(row => row.textContent.includes('порог: 0.8 px')),
+    rows.some(row => row.querySelector('.fa-measurement-limit')?.textContent === '0.8 px'),
     'рядом с правилом показывается порог',
   );
   assert(

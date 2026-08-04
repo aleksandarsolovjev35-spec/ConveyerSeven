@@ -390,10 +390,10 @@
 .fa-measurement-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: baseline;
-    gap: 6px;
+    gap: 5px;
+    align-items: center;
     min-width: 0;
-    padding: 2px 4px;
+    padding: 3px 4px;
     border-radius: 2px;
     background: var(--bg-1);
 }
@@ -407,44 +407,35 @@
     white-space: nowrap;
 }
 
-.fa-measurement-limit {
-    flex: 0 0 auto;
-    color: var(--text-muted);
+.fa-measurement-limit,
+.fa-measurement-current {
     font: 700 8px var(--font-mono);
     white-space: nowrap;
 }
+.fa-measurement-limit { color: var(--text-muted); }
+.fa-measurement-current { color: var(--text); }
+.fa-measurement-current.is-ok { color: var(--ok); }
+.fa-measurement-current.is-bad { color: var(--bad); background: var(--bad-bg); }
+.fa-measurement-current.is-neutral { color: var(--text-muted); }
 
-.fa-measurement-values {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 3px;
-    justify-content: flex-end;
+.fa-measurement-all-runs {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font: 7px var(--font-mono);
 }
-
+.fa-measurement-all-runs summary { cursor: pointer; }
+.fa-measurement-values { display: flex; flex-wrap: wrap; gap: 3px; padding-top: 3px; }
 .fa-measurement-value {
-    flex: 0 0 auto;
-    min-width: 18px;
-    padding: 0 3px;
+    padding: 1px 3px;
     border: 1px solid transparent;
     border-radius: 2px;
-    text-align: center;
     font: 700 8px var(--font-mono);
     white-space: nowrap;
 }
-
 .fa-measurement-value.is-ok { color: var(--ok); }
-.fa-measurement-value.is-bad {
-    color: var(--bad);
-    background: var(--bad-bg);
-    border-color: var(--bad);
-}
+.fa-measurement-value.is-bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
 .fa-measurement-value.is-neutral { color: var(--text-muted); }
-
-.fa-measurement-value.is-picture-run {
-    outline: 1px dashed var(--accent);
-    outline-offset: 1px;
-    color: var(--accent);
-}
+.fa-measurement-value.is-picture-run { outline: 1px dashed var(--accent); outline-offset: 1px; color: var(--accent); }
 
 /* Статусы прогонов: «ОБЛАСТЬ НЕ ПОСТРОЕНА» для fail-closed дефектов
    (omission/стекло без областей), «ОТКЛОНЕНИЕ», «В НОРМЕ». Полоса видна
