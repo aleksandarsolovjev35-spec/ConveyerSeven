@@ -5,12 +5,14 @@
 // камеры с понятными русскими названиями (label приходит с сервера).
 // Каждое правило — собственная компактная карточка; переключение между
 // правилами — клик по заголовку-вкладке (как вкладки в браузере).
+// Выбранное правило разворачивается: карточка показывает строки в полный
+// рост; повторный клик по активной вкладке сворачивает её обратно.
 // Значение каждого порога задаётся только числовым полем; отдельный
 // вертикальный ползунок прокручивает строки карточки, когда они не
-// помещаются. Редактирование доступно только до пуска (IDLE) и после
-// полной остановки (STOPPED) и блокируется на время реального движения
-// ленты (jog.busy); backend дополнительно проверяет состояние при
-// сохранении.
+// помещаются, и полностью скрыт, когда видны все строки. Редактирование
+// доступно только до пуска (IDLE) и после полной остановки (STOPPED) и
+// блокируется на время реального движения ленты (jog.busy); backend
+// дополнительно проверяет состояние при сохранении.
 
 const THRESHOLD_EDITABLE_STATES = ['IDLE', 'STOPPED'];
 
@@ -137,9 +139,11 @@ function renderThresholdsPanel() {
 // ─── Блоки-карточки правил ─────────────────────────────────────────
 // Каждое правило (категория) — отдельная компактная карточка. Сверху —
 // лента вкладок-заголовков (как в браузере): активная вкладка подсвечена,
-// клик по вкладке переключает видимую карточку. У каждой карточки свой
-// вертикальный ползунок: он появляется только когда строки карточки не
-// помещаются по высоте; если все строки видны — ползунок отключён.
+// клик по вкладке переключает видимую карточку и разворачивает её
+// (строки в полный рост); повторный клик по активной вкладке сворачивает
+// карточку обратно. У каждой карточки свой вертикальный ползунок: он
+// появляется только когда строки карточки не помещаются по высоте; если
+// все строки видны — ползунок полностью скрыт.
 
 function buildThresholdItem(param) {
     // Контейнер строки — div: клик по названию ничего не переключает.
@@ -208,6 +212,22 @@ function renderThresholdsBody() {
         count.textContent = String((group.params || []).length);
         tab.appendChild(count);
         tab.addEventListener('click', () => {
+            if (thresholdsCardIndex === index) {
+                // Клик по уже выбранной вкладке: свернуть карточку
+                // правила или развернуть её обратно.
+                const card = cards.querySelector(
+                    `.thresholds-card[data-index="${index}"]`,
+                );
+                if (card) {
+                    card.classList.toggle('is-expanded');
+                    syncTabHints();
+                    thresholdsSyncScroll();
+                    // После анимации сворачивания высота строк меняется —
+                    // ползунок нужно пересчитать по конечному размеру.
+                    window.setTimeout(thresholdsSyncScroll, 260);
+                }
+                return;
+            }
             thresholdsCardIndex = index;
             updateCardVisibility();
         });
@@ -225,7 +245,7 @@ function renderThresholdsBody() {
         card.dataset.index = String(index);
 
         // Тело карточки: строки параметров + собственный вертикальный
-        // ползунок прокрутки (включается только при переполнении).
+        // ползунок прокрутки (виден только при переполнении строк).
         const cardBody = document.createElement('div');
         cardBody.className = 'thresholds-card-body';
 
@@ -255,19 +275,47 @@ function renderThresholdsBody() {
     scroll.append(cards);
     body.appendChild(scroll);
 
-    // Показ только активной карточки + состояние вкладок.
+    // Показ только активной карточки + состояние вкладок. Выбранное
+    // правило разворачивается: активной карточке добавляется is-expanded,
+    // при уходе с вкладки разворот снимается.
+    const syncTabHints = () => {
+        [...tabs.querySelectorAll('.thresholds-tab')].forEach((tab, index) => {
+            const label = rules[index].label || rules[index].rule;
+            if (index !== thresholdsCardIndex) {
+                tab.title = label;
+                return;
+            }
+            const card = cards.querySelector(
+                `.thresholds-card[data-index="${index}"]`,
+            );
+            const expanded = !card || card.classList.contains('is-expanded');
+            tab.title = expanded
+                ? `${label} — свернуть карточку`
+                : `${label} — развернуть карточку`;
+        });
+    };
+
     const updateCardVisibility = () => {
         const total = rules.length;
         thresholdsCardIndex = Math.max(0, Math.min(total - 1, thresholdsCardIndex));
         [...cards.querySelectorAll('.thresholds-card')].forEach((card, index) => {
-            card.classList.toggle('is-active', index === thresholdsCardIndex);
+            const isActive = index === thresholdsCardIndex;
+            if (isActive && !card.classList.contains('is-active')) {
+                card.classList.add('is-expanded');
+            }
+            if (!isActive) card.classList.remove('is-expanded');
+            card.classList.toggle('is-active', isActive);
         });
         [...tabs.querySelectorAll('.thresholds-tab')].forEach((tab, index) => {
             const isActive = index === thresholdsCardIndex;
             tab.classList.toggle('is-active', isActive);
             tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
+        syncTabHints();
         thresholdsSyncScroll();
+        // Разворачивание анимировано: после завершения высоты строк
+        // меняются — ползунок пересчитывается по конечному размеру.
+        window.setTimeout(thresholdsSyncScroll, 260);
     };
 
     // Ползунок каждой карточки прокручивает только её строки.
@@ -287,17 +335,20 @@ function renderThresholdsBody() {
 }
 
 // Синхронизация ползунка конкретной карточки с фактической прокруткой.
-// Ползунок активен, только когда строки карточки не помещаются; если все
-// строки видны — он отключён (значение порогов он не задаёт).
+// Ползунок нужен, только когда строки карточки не помещаются; если все
+// строки видны — он полностью скрыт (значение порогов он не задаёт).
+// Положение бегунка повторяет прокрутку: верх шкалы — верх списка.
 function thresholdsSyncCard(rows, slider) {
     if (!rows || !slider) return;
     const maxScroll = Math.max(0, rows.scrollHeight - rows.clientHeight);
     if (maxScroll <= 0) {
         slider.disabled = true;
         slider.value = 0;
+        slider.classList.add('is-idle');
         if (rows.scrollTop) rows.scrollTop = 0;
         return;
     }
+    slider.classList.remove('is-idle');
     slider.disabled = false;
     slider.value = Math.max(0, Math.min(1000,
         Math.round(rows.scrollTop / maxScroll * 1000)));
