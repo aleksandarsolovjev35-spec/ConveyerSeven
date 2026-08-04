@@ -141,8 +141,9 @@ function renderThresholdsPanel() {
 // лента вкладок-заголовков (как в браузере): активная вкладка связана с
 // видимой карточкой и выделяется сдержанно — только обводкой. Все
 // вкладки делят ширину ленты поровну и всегда умещаются целиком —
-// переключение мышкой не требует прокрутки ленты; полное название
-// правила показывает всплывающая подсказка (title). Клик по вкладке
+// переключение мышкой не требует прокрутки ленты; при наведении
+// заголовок «разъезжается» и показывает полное название (системная
+// подсказка title остаётся запасным вариантом). Клик по вкладке
 // переключает видимую карточку и разворачивает её (строки в полный
 // рост); повторный клик по активной вкладке сворачивает карточку
 // обратно. У каждой карточки свой вертикальный ползунок: он появляется
@@ -195,8 +196,9 @@ function renderThresholdsBody() {
 
     // Вкладки-заголовки правил, как вкладки в браузере: одна вкладка на
     // правило, активная выделяется только обводкой. Все вкладки делят
-    // ширину ленты поровну и умещаются целиком; полное название правила
-    // видно во всплывающей подсказке.
+    // ширину ленты поровну и умещаются целиком; при наведении заголовок
+    // «разъезжается» и показывает полное название (системная подсказка
+    // title — запасной вариант).
     const tabs = document.createElement('div');
     tabs.className = 'thresholds-tabs';
     tabs.setAttribute('role', 'tablist');
@@ -238,6 +240,42 @@ function renderThresholdsBody() {
             updateCardVisibility();
         });
         tabs.appendChild(tab);
+    });
+
+    // Раскрытие заголовка по наведению: вкладка «разъезжается» до
+    // полного названия, соседние вкладки уступают ширину. flex-basis:
+    // auto CSS анимировать не умеет (auto — не длина), поэтому измеряем
+    // полную ширину названия и подставляем её пикселями — раскрытие
+    // получается плавным (transition на flex-basis в thresholds.css).
+    // Сжатие вкладки остаётся разрешённым, так что лента никогда не
+    // выходит за правый край. На устройствах без наведения (тачскрины)
+    // лента не дёргается: полное название остаётся в подсказке title.
+    const THRESHOLDS_TAB_GAP = 4;   // зазор между названием и счётчиком
+    const THRESHOLDS_TAB_PAD = 14;  // поля 6+6 и рамки 1+1 вкладки
+    const hoverCapable = !window.matchMedia
+        || window.matchMedia('(hover: hover)').matches;
+    tabs.addEventListener('pointerover', event => {
+        if (!hoverCapable) return;
+        const tab = event.target.closest('.thresholds-tab');
+        if (!tab) return;
+        const label = tab.querySelector('.thresholds-tab-label');
+        const count = tab.querySelector('.thresholds-tab-count');
+        const textWidth = label ? label.scrollWidth : 0;
+        const countWidth = count ? count.offsetWidth : 0;
+        tab.style.flexBasis = String(
+            textWidth + THRESHOLDS_TAB_GAP + countWidth + THRESHOLDS_TAB_PAD,
+        ) + 'px';
+    });
+    tabs.addEventListener('pointerout', event => {
+        if (!hoverCapable) return;
+        const tab = event.target.closest('.thresholds-tab');
+        if (!tab) return;
+        const next = event.relatedTarget;
+        // Переход на элемент внутри вкладки (например, на счётчик)
+        // раскрытие не отменяет; уход на другую вкладку или за пределы
+        // ленты возвращает её к равным долям.
+        if (next && tab.contains(next)) return;
+        tab.style.flexBasis = '';
     });
     scroll.appendChild(tabs);
 
