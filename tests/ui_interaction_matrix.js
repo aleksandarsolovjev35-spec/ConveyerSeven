@@ -1277,20 +1277,19 @@ async function main() {
   const tabsBar = thresholdsBody.querySelector('.thresholds-tabs');
   const hoverTab = tabsBar.querySelector('.thresholds-tab');
   const hoverLabel = hoverTab.querySelector('.thresholds-tab-label');
-  const hoverCount = hoverTab.querySelector('.thresholds-tab-count');
   Object.defineProperty(hoverLabel, 'scrollWidth', {value: 200, configurable: true});
   hoverTab.dispatchEvent(new window.MouseEvent('pointerover', {bubbles: true}));
   assert(
-    hoverTab.style.flexBasis === '218px',
+    hoverTab.style.flexBasis === '216px',
     'наведение раскрывает заголовок до полного названия',
   );
-  hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
-    bubbles: true,
-    relatedTarget: hoverCount,
-  }));
   assert(
-    hoverTab.style.flexBasis === '218px',
-    'переход на счётчик внутри вкладки не сворачивает заголовок',
+    hoverTab.classList.contains('is-title-expanded'),
+    'название центрируется в раскрытой вкладке',
+  );
+  assert(
+    !hoverTab.querySelector('.thresholds-tab-count'),
+    'счётчик параметров скрыт из вкладки',
   );
   hoverTab.dispatchEvent(new window.MouseEvent('pointerout', {
     bubbles: true,

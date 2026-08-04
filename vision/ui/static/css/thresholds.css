@@ -105,7 +105,6 @@
        разъезжаются за правый край, а сжимаются и остаются видимыми. */
     flex: 1 1 0;
     min-width: 0;
-    position: relative;
     display: flex;
     align-items: center;
     gap: 2px; /* tighter gap для компактности */
@@ -145,7 +144,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* Название раскрытой вкладки — по центру; счётчик не смещает его. */
+/* Название раскрытой вкладки — по центру всей её области. */
 .thresholds-tab.is-title-expanded,
 .thresholds-tab:focus-visible {
     justify-content: center;
@@ -154,18 +153,6 @@
 .thresholds-tab:focus-visible .thresholds-tab-label {
     flex: 0 1 auto;
     text-align: center;
-}
-
-.thresholds-tab.is-title-expanded .thresholds-tab-count,
-.thresholds-tab:focus-visible .thresholds-tab-count {
-    position: absolute;
-    right: 4px;
-}
-
-.thresholds-tab-count {
-    flex: 0 0 auto;
-    font: 700 7px var(--font-mono);
-    color: var(--text-muted);
 }
 
 /* ─── Карточка правила ───────────────────────────────────────────── */
