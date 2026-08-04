@@ -244,15 +244,19 @@ function renderThresholdsBody() {
 
     // Раскрытие заголовка по наведению: вкладка «разъезжается» до
     // **только полного названия** (без лишних пустых мест).
-    // Измеряем точную визуальную ширину текста + счётчика через
-    // getBoundingClientRect — это точнее scrollWidth, который может
-    // включать виртуальные пробелы. flex-basis: auto CSS анимировать
-    // не умеет, поэтому подставляем пиксели — раскрытие плавное.
-    // Сжатие разрешено, лента не выезжает за край. На тачскринах —
-    // только title.
+    // Измеряем полную визуальную ширину текста + счётчика через
+    // scrollWidth: название обрезано многоточием внутри сжатой вкладки
+    // (flex: 1 1 0, min-width: 0), поэтому getBoundingClientRect вернул
+    // бы видимую (усечённую) ширину и вкладка не раскрылась бы вообще,
+    // а scrollWidth возвращает полную ширину содержимого. flex-basis:
+    // auto CSS анимировать не умеет, поэтому подставляем пиксели —
+    // раскрытие плавное. Сжатие разрешено, лента не выезжает за край.
+    // На тачскринах — только title.
     const THRESHOLDS_TAB_GAP = 2;   // зазор между названием и счётчиком
-    // padding: 2px 4px 3px + border: 1px с каждой стороны = 6px
-    const THRESHOLDS_TAB_PAD = 6;
+    // padding: 2px 4px 3px + border: 1px с каждой стороны (= 10px) плюс
+    // запас 6px на трекинг (letter-spacing: 0.5px) конца заглавного
+    // названия, чтобы текст не упирался в край вкладки.
+    const THRESHOLDS_TAB_PAD = 16;
     const hoverCapable = !window.matchMedia
         || window.matchMedia('(hover: hover)').matches;
     tabs.addEventListener('pointerover', event => {
@@ -261,10 +265,11 @@ function renderThresholdsBody() {
         if (!tab) return;
         const label = tab.querySelector('.thresholds-tab-label');
         const count = tab.querySelector('.thresholds-tab-count');
-        // getBoundingClientRect точнее scrollWidth: не включает виртуальные
-        // пробелы, которые могут быть в scrollWidth
-        const textWidth = label ? label.getBoundingClientRect().width : 0;
-        const countWidth = count ? count.getBoundingClientRect().width : 0;
+        // scrollWidth — полная ширина текста даже когда он обрезан
+        // многоточием; getBoundingClientRect вернул бы усечённую
+        // видимую ширину, и раскрытие не сработало бы.
+        const textWidth = label ? label.scrollWidth : 0;
+        const countWidth = count ? count.scrollWidth : 0;
         // Точная ширина: только название + счётчик + минимальные поля
         const needed = textWidth + THRESHOLDS_TAB_GAP + countWidth + THRESHOLDS_TAB_PAD;
         tab.style.flexBasis = needed + 'px';
