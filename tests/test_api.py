@@ -91,6 +91,9 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(all((jpeg_1, jpeg_2, jpeg_3)))
         self.assertNotEqual(jpeg_1, jpeg_2)
         self.assertNotEqual(jpeg_2, jpeg_3)
+        # Валидный прогон без этой роли не должен тихо показывать старый
+        # evidence-кадр.
+        self.assertIsNone(server._get_or_render("BOTTOM", "RAW", "main", run=1))
         # Без run — текущий (evidence) кадр.
         self.assertEqual(server._get_or_render("TOP", "RAW", "main"),
                          server._get_or_render("TOP", "RAW", "main", run=None))

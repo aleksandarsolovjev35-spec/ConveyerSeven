@@ -227,7 +227,12 @@ function updateFrameAnalysisStatus(ls) {
     // кадр оператор переключает его (state.viewRun).
     const pictureRun = Number(report.picture_run) || 0;
     state.frameAnalysisRulesCache = rules;
-    state.viewRun = pictureRun;
+    // Порядок показа кадров — всегда хронологический. picture_run нужен
+    // только для метаданных/подсветки, но не должен перескакивать картинку
+    // сразу на наиболее согласованный прогон.
+    if (!(state.runFramesAvailable >= 3 && state.viewRun >= 1)) {
+        state.viewRun = pictureRun;
+    }
     renderFrameAnalysisModels(models);
     renderFrameAnalysisRules(rules, state.viewRun);
     animateUiElement(els.frameAnalysisModels, 'ui-content-change');
