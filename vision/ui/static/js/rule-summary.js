@@ -37,7 +37,10 @@ function buildMeasurementRow(roleLabel, metric, pictureRun) {
         if (pictureRun && index + 1 === pictureRun) {
             value.classList.add('is-picture-run');
         }
-        value.textContent = run && run.value != null ? String(run.value) : '—';
+        const runNumber = index + 1;
+        const measuredValue = run && run.value != null ? String(run.value) : '—';
+        value.textContent = `${runNumber}: ${measuredValue}`;
+        value.title = `Прогон ${runNumber}: ${measuredValue}`;
         values.appendChild(value);
     });
     row.appendChild(values);
@@ -90,6 +93,13 @@ function rowStatusClass(rows) {
 function renderRuleMeasurements(rule, pictureRun) {
     const wrap = el('div', 'fa-measurements');
     const runCards = Array.isArray(rule.run_cards) ? rule.run_cards : [];
+    if (runCards.length) {
+        wrap.appendChild(el(
+            'div',
+            'fa-measurements-heading',
+            'ПОРОГИ ПРАВИЛА · ЗАМЕРЫ КАДРА ПО ПРОГОНАМ 1 / 2 / 3',
+        ));
+    }
     const statusStrip = renderRunStatusStrip(rule, pictureRun);
     if (statusStrip) wrap.appendChild(statusStrip);
     if (!runCards.length) return wrap;
@@ -127,8 +137,8 @@ function renderRuleMeasurements(rule, pictureRun) {
 
     for (const [role, metrics] of byRole) {
         const roleLabel = role ? cameraRoleLabel(role) : '';
-        // Сначала пороги с измеренными значениями (есть лимит), затем —
-        // остальные метрики (без порога, для полноты картины).
+        // Сначала показатели с порогом, затем вспомогательные измерения:
+        // так допуск и величина с кадра всегда находятся в начале блока.
         const rows = [...metrics.values()].sort((a, b) => {
             const aHas = a.limit ? 0 : 1;
             const bHas = b.limit ? 0 : 1;

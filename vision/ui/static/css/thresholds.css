@@ -381,6 +381,12 @@
     border-top: 1px solid var(--border);
 }
 
+.fa-measurements-heading {
+    color: var(--text-muted);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.25px;
+}
+
 .fa-measurement-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;

@@ -792,6 +792,10 @@ async function main() {
     '#frame-analysis-rules .fa-measurements',
   )];
   assert(measurementBlocks.length === 2, 'у каждого правила есть блок замеров');
+  assert(
+    measurementBlocks.every(block => block.querySelector('.fa-measurements-heading')),
+    'у замеров есть понятная подпись порогов и прогонов',
+  );
   const rows = [...window.document.querySelectorAll(
     '#frame-analysis-rules .fa-measurement-row',
   )];
@@ -827,8 +831,8 @@ async function main() {
   const synthRow = window.document.querySelector('#frame-analysis-rules .fa-measurement-row');
   const synthChips = [...synthRow.querySelectorAll('.fa-measurement-value')];
   assert(synthChips.length === 3, 'три слота замеров даже при пропуске в прогоне');
-  assert(synthChips[0].textContent === '1 px', 'замер первого прогона на своём месте');
-  assert(synthChips[1].textContent === '—', 'пропущенный замер — прочерк');
+  assert(synthChips[0].textContent === '1: 1 px', 'замер первого прогона на своём месте');
+  assert(synthChips[1].textContent === '2: —', 'пропущенный замер — прочерк');
   assert(synthChips[2].classList.contains('is-picture-run'), 'рамка выбранного прогона не сдвинулась');
 
   // Правило с непостроенной областью (fail-closed): показывается полоса
@@ -889,7 +893,7 @@ async function main() {
   assert(
     [...window.document.querySelectorAll(
       '#frame-analysis-rules .fa-measurement-value.is-picture-run',
-    )].some(chip => chip.textContent === '0.9 px'),
+    )].some(chip => chip.textContent === '3: 0.9 px'),
     'рамка замера следует за выбранным прогоном',
   );
   // Настоящий клик по контейнеру камеры циклит дальше (1/3).
