@@ -1196,6 +1196,10 @@ async function main() {
   );
   const activeCardSlider = activeCard.querySelector('input.thresholds-scroll-slider');
   assert(!!activeCardSlider, 'у карточки есть собственный ползунок');
+  assert(
+    activeCard.classList.contains('is-expanded'),
+    'выбранная карточка правила развёрнута',
+  );
 
   // jsdom не делает раскладку: подставляем размеры прокрутки строк, чтобы
   // проверить, что ползунок активен и двигает строки своей карточки.
@@ -1210,6 +1214,10 @@ async function main() {
   });
   activeRows.dispatchEvent(new window.Event('scroll'));
   assert(!activeCardSlider.disabled, 'ползунок активен, когда строки не помещаются');
+  assert(
+    !activeCardSlider.classList.contains('is-idle'),
+    'при переполнении ползунок видим',
+  );
   activeCardSlider.value = '500';
   activeCardSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
   assert(scrollState.top === 300, 'ползунок прокручивает строки карточки');
@@ -1246,6 +1254,10 @@ async function main() {
     'aria-selected переходит на активную вкладку',
   );
   assert(
+    tabs[1].title.includes('НАЛИЧИЕ КОРПУСА'),
+    'активная вкладка несёт полное название правила',
+  );
+  assert(
     tabs[0].getAttribute('aria-selected') === 'false',
     'прежняя вкладка снимается',
   );
@@ -1253,6 +1265,15 @@ async function main() {
     '.thresholds-card.is-active input.thresholds-scroll-slider',
   );
   assert(secondSlider.disabled, 'карточка без переполнения ползунок не показывает');
+  assert(
+    secondSlider.classList.contains('is-idle'),
+    'когда все строки видны, ползунок полностью скрыт',
+  );
+  assert(
+    thresholdsBody.querySelector('.thresholds-card.is-active')
+      .classList.contains('is-expanded'),
+    'карточка выбранного правила разворачивается при переключении вкладок',
+  );
 
   // Клик по первой вкладке возвращает к первой карточке; её ползунок
   // снова синхронизируется с сохранённой прокруткой строк.
@@ -1267,6 +1288,21 @@ async function main() {
       '.thresholds-card.is-active input.thresholds-scroll-slider',
     ).disabled === false,
     'ползунок первой карточки снова активен после возврата',
+  );
+
+  // Повторный клик по активной вкладке сворачивает карточку правила,
+  // ещё один клик — разворачивает обратно.
+  tabs[0].click();
+  assert(
+    !thresholdsBody.querySelector('.thresholds-card.is-active')
+      .classList.contains('is-expanded'),
+    'клик по активной вкладке сворачивает карточку',
+  );
+  tabs[0].click();
+  assert(
+    thresholdsBody.querySelector('.thresholds-card.is-active')
+      .classList.contains('is-expanded'),
+    'повторный клик по активной вкладке разворачивает карточку',
   );
 
   // Значение задаётся числовым полем; при активном JOG-режиме

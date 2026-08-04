@@ -80,6 +80,11 @@ class FakeCameras:
 
 
 class ScriptedInspector:
+    INPUT_ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
+    SPIDER_ROLES = (
+        "SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP",
+    )
+
     def __init__(self, input_defects, spider_defects):
         self.input_defects = list(input_defects)
         self.spider_defects = list(spider_defects)

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from core.production_cycle import ProductionCycle
+from domain.defect_rules import InputPartPresenceRule
 
 
 ROLES = (
@@ -40,11 +41,24 @@ class Cameras:
 
 
 class Vision:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, empty_input=False):
         self.fail = fail
+        self.empty_input = empty_input
         self.last_health = []
         self.calls = 0
         self.roles_by_call = []
+
+    def _detections(self, role):
+        if role in ("INPUT_LEFT", "INPUT_RIGHT"):
+            if self.empty_input:
+                return []
+            # 3 flatness > порога ложных срабатываний (2) — деталь видна.
+            return [
+                {"class": "flatness", "confidence": 0.9},
+                {"class": "flatness", "confidence": 0.9},
+                {"class": "flatness", "confidence": 0.9},
+            ]
+        return [{"class": "demo", "confidence": 0.9}]
 
     def process_all(self, frames):
         self.calls += 1
@@ -62,10 +76,7 @@ class Vision:
             }
             for role in frames
         ]
-        return {
-            role: [{"class": "demo", "confidence": 0.9}]
-            for role in frames
-        }
+        return {role: self._detections(role) for role in frames}
 
 
 class Decision:
@@ -82,6 +93,7 @@ class Decision:
             name="input_rule",
             ROLES=("INPUT_LEFT", "INPUT_RIGHT"),
         )
+        self.rule_evaluations = []
 
     @staticmethod
     def _result(name, triggered=False):
@@ -107,6 +119,7 @@ class Decision:
         return []
 
     def evaluate_rules_detailed(self, rules, vision_results, frames=None):
+        self.rule_evaluations.append(tuple(rule.name for rule in rules))
         return [self._result(rule.name) for rule in rules]
 
 
@@ -116,9 +129,15 @@ class Inspector:
         "SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP",
     )
 
-    def __init__(self, fail=False):
-        self.vision = Vision(fail=fail)
+    def __init__(self, fail=False, empty_input=False):
+        self.vision = Vision(fail=fail, empty_input=empty_input)
         self.decision = Decision()
+
+    def _evaluate_part_presence(self, vision_results):
+        rule = InputPartPresenceRule(thresholds=self.decision.thresholds)
+        if not rule.enabled:
+            raise RuntimeError("part_presence rule is disabled")
+        return rule.check(vision_results)
 
 
 class Distributor:
@@ -148,11 +167,11 @@ class Distributor:
 
 
 class PrestartDiagnosticTests(unittest.TestCase):
-    def make_cycle(self, fail=False):
+    def make_cycle(self, fail=False, empty_input=False):
         return ProductionCycle(
             Conveyor(),
             Cameras(),
-            Inspector(fail=fail),
+            Inspector(fail=fail, empty_input=empty_input),
             Distributor(),
         )
 
@@ -227,7 +246,7 @@ class PrestartDiagnosticTests(unittest.TestCase):
         self.assertTrue(status["controls"]["start"])
         self.assertTrue(status["controls"]["selected_model_analysis"])
 
-    def test_selected_input_uses_only_one_camera_and_skips_joint_presence(self):
+    def test_selected_input_uses_only_one_camera_and_votes_presence(self):
         cycle = self.make_cycle()
         self.assertTrue(cycle.diagnostic_analyze_selected_camera("INPUT_LEFT"))
         report = cycle._build_status()["diagnostics"]
@@ -240,9 +259,49 @@ class PrestartDiagnosticTests(unittest.TestCase):
         self.assertEqual([row["name"] for row in report["rules"]], [
             "part_presence", "input_rule",
         ])
-        self.assertTrue(report["rules"][0]["skipped"])
-        self.assertIn("INPUT_LEFT и INPUT_RIGHT", report["rules"][0]["detail"])
+        # Presence голосуется по доступной камере (вторая INPUT-камера
+        # не участвует): корпус виден — defect-правила выполняются.
+        self.assertFalse(report["rules"][0]["skipped"])
+        self.assertEqual(
+            report["rules"][0]["status_label"],
+            "КОРПУС ОБНАРУЖЕН · 3/3",
+        )
+        self.assertEqual(
+            cycle.inspector.decision.rule_evaluations,
+            [("input_rule",)] * 3,
+        )
         self.assertEqual(report["rules"][1]["status_label"], "НОРМА · 3/3")
+
+    def test_selected_input_empty_tray_passes_without_defect_rule_runs(self):
+        # Регрессия: пустой лоток не должен требовать три прогона
+        # defect-правил — раньше combine_rule_results получал 0 прогонов
+        # и анализ падал в FAULT («ожидалось 3 прогона, получено 0»).
+        cycle = self.make_cycle(empty_input=True)
+        self.assertTrue(cycle.diagnostic_analyze_selected_camera("INPUT_LEFT"))
+        status = cycle._build_status()
+        self.assertEqual(status["state"], "IDLE")
+        report = status["diagnostics"]
+        self.assertEqual(report["status"], "PASSED")
+        self.assertEqual(report["kind"], "SELECTED_MODEL")
+        self.assertEqual(
+            [row["name"] for row in report["rules"]],
+            ["part_presence"],
+        )
+        presence_row = report["rules"][0]
+        self.assertTrue(presence_row["part_absent"])
+        self.assertEqual(
+            presence_row["status_label"],
+            "КОРПУС НЕ ОБНАРУЖЕН · 3/3",
+        )
+        self.assertEqual(
+            report["consensus"]["part_presence"]["decision"], "empty",
+        )
+        self.assertEqual(
+            report["consensus"]["part_presence"]["empty_votes"], 3,
+        )
+        self.assertIn(report["picture_run"], (1, 2, 3))
+        # Defect-правила на пустом лотке не выполняются.
+        self.assertEqual(cycle.inspector.decision.rule_evaluations, [])
 
     def test_model_diagnostic_failure_latches_fault_and_blocks_every_check(self):
         cycle = self.make_cycle(fail=True)
