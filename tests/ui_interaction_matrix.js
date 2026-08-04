@@ -208,9 +208,31 @@ async function main() {
         ],
         rules: [
           {name: 'rule_ok', triggered: false, skipped: false, detail: 'Норма',
-            consensus: {runs: 3, required_votes: 2, states: [false, false, true]}},
+            consensus: {runs: 3, required_votes: 2, states: [false, false, true]},
+            run_cards: [
+              [{role: 'SPIDER_IN', metrics: [
+                {label: 'Допуск отклонения уровня контактов', value: '0.5 px', limit: '0.8 px', ok: true, value_raw: 0.5, limit_raw: 0.8},
+              ]}],
+              [{role: 'SPIDER_IN', metrics: [
+                {label: 'Допуск отклонения уровня контактов', value: '0.79 px', limit: '0.8 px', ok: true, value_raw: 0.79, limit_raw: 0.8},
+              ]}],
+              [{role: 'SPIDER_IN', metrics: [
+                {label: 'Допуск отклонения уровня контактов', value: '0.9 px', limit: '0.8 px', ok: false, value_raw: 0.9, limit_raw: 0.8},
+              ]}],
+            ]},
           {name: 'rule_bad', triggered: true, skipped: false, detail: 'Сработало',
-            consensus: {runs: 3, required_votes: 2, states: [true, false, true]}},
+            consensus: {runs: 3, required_votes: 2, states: [true, false, true]},
+            run_cards: [
+              [{role: 'TOP', metrics: [
+                {label: 'Мин. размер лишнего фрагмента, px', value: '12 px', limit: '3 px', ok: false, value_raw: 12, limit_raw: 3},
+              ]}],
+              [{role: 'TOP', metrics: [
+                {label: 'Мин. размер лишнего фрагмента, px', value: '4 px', limit: '3 px', ok: false, value_raw: 4, limit_raw: 3},
+              ]}],
+              [{role: 'TOP', metrics: [
+                {label: 'Мин. размер лишнего фрагмента, px', value: '30 px', limit: '3 px', ok: false, value_raw: 30, limit_raw: 3},
+              ]}],
+            ]},
         ],
         updated_at: Date.now() / 1000,
       };
@@ -223,6 +245,8 @@ async function main() {
         message: currentStatus.diagnostics.message,
         models: currentStatus.diagnostics.models,
         rules: currentStatus.diagnostics.rules,
+        picture_run: 2,
+        picture_reason: 'rule_bad: Мин. размер лишнего фрагмента, px 4 px (порог 3 px) — брак, ближе всего к порогу',
         updated_at: currentStatus.diagnostics.updated_at,
       };
       return jsonResponse({ok: true});
@@ -733,12 +757,15 @@ async function main() {
   assert(window.document.getElementById('mode-badge').textContent === 'ПОТОК · 30,0 КАДР/С', 'live badge includes the frame rate');
   assert(api.state.mainCamMode === 'live-pull', 'selected live camera uses completed HTTP pulls');
   assert(api.getMainBufferSource().includes('mode=RULES'), 'live pull keeps selected RULES view');
+  // Три кадра прогонов доступны: фронт включает переключение по клику.
+  api.state.runFramesAvailable = 3;
+  api.updateRunCycleAvailability();
   calls.length = 0;
   analyzeSelected.click();
   await sleep(45);
   assert(calls.some(call => call.url.endsWith('/api/diagnostics/selected/SPIDER_IN')), 'selected model endpoint');
   assert(analyzeSelected.textContent === 'ВЕРНУТЬ ПОТОК', 'analysis button becomes return-live');
-  assert(window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ', 'live badge is replaced during analysis');
+  assert(window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ · ПРОГОН 2/3', 'live badge is replaced during analysis and names the server-selected run');
   assert(window.document.getElementById('camera-label').textContent === 'ВНУТРЕННИЙ ВИД · АНАЛИЗ', 'camera label names the frozen analysis frame');
   assert(window.document.getElementById('camera-overlay').classList.contains('is-hidden'), 'idle/stop overlay does not cover frozen analysis frame');
   assert(window.document.getElementById('main-camera').src.includes('mode=RULES'), 'selected rule overlay shown');
@@ -758,21 +785,143 @@ async function main() {
   modelsToggle.click();
   assert(!modelsList.classList.contains('frame-analysis-list-collapsed'), 'модели разворачиваются по клику');
   assert(modelsToggle.getAttribute('aria-expanded') === 'true', 'toggle развёрнут');
-  // Правила показывают все три прогона и большинство (2 из 3).
+  // Правила показывают компактно: название, рядом порог, под ним три
+  // замера по трём прогонам голосования 2 из 3.
   const ruleItems = [...window.document.querySelectorAll('#frame-analysis-rules .frame-analysis-item')];
-  const consensusStrips = ruleItems.map(item =>
-    item.querySelector('.frame-analysis-consensus')
-      ? item.querySelector('.frame-analysis-consensus').textContent
-      : '');
+  const measurementBlocks = [...window.document.querySelectorAll(
+    '#frame-analysis-rules .fa-measurements',
+  )];
+  assert(measurementBlocks.length === 2, 'у каждого правила есть блок замеров');
+  const rows = [...window.document.querySelectorAll(
+    '#frame-analysis-rules .fa-measurement-row',
+  )];
+  assert(rows.length >= 2, 'под правилом собраны пороги с тремя замерами');
   assert(
-    consensusStrips.some(text => text.includes('НОРМА') && text.includes('СРАБОТАЛО')),
-    'правило показывает результат каждого из трёх прогонов',
+    rows.some(row => row.textContent.includes('порог: 0.8 px')),
+    'рядом с правилом показывается порог',
   );
   assert(
-    consensusStrips.some(text => text.includes('ПРОГОНЫ (2 из 3)')),
-    'правило показывает голосование 2 из 3',
+    rows.some(row => row.textContent.includes('0.5 px') && row.textContent.includes('0.79 px')),
+    'под порогом три замера по прогонам',
   );
+  // Замер выбранного для картинки прогона (picture_run=2) помечается.
+  assert(
+    rows.some(row => row.querySelector('.fa-measurement-value.is-picture-run')),
+    'замер выбранного для картинки прогона помечен',
+  );
+  assert(
+    rows.some(row => row.querySelector('.fa-measurement-value.is-bad')),
+    'замер за порогом подсвечен',
+  );
+  // Пропущенная метрика в одном из прогонов не сдвигает замеры: слоты
+  // фиксированы номерами прогонов, отсутствующий замер — прочерк.
+  const synthetic = {
+    name: 'synth_rule', triggered: false, skipped: false, status_label: 'НОРМА',
+    run_cards: [
+      [{role: 'TOP', metrics: [{label: 'Метрика', value: '1 px', limit: '3 px', ok: true}]}],
+      [],
+      [{role: 'TOP', metrics: [{label: 'Метрика', value: '3 px', limit: '3 px', ok: true}]}],
+    ],
+  };
+  window.eval(`renderFrameAnalysisRules(${JSON.stringify([synthetic])}, 3);`);
+  const synthRow = window.document.querySelector('#frame-analysis-rules .fa-measurement-row');
+  const synthChips = [...synthRow.querySelectorAll('.fa-measurement-value')];
+  assert(synthChips.length === 3, 'три слота замеров даже при пропуске в прогоне');
+  assert(synthChips[0].textContent === '1 px', 'замер первого прогона на своём месте');
+  assert(synthChips[1].textContent === '—', 'пропущенный замер — прочерк');
+  assert(synthChips[2].classList.contains('is-picture-run'), 'рамка выбранного прогона не сдвинулась');
+
+  // Правило с непостроенной областью (fail-closed): показывается полоса
+  // статусов прогонов «ОБЛАСТЬ НЕ ПОСТРОЕНА», даже без замеров.
+  const regionRule = {
+    name: 'long_omission', triggered: true, skipped: false,
+    status_label: 'СРАБОТАЛО · 2/3',
+    run_status: [
+      [{role: 'SPIDER_LEFT', status: 'ОБЛАСТЬ НЕ ПОСТРОЕНА', reason: 'no_detections'}],
+      [{role: 'SPIDER_LEFT', status: 'В НОРМЕ', reason: null}],
+      [{role: 'SPIDER_LEFT', status: 'ОБЛАСТЬ НЕ ПОСТРОЕНА', reason: 'no_detections'}],
+    ],
+  };
+  window.eval(`renderFrameAnalysisRules(${JSON.stringify([regionRule])}, 1);`);
+  const statusChips = [...window.document.querySelectorAll(
+    '#frame-analysis-rules .fa-run-status-chip',
+  )];
+  assert(statusChips.length === 3, 'полоса статусов по прогонам');
+  assert(
+    statusChips[0].textContent.includes('ОБЛАСТЬ НЕ ПОСТРОЕНА') &&
+      statusChips[0].textContent.includes('no_detections'),
+    'статус «область не построена» с причиной',
+  );
+  assert(statusChips[0].classList.contains('is-bad'), 'плохой прогон подсвечен');
+  assert(statusChips[1].classList.contains('is-ok'), 'нормальный прогон подсвечен');
+  assert(statusChips[0].classList.contains('is-picture-run'), 'выбранный прогон помечен');
+
+  // Возвращаем прежний отчёт (меняем updated_at, чтобы ключ рендера сменился).
+  currentStatus.frame_analysis.updated_at += 1;
+  api.updateLineStatus(currentStatus);
   assert(!viewModeToggle.disabled, 'view-mode toggle enabled during selected analysis');
+
+  // Почему выбран этот прогон — видно под вердиктом анализа.
+  const pictureLine = window.document.getElementById('frame-analysis-picture');
+  assert(!pictureLine.classList.contains('is-hidden'), 'строка «почему этот прогон» видна');
+  assert(
+    pictureLine.textContent.includes('ПРОГОН 2') &&
+      pictureLine.textContent.includes('ближе всего к порогу'),
+    'строка объясняет выбор прогона',
+  );
+
+  // Клик по главному кадру переключает кадры трёх прогонов анализа.
+  assert(api.state.viewRun === 2, 'новый анализ показывает выбранный сервером прогон');
+  assert(
+    window.document.getElementById('main-camera').src.includes('run=2'),
+    'главный кадр запрашивает кадр прогона 2',
+  );
+  api.cycleMainCameraRun();
+  assert(api.state.viewRun === 3, 'цикл переключает на следующий прогон');
+  assert(
+    window.document.getElementById('main-camera').src.includes('run=3'),
+    'главный кадр запрашивает кадр прогона 3',
+  );
+  assert(
+    window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ · ПРОГОН 3/3',
+    'бейдж показывает выбранный прогон',
+  );
+  assert(
+    [...window.document.querySelectorAll(
+      '#frame-analysis-rules .fa-measurement-value.is-picture-run',
+    )].some(chip => chip.textContent === '0.9 px'),
+    'рамка замера следует за выбранным прогоном',
+  );
+  // Настоящий клик по контейнеру камеры циклит дальше (1/3).
+  window.document.querySelector('.camera-container')
+    .dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
+  assert(api.state.viewRun === 1, 'клик по кадру переключает прогон');
+  assert(
+    window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ · ПРОГОН 1/3',
+    'бейдж после клика по кадру',
+  );
+  // Горячая клавиша N (физический код KeyN) циклит прогоны так же, как клик.
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'n', code: 'KeyN', bubbles: true,
+  }));
+  assert(api.state.viewRun === 2, 'клавиша N переключает на следующий прогон');
+  assert(
+    window.document.getElementById('mode-badge').textContent === 'АНАЛИЗ · ПРОГОН 2/3',
+    'бейдж после клавиши N',
+  );
+  // Без кадров прогонов (например, живой поток) ни клик, ни N не меняют.
+  api.state.runFramesAvailable = 0;
+  api.updateRunCycleAvailability();
+  const runBeforeNoFrames = api.state.viewRun;
+  window.document.querySelector('.camera-container')
+    .dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
+  assert(api.state.viewRun === runBeforeNoFrames,
+    'клик без кадров прогонов не переключает');
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'n', code: 'KeyN', bubbles: true,
+  }));
+  assert(api.state.viewRun === runBeforeNoFrames,
+    'клавиша N без кадров прогонов не переключает');
   calls.length = 0;
   await api.setViewMode('RAW');
   assert(calls.some(call => call.url === '/api/mode/RAW'), 'RAW enabled during selected analysis');
@@ -1065,32 +1214,54 @@ async function main() {
   activeCardSlider.dispatchEvent(new window.Event('input', {bubbles: true}));
   assert(scrollState.top === 300, 'ползунок прокручивает строки карточки');
 
-  // Переключение между карточками: у следующей карточки одна строка —
-  // ползунок не нужен и остаётся отключённым.
-  const navCounter = thresholdsBody.querySelector('.thresholds-nav-counter');
-  assert(navCounter.textContent === '1 / 2', 'навигация показывает позицию');
-  thresholdsBody.querySelector('.thresholds-nav-next').click();
+  // Переключение между правилами — заголовки-вкладки, как в браузере:
+  // у следующей карточки одна строка — ползунок не нужен и остаётся
+  // отключённым.
+  const tabs = thresholdsBody.querySelectorAll('.thresholds-tab');
+  assert(tabs.length === 2, 'у каждого правила есть вкладка-заголовок');
+  assert(
+    tabs[0].classList.contains('is-active'),
+    'первая вкладка активна по умолчанию',
+  );
+  assert(
+    tabs[0].getAttribute('aria-selected') === 'true',
+    'активная вкладка отмечена aria-selected',
+  );
+  assert(
+    tabs[0].textContent.includes('ГЕОМЕТРИЯ ОКНА'),
+    'вкладка несёт название правила',
+  );
+  assert(
+    thresholdsBody.querySelectorAll('.thresholds-nav').length === 0,
+    'стрелочной навигации больше нет',
+  );
+  tabs[1].click();
   assert(
     thresholdsBody.querySelector('.thresholds-card.is-active').dataset.rule === 'input_part_presence',
-    'стрелка переключает на следующую карточку',
+    'клик по вкладке переключает на её карточку',
   );
-  assert(navCounter.textContent === '2 / 2', 'счётчик навигации обновлён');
+  assert(tabs[1].classList.contains('is-active'), 'вкладка подсвечивается');
+  assert(
+    tabs[1].getAttribute('aria-selected') === 'true',
+    'aria-selected переходит на активную вкладку',
+  );
+  assert(
+    tabs[0].getAttribute('aria-selected') === 'false',
+    'прежняя вкладка снимается',
+  );
   const secondSlider = thresholdsBody.querySelector(
     '.thresholds-card.is-active input.thresholds-scroll-slider',
   );
   assert(secondSlider.disabled, 'карточка без переполнения ползунок не показывает');
 
-  // Стрелка «‹» возвращает к предыдущей карточке; её ползунок снова
-  // синхронизируется с сохранённой прокруткой строк.
-  const prevBtn = thresholdsBody.querySelector('.thresholds-nav-prev');
-  assert(!prevBtn.disabled, 'на второй карточке «‹» доступна');
-  prevBtn.click();
+  // Клик по первой вкладке возвращает к первой карточке; её ползунок
+  // снова синхронизируется с сохранённой прокруткой строк.
+  tabs[0].click();
   assert(
     thresholdsBody.querySelector('.thresholds-card.is-active').dataset.rule === 'input_window_geometry',
-    'стрелка возвращает на предыдущую карточку',
+    'вкладка возвращает на первую карточку',
   );
-  assert(navCounter.textContent === '1 / 2', 'счётчик вернулся на первую карточку');
-  assert(prevBtn.disabled, 'на первой карточке «‹» заблокирована');
+  assert(tabs[0].classList.contains('is-active'), 'первая вкладка снова активна');
   assert(
     thresholdsBody.querySelector(
       '.thresholds-card.is-active input.thresholds-scroll-slider',

@@ -39,10 +39,6 @@
     .frame-analysis-header span,
     .frame-analysis-item > span,
     .frame-analysis-item > b,
-    .rule-summary-camera,
-    .rule-summary-verdict,
-    .rule-summary-metric-label,
-    .rule-summary-metric-value,
     .dist-route,
     .hotkeys,
     .gallery-title,
@@ -75,7 +71,7 @@
     .frame-analysis-message,
     .frame-analysis-reason,
     .frame-analysis-human-cause,
-    .rule-summary-found,
+    .fa-measurement-label,
     .review-message,
     .fatal-error,
     .saved-message,
@@ -85,7 +81,6 @@
     overflow-wrap: anywhere;
 }
 
-[data-ui-block="right-panel"],
 [data-ui-block="calibration-assignment"] {
     scrollbar-gutter: stable;
 }
@@ -150,41 +145,4 @@
     display: none;
 }
 
-/* ─── Пороги правила: «правило — его пороги рядом результат» ─────── */
-.rule-summary-title {
-    color: var(--text-muted);
-    font-size: 8px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    font-weight: 700;
-}
 
-.rule-summary-metric-result {
-    flex: 0 0 auto;
-    font: 700 8px var(--font-mono);
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-
-/* ─── Голосование 2 из 3 в анализе кадра ──────────────────────────── */
-/* Показывает результат каждого из трёх прогонов, чтобы было видно, что
-   вердикт — большинство (2 из 3), а не один выбранный кадр. */
-.frame-analysis-consensus {
-    grid-column: 1 / -1;
-    display: block;
-    padding: 2px 5px;
-    margin-top: 2px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-1);
-    color: var(--text-muted);
-    font: 700 8px var(--font-mono);
-    letter-spacing: 0.3px;
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-
-.frame-analysis-item.triggered .frame-analysis-consensus { color: var(--bad); }
-.frame-analysis-item.ok .frame-analysis-consensus { color: var(--ok); }
-.frame-analysis-item.skipped .frame-analysis-consensus { color: var(--warn); }
-.frame-analysis-item.part-absent .frame-analysis-consensus { color: var(--warn); }

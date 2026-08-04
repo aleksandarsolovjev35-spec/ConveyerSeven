@@ -294,19 +294,82 @@ class RuleSummaryCardTests(unittest.TestCase):
         self.assertIsNone(card["ok"])
         self.assertIn("не найдена платформа", card["verdict"])
 
+    def test_run_cards_pass_through_with_operator_labels(self):
+        """Три замера по прогонам доходят до отчёта; метрики получают
+        понятные названия порогов (как в панели «Пороги правил»)."""
+        from core.rule_summary import build_rule_summary
+
+        per_role = {"SPIDER_LEFT": {
+            "triggered": False, "reason": None,
+            "allowed_thickness_px": 20.0, "excess_pixels": 0,
+            "excess_component_min_px": 3, "max_excess_depth_px": 0.0,
+            "top_line_actual_max_residual_px": 0.4,
+            "top_line_max_residual_px": 3.0,
+            "found": 5, "expected_count": 5,
+        }}
+        run_cards = [
+            build_rule_summary("long_omission", {"per_role": per_role}),
+            build_rule_summary("long_omission", {"per_role": per_role}),
+            build_rule_summary("long_omission", {"per_role": per_role}),
+        ]
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="long_omission", triggered=False,
+            details={
+                "per_role": per_role,
+                "consensus": {"runs": 3, "run_cards": run_cards},
+            },
+        ))
+        self.assertEqual(len(row["run_cards"]), 3)
+        labels = {
+            metric["label"]
+            for cards in row["run_cards"]
+            for card in cards
+            for metric in card["metrics"]
+        }
+        # Название порога из «Порогов правил» вместо внутреннего «избыток».
+        self.assertIn("Мин. размер лишнего фрагмента, px", labels)
+
+    def test_run_status_passes_through_report_row(self):
+        """Статус прогонов («ОБЛАСТЬ НЕ ПОСТРОЕНА») доходит до отчёта."""
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="long_omission", triggered=True,
+            details={
+                "per_role": {"SPIDER_LEFT": {"triggered": True}},
+                "consensus": {
+                    "runs": 3,
+                    "run_status": [
+                        [{"role": "SPIDER_LEFT",
+                          "status": "ОБЛАСТЬ НЕ ПОСТРОЕНА",
+                          "reason": "no_detections"}],
+                        [{"role": "SPIDER_LEFT", "status": "В НОРМЕ",
+                          "reason": None}],
+                        [{"role": "SPIDER_LEFT", "status": "ОТКЛОНЕНИЕ",
+                          "reason": None}],
+                    ],
+                },
+            },
+        ))
+        self.assertEqual(len(row["run_status"]), 3)
+        self.assertEqual(
+            row["run_status"][0][0]["status"],
+            "ОБЛАСТЬ НЕ ПОСТРОЕНА",
+        )
+
     def test_ui_module_renders_summary_cards(self):
         js = (ROOT / "vision/ui/static/js/rule-summary.js").read_text(
             encoding="utf-8"
         )
-        self.assertIn("renderRuleSummaryCards", js)
-        self.assertIn("rule-summary-metric", js)
-        self.assertIn("Обнаружено", js)
+        self.assertIn("renderRuleMeasurements", js)
+        self.assertIn("fa-measurement-row", js)
+        self.assertIn("порог:", js)
         diagnostics = (ROOT / "vision/ui/static/js/diagnostics.js").read_text(
             encoding="utf-8"
         )
-        self.assertIn("rule.summary_cards", diagnostics)
-        css = (ROOT / "vision/ui/static/css/stats.css").read_text(
+        self.assertIn("renderRuleMeasurements(rule, pictureRun)", diagnostics)
+        self.assertIn("report.picture_run", diagnostics)
+        css = (ROOT / "vision/ui/static/css/thresholds.css").read_text(
             encoding="utf-8"
         )
-        self.assertIn(".rule-summary-metric.is-ok", css)
-        self.assertIn(".rule-summary-metric.is-bad", css)
+        self.assertIn(".fa-measurement-value.is-ok", css)
+        self.assertIn(".fa-measurement-value.is-bad", css)
+        self.assertIn(".fa-measurement-value.is-picture-run", css)

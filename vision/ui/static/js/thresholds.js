@@ -3,10 +3,11 @@
 
 // Панель «Пороги правил» показывает параметры правил выбранной (главной)
 // камеры с понятными русскими названиями (label приходит с сервера).
-// Каждое правило — собственная карточка-блок (стилистически как карточки
-// распределителя); значение каждого порога задаётся только числовым полем.
-// Отдельный вертикальный ползунок прокручивает список блоков, когда он
-// не помещается. Редактирование доступно только до пуска (IDLE) и после
+// Каждое правило — собственная компактная карточка; переключение между
+// правилами — клик по заголовку-вкладке (как вкладки в браузере).
+// Значение каждого порога задаётся только числовым полем; отдельный
+// вертикальный ползунок прокручивает строки карточки, когда они не
+// помещаются. Редактирование доступно только до пуска (IDLE) и после
 // полной остановки (STOPPED) и блокируется на время реального движения
 // ленты (jog.busy); backend дополнительно проверяет состояние при
 // сохранении.
@@ -134,13 +135,11 @@ function renderThresholdsPanel() {
 }
 
 // ─── Блоки-карточки правил ─────────────────────────────────────────
-// Каждое правило (категория) — отдельная карточка (как blade-card
-// распределителя). Одновременно видна только одна карточка; между
-// карточками переключаются стрелками навигации («‹ N / всего ›»).
-// У каждой карточки свой вертикальный ползунок: он появляется только
-// когда строки карточки не помещаются по высоте; если все строки
-// видны — ползунок отключён. Блок ограничен по высоте, поэтому правую
-// колонку интерфейса не приходится прокручивать.
+// Каждое правило (категория) — отдельная компактная карточка. Сверху —
+// лента вкладок-заголовков (как в браузере): активная вкладка подсвечена,
+// клик по вкладке переключает видимую карточку. У каждой карточки свой
+// вертикальный ползунок: он появляется только когда строки карточки не
+// помещаются по высоте; если все строки видны — ползунок отключён.
 
 function buildThresholdItem(param) {
     // Контейнер строки — div: клик по названию ничего не переключает.
@@ -180,11 +179,41 @@ function renderThresholdsBody() {
         return;
     }
 
-    // Новая порция данных — снова первая карточка.
+    // Новая порция данных — снова первая вкладка.
     thresholdsCardIndex = 0;
 
     const scroll = document.createElement('div');
     scroll.className = 'thresholds-scroll';
+
+    // Вкладки-заголовки правил, как вкладки в браузере: одна вкладка на
+    // правило, активная подсвечена, лента прокручивается по горизонтали.
+    const tabs = document.createElement('div');
+    tabs.className = 'thresholds-tabs';
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', 'Правила камеры');
+    rules.forEach((group, index) => {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'thresholds-tab';
+        tab.dataset.rule = group.rule || '';
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', 'false');
+        tab.title = group.label || group.rule;
+        const tabLabel = document.createElement('span');
+        tabLabel.className = 'thresholds-tab-label';
+        tabLabel.textContent = group.label || group.rule;
+        tab.appendChild(tabLabel);
+        const count = document.createElement('span');
+        count.className = 'thresholds-tab-count';
+        count.textContent = String((group.params || []).length);
+        tab.appendChild(count);
+        tab.addEventListener('click', () => {
+            thresholdsCardIndex = index;
+            updateCardVisibility();
+        });
+        tabs.appendChild(tab);
+    });
+    scroll.appendChild(tabs);
 
     const cards = document.createElement('div');
     cards.className = 'thresholds-cards';
@@ -194,17 +223,6 @@ function renderThresholdsBody() {
         card.className = 'thresholds-card';
         card.dataset.rule = group.rule || '';
         card.dataset.index = String(index);
-
-        const head = document.createElement('div');
-        head.className = 'thresholds-card-head';
-        const title = document.createElement('span');
-        title.className = 'thresholds-card-title';
-        title.textContent = group.label || group.rule;
-        const count = document.createElement('span');
-        count.className = 'thresholds-card-count';
-        count.textContent = String((group.params || []).length);
-        head.append(title, count);
-        card.appendChild(head);
 
         // Тело карточки: строки параметров + собственный вертикальный
         // ползунок прокрутки (включается только при переполнении).
@@ -234,50 +252,23 @@ function renderThresholdsBody() {
         cards.appendChild(card);
     });
 
-    // Навигация между карточками: стрелки «‹ N / всего ›». Значения
-    // порогов ползунок не задаёт — это только прокрутка строк.
-    const nav = document.createElement('div');
-    nav.className = 'thresholds-nav';
-    const prev = document.createElement('button');
-    prev.type = 'button';
-    prev.className = 'thresholds-nav-btn thresholds-nav-prev';
-    prev.setAttribute('aria-label', 'Предыдущая категория правил');
-    prev.title = 'Предыдущая категория правил';
-    prev.textContent = '‹';
-    const counter = document.createElement('span');
-    counter.className = 'thresholds-nav-counter';
-    counter.setAttribute('aria-live', 'polite');
-    const next = document.createElement('button');
-    next.type = 'button';
-    next.className = 'thresholds-nav-btn thresholds-nav-next';
-    next.setAttribute('aria-label', 'Следующая категория правил');
-    next.title = 'Следующая категория правил';
-    next.textContent = '›';
-    nav.append(prev, counter, next);
-
-    scroll.append(cards, nav);
+    scroll.append(cards);
     body.appendChild(scroll);
 
-    // Показ только активной карточки + состояние навигации.
+    // Показ только активной карточки + состояние вкладок.
     const updateCardVisibility = () => {
         const total = rules.length;
         thresholdsCardIndex = Math.max(0, Math.min(total - 1, thresholdsCardIndex));
         [...cards.querySelectorAll('.thresholds-card')].forEach((card, index) => {
             card.classList.toggle('is-active', index === thresholdsCardIndex);
         });
-        counter.textContent = `${thresholdsCardIndex + 1} / ${total}`;
-        prev.disabled = thresholdsCardIndex <= 0;
-        next.disabled = thresholdsCardIndex >= total - 1;
+        [...tabs.querySelectorAll('.thresholds-tab')].forEach((tab, index) => {
+            const isActive = index === thresholdsCardIndex;
+            tab.classList.toggle('is-active', isActive);
+            tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
         thresholdsSyncScroll();
     };
-    prev.addEventListener('click', () => {
-        thresholdsCardIndex -= 1;
-        updateCardVisibility();
-    });
-    next.addEventListener('click', () => {
-        thresholdsCardIndex += 1;
-        updateCardVisibility();
-    });
 
     // Ползунок каждой карточки прокручивает только её строки.
     cards.querySelectorAll('.thresholds-card').forEach(card => {

@@ -67,6 +67,86 @@ class ApiTests(unittest.TestCase):
         self.assertIn(("TOP", "RAW"), server._latest_stream_jpeg)
         self.assertIn(("TOP", "RULES"), server._latest_stream_jpeg)
 
+    def test_run_frames_are_served_per_run_and_reported_in_status(self):
+        """Три кадра прогонов: /frame?run=N отдаёт кадр своего прогона,
+        а /api/status сообщает их количество для включения переключения."""
+        import asyncio
+
+        import httpx
+
+        server = UIServer()
+        base = np.full((24, 32, 3), 40, dtype=np.uint8)
+        server.update(frames={"TOP": base})
+        runs = [
+            {"TOP": np.full((24, 32, 3), 10, dtype=np.uint8)},
+            {"TOP": np.full((24, 32, 3), 130, dtype=np.uint8)},
+            {"TOP": np.full((24, 32, 3), 220, dtype=np.uint8)},
+        ]
+        server.update(run_frames=runs)
+
+        self.assertEqual(server.get_frame_count(), 3)
+        jpeg_1 = server._get_or_render("TOP", "RAW", "main", run=1)
+        jpeg_2 = server._get_or_render("TOP", "RAW", "main", run=2)
+        jpeg_3 = server._get_or_render("TOP", "RAW", "main", run=3)
+        self.assertTrue(all((jpeg_1, jpeg_2, jpeg_3)))
+        self.assertNotEqual(jpeg_1, jpeg_2)
+        self.assertNotEqual(jpeg_2, jpeg_3)
+        # Без run — текущий (evidence) кадр.
+        self.assertEqual(server._get_or_render("TOP", "RAW", "main"),
+                         server._get_or_render("TOP", "RAW", "main", run=None))
+        # Вне диапазона и при очистке — fallback/ноль.
+        self.assertEqual(server._get_or_render("TOP", "RAW", "main", run=9),
+                         server._get_or_render("TOP", "RAW", "main"))
+        server.update(run_frames=[])
+        self.assertEqual(server.get_frame_count(), 0)
+        server.update(run_frames=runs)
+
+        async def _status():
+            transport = httpx.ASGITransport(app=server.app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test",
+            ) as client:
+                response = await client.get("/api/status")
+                return response.json()
+
+        payload = asyncio.run(_status())
+        self.assertEqual(payload["frame_runs"], 3)
+
+    def test_run_frame_overlay_uses_rules_of_that_run(self):
+        """Разметка кадра прогона строится по правилам этого же прогона:
+        оверлей не «уезжает» при переключении кадров трёх прогонов."""
+        server = UIServer()
+        base = np.full((24, 32, 3), 40, dtype=np.uint8)
+        server.update(frames={"TOP": base})
+        runs = [
+            {"TOP": np.full((24, 32, 3), 10, dtype=np.uint8)},
+            {"TOP": np.full((24, 32, 3), 130, dtype=np.uint8)},
+            {"TOP": np.full((24, 32, 3), 220, dtype=np.uint8)},
+        ]
+        server.update(run_frames=runs)
+
+        def rule(role, trigger):
+            return type("R", (), {
+                "rule_name": "long_omission",
+                "triggered": trigger,
+                "details": {"per_role": {role: {"triggered": trigger,
+                                                "reason": None}}},
+                "drawings": [{"type": "long_omission_item", "role": role,
+                              "triggered": trigger, "bbox": [1, 1, 5, 5]}],
+            })()
+
+        # Для прогона 1 правило сработало, для 2 и 3 — нет.
+        server.set_run_rule_results([
+            [rule("TOP", True)],
+            [rule("TOP", False)],
+            [rule("TOP", False)],
+        ])
+        j1 = server._get_or_render("TOP", "RULES", "main", run=1)
+        j2 = server._get_or_render("TOP", "RULES", "main", run=2)
+        self.assertTrue(j1 and j2)
+        # Кадры и разметка разные.
+        self.assertNotEqual(j1, j2)
+
     def test_live_monitor_propagates_callback_results_and_errors(self):
         monitor = LiveMonitor(start_callback=lambda: False, fullscreen=False)
         self.assertFalse(monitor.server.on_start())
@@ -289,6 +369,107 @@ class ThresholdsApiTests(unittest.TestCase):
         server.thresholds = dict(self.thresholds)
         payload = server.build_thresholds_payload("NOPE")
         self.assertFalse(payload["available"])
+
+    def test_frame_analysis_rules_carry_three_runs_with_operator_labels(self):
+        """Анализ кадра: у каждого правила «три замера порога» — значения
+        метрик по трём прогонам с понятными названиями порогов."""
+        from core.rule_summary import build_rule_summary
+
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+
+        per_role = {"SPIDER_LEFT": {
+            "triggered": False, "reason": None,
+            "allowed_thickness_px": 20.0, "excess_pixels": 0,
+            "excess_component_min_px": 3, "max_excess_depth_px": 0.0,
+            "top_line_actual_max_residual_px": 0.4,
+            "top_line_max_residual_px": 3.0,
+            "found": 5, "expected_count": 5,
+        }}
+        run_cards = [
+            build_rule_summary("long_omission", {"per_role": per_role}),
+            build_rule_summary("long_omission", {"per_role": per_role}),
+            build_rule_summary("long_omission", {"per_role": per_role}),
+        ]
+        from types import SimpleNamespace
+        from core.rule_report import build_rule_report_rows
+
+        rules = build_rule_report_rows([
+            SimpleNamespace(
+                rule_name="long_omission", triggered=False,
+                details={
+                    "per_role": per_role,
+                    "consensus": {"runs": 3, "run_cards": run_cards},
+                },
+            ),
+            SimpleNamespace(
+                rule_name="unknown_rule", triggered=False,
+                details={},
+            ),
+        ])
+        server.update(line_status={
+            "frame_analysis": {
+                "available": True,
+                "kind": "CYCLE",
+                "rules": rules,
+            },
+        })
+
+        rows = server.line_status["frame_analysis"]["rules"]
+        by_name = {row["name"]: row for row in rows}
+        omission = by_name["long_omission"]
+        self.assertEqual(len(omission["run_cards"]), 3)
+        # Метрики несут числовые значения для выбора прогона картинки.
+        metric = omission["run_cards"][0][0]["metrics"][0]
+        self.assertIsNotNone(metric.get("value_raw"))
+        self.assertIsNotNone(metric.get("limit_raw"))
+        # Правило без данных о прогонах не ломает отчёт.
+        self.assertEqual(by_name["unknown_rule"]["run_cards"], [])
+
+    def test_frame_analysis_custom_labels_override_metric_labels(self):
+        """Ручное название порога (_label.*) побеждает встроенный перевод."""
+        from core.rule_summary import build_rule_summary
+
+        server = UIServer()
+        server.thresholds = dict(self.thresholds)
+        server.threshold_labels = {
+            "SPIDER_LEFT.spider_long_omission_excess_component_min_px":
+                "Лишний фрагмент (ручная)",
+        }
+        per_role = {"SPIDER_LEFT": {
+            "triggered": False, "reason": None,
+            "allowed_thickness_px": 20.0, "excess_pixels": 0,
+            "excess_component_min_px": 3, "max_excess_depth_px": 0.0,
+            "top_line_actual_max_residual_px": 0.4,
+            "top_line_max_residual_px": 3.0,
+            "found": 5, "expected_count": 5,
+        }}
+        run_cards = [
+            build_rule_summary("long_omission", {"per_role": per_role}),
+        ] * 3
+        from types import SimpleNamespace
+        from core.rule_report import build_rule_report_rows
+
+        rules = build_rule_report_rows([
+            SimpleNamespace(
+                rule_name="long_omission", triggered=False,
+                details={
+                    "per_role": per_role,
+                    "consensus": {"runs": 3, "run_cards": run_cards},
+                },
+            ),
+        ])
+        server.update(line_status={
+            "frame_analysis": {"rules": rules},
+        })
+        row = server.line_status["frame_analysis"]["rules"][0]
+        labels = {
+            metric["label"]
+            for cards in row["run_cards"]
+            for card in cards
+            for metric in card["metrics"]
+        }
+        self.assertIn("Лишний фрагмент (ручная)", labels)
 
     def test_thresholds_editable_only_when_line_is_idle_or_stopped(self):
         server = UIServer()
