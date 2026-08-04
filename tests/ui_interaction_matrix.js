@@ -1254,6 +1254,10 @@ async function main() {
     'aria-selected переходит на активную вкладку',
   );
   assert(
+    tabs[1].title.includes('НАЛИЧИЕ КОРПУСА'),
+    'активная вкладка несёт полное название правила',
+  );
+  assert(
     tabs[0].getAttribute('aria-selected') === 'false',
     'прежняя вкладка снимается',
   );

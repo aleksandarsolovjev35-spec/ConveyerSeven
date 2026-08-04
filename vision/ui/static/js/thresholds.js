@@ -138,7 +138,8 @@ function renderThresholdsPanel() {
 
 // ─── Блоки-карточки правил ─────────────────────────────────────────
 // Каждое правило (категория) — отдельная компактная карточка. Сверху —
-// лента вкладок-заголовков (как в браузере): активная вкладка подсвечена,
+// лента вкладок-заголовков (как в браузере): активная вкладка подсвечена
+// и показывает полное название правила (неактивные остаются компактными),
 // клик по вкладке переключает видимую карточку и разворачивает её
 // (строки в полный рост); повторный клик по активной вкладке сворачивает
 // карточку обратно. У каждой карточки свой вертикальный ползунок: он
@@ -190,7 +191,8 @@ function renderThresholdsBody() {
     scroll.className = 'thresholds-scroll';
 
     // Вкладки-заголовки правил, как вкладки в браузере: одна вкладка на
-    // правило, активная подсвечена, лента прокручивается по горизонтали.
+    // правило, активная подсвечена и раскрывается до полного названия,
+    // лента прокручивается по горизонтали.
     const tabs = document.createElement('div');
     tabs.className = 'thresholds-tabs';
     tabs.setAttribute('role', 'tablist');
@@ -313,9 +315,14 @@ function renderThresholdsBody() {
         });
         syncTabHints();
         thresholdsSyncScroll();
+        thresholdsScrollActiveTabIntoView();
         // Разворачивание анимировано: после завершения высоты строк
-        // меняются — ползунок пересчитывается по конечному размеру.
-        window.setTimeout(thresholdsSyncScroll, 260);
+        // меняются — ползунок пересчитывается по конечному размеру,
+        // а расширенная активная вкладка досылается в зону видимости.
+        window.setTimeout(() => {
+            thresholdsSyncScroll();
+            thresholdsScrollActiveTabIntoView();
+        }, 260);
     };
 
     // Ползунок каждой карточки прокручивает только её строки.
@@ -365,6 +372,25 @@ function thresholdsSyncScroll() {
         card.querySelector('.thresholds-rows'),
         card.querySelector('.thresholds-scroll-slider'),
     );
+}
+
+// Активная вкладка показывает полное название правила и становится
+// шире неактивных; если она не помещается в ленту — подкручиваем
+// ленту по горизонтали, чтобы вкладка оставалась в зоне видимости
+// (по вертикали страница не двигается).
+function thresholdsScrollActiveTabIntoView() {
+    const body = els.thresholdsBody;
+    if (!body) return;
+    const tabs = body.querySelector('.thresholds-tabs');
+    const activeTab = tabs && tabs.querySelector('.thresholds-tab.is-active');
+    if (!tabs || !activeTab) return;
+    const left = activeTab.offsetLeft;
+    const right = left + activeTab.offsetWidth;
+    if (left < tabs.scrollLeft) {
+        tabs.scrollLeft = left;
+    } else if (right > tabs.scrollLeft + tabs.clientWidth) {
+        tabs.scrollLeft = right - tabs.clientWidth;
+    }
 }
 
 function collectThresholdValues() {
@@ -496,7 +522,11 @@ function setupThresholdsControls() {
         els.thresholdsBody.addEventListener('change', markThresholdsChanged);
     }
     // При изменении размеров окна высота списка меняется — ползунок
-    // прокрутки пересчитывается.
-    window.addEventListener('resize', thresholdsSyncScroll);
+    // прокрутки пересчитывается, а расширенная активная вкладка
+    // досылается в зону видимости ленты вкладок.
+    window.addEventListener('resize', () => {
+        thresholdsSyncScroll();
+        thresholdsScrollActiveTabIntoView();
+    });
     updateThresholdsPanel();
 }
