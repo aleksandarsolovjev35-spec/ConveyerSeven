@@ -75,6 +75,9 @@ class PartArchive:
         raw_frames: dict,
         annotated_frames: dict,
         raw_overlay_frames: dict | None = None,
+        run_frames: list | None = None,
+        run_rule_results: list | None = None,
+        run_vision_results: list | None = None,
     ):
         """
         Сохранить кадры одной стадии инспекции в буфер.
@@ -85,6 +88,9 @@ class PartArchive:
             raw_frames: {role: frame} — чистые кадры.
             annotated_frames: {role: frame} — обрисовка правил.
             raw_overlay_frames: {role: frame} — сырые детекции нейросети.
+            run_frames: список из трёх словарей кадров прогонов.
+            run_rule_results: список из трёх списков результатов правил по прогонам.
+            run_vision_results: список из трёх словарей детекций по прогонам.
         """
         if not self.enabled:
             return
@@ -109,6 +115,42 @@ class PartArchive:
                 if role not in buf:
                     buf[role] = {}
                 buf[role]["raw_overlay"] = self._encode_image(frame)
+
+        # Сохранение всех трёх независимых прогонов для каждого ракурса
+        if run_frames:
+            for idx, r_frames in enumerate(run_frames):
+                run_num = idx + 1
+                r_rules = run_rule_results[idx] if (run_rule_results and idx < len(run_rule_results)) else []
+                r_vision = run_vision_results[idx] if (run_vision_results and idx < len(run_vision_results)) else {}
+
+                for role, frame in r_frames.items():
+                    if role not in buf:
+                        buf[role] = {}
+
+                    # 1. Сырой кадр прогона
+                    buf[role][f"raw_run{run_num}"] = self._encode_image(frame)
+
+                    # 2. Обрисовка правил прогона
+                    try:
+                        from vision.overlay.debug_overlay import DebugOverlay
+                        debug_frame = DebugOverlay.render_frame(frame, role, r_rules)
+                    except Exception as e:
+                        print(f"[ARCHIVE] Error rendering debug frame for {role} run {run_num}: {e}")
+                        debug_frame = frame
+                    buf[role][f"debug_run{run_num}"] = self._encode_image(debug_frame)
+
+                    # 3. Сырые детекции прогона
+                    r_dets = r_vision.get(role, []) if isinstance(r_vision, dict) else []
+                    try:
+                        from vision.overlay.raw_overlay import RawOverlay
+                        if r_dets:
+                            raw_overlay_frame = RawOverlay.render(frame, r_dets)
+                        else:
+                            raw_overlay_frame = frame.copy()
+                    except Exception as e:
+                        print(f"[ARCHIVE] Error rendering raw overlay for {role} run {run_num}: {e}")
+                        raw_overlay_frame = frame
+                    buf[role][f"raw_overlay_run{run_num}"] = self._encode_image(raw_overlay_frame)
 
     def finalize(
         self,
@@ -166,6 +208,29 @@ class PartArchive:
                     debug,
                     os.path.join(folder_path, f"{role}_debug.jpg"),
                 )
+
+            # Сохранение всех трёх отдельных прогонов на диск
+            for r in (1, 2, 3):
+                r_raw = frames.get(f"raw_run{r}")
+                if r_raw is not None:
+                    self._save_image(
+                        r_raw,
+                        os.path.join(folder_path, f"{role}_run{r}.jpg"),
+                    )
+
+                r_raw_overlay = frames.get(f"raw_overlay_run{r}")
+                if r_raw_overlay is not None:
+                    self._save_image(
+                        r_raw_overlay,
+                        os.path.join(folder_path, f"{role}_run{r}_raw.jpg"),
+                    )
+
+                r_debug = frames.get(f"debug_run{r}")
+                if r_debug is not None:
+                    self._save_image(
+                        r_debug,
+                        os.path.join(folder_path, f"{role}_run{r}_debug.jpg"),
+                    )
 
             roles_saved.append(role)
 
@@ -226,7 +291,7 @@ class PartArchive:
         Получить пути к изображениям детали.
 
         Returns:
-            {role: {"raw": path, "raw_overlay": path, "debug": path}, ...}
+            {role: {"raw": path, "raw_overlay": path, "debug": path, "raw_run1": path, ...}, ...}
         """
         info = self.get_part_info(part_id)
         if not info:
@@ -249,6 +314,20 @@ class PartArchive:
             debug_path = os.path.join(folder, f"{role}_debug.jpg")
             if os.path.exists(debug_path):
                 entry["debug"] = debug_path
+
+            # Пути к изображениям по прогонам (1, 2, 3)
+            for r in (1, 2, 3):
+                r_raw_path = os.path.join(folder, f"{role}_run{r}.jpg")
+                if os.path.exists(r_raw_path):
+                    entry[f"raw_run{r}"] = r_raw_path
+
+                r_raw_overlay_path = os.path.join(folder, f"{role}_run{r}_raw.jpg")
+                if os.path.exists(r_raw_overlay_path):
+                    entry[f"raw_overlay_run{r}"] = r_raw_overlay_path
+
+                r_debug_path = os.path.join(folder, f"{role}_run{r}_debug.jpg")
+                if os.path.exists(r_debug_path):
+                    entry[f"debug_run{r}"] = r_debug_path
 
             if entry:
                 result[role] = entry

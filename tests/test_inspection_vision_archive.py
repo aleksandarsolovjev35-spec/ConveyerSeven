@@ -224,6 +224,64 @@ class InspectionVisionArchiveTests(unittest.TestCase):
                 self.assertIsNone(compressed.testzip())
                 self.assertIn("part_0001_GOOD_none/meta.json", compressed.namelist())
 
+    def test_archive_stores_three_runs_correctly(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive = PartArchive(temp, batch_id="batch_3runs", enabled=True)
+            frame1 = np.ones((20, 20, 3), dtype=np.uint8) * 50
+            frame2 = np.ones((20, 20, 3), dtype=np.uint8) * 100
+            frame3 = np.ones((20, 20, 3), dtype=np.uint8) * 150
+            
+            run_frames = [
+                {"INPUT_LEFT": frame1},
+                {"INPUT_LEFT": frame2},
+                {"INPUT_LEFT": frame3},
+            ]
+            run_rule_results = [[], [], []]
+            run_vision_results = [
+                {"INPUT_LEFT": []},
+                {"INPUT_LEFT": []},
+                {"INPUT_LEFT": []},
+            ]
+
+            archive.store_frames(
+                part_id=2,
+                stage="input",
+                raw_frames={"INPUT_LEFT": frame1},
+                annotated_frames={"INPUT_LEFT": frame1},
+                raw_overlay_frames={"INPUT_LEFT": frame1},
+                run_frames=run_frames,
+                run_rule_results=run_rule_results,
+                run_vision_results=run_vision_results,
+            )
+
+            # finalize to disk
+            folder = archive.finalize(2, "BAD", "defect", ["some_defect"], 0)
+            self.assertIsNotNone(folder)
+            folder_path = Path(folder)
+
+            # Check that fallback files exist
+            self.assertTrue((folder_path / "INPUT_LEFT.jpg").exists())
+            self.assertTrue((folder_path / "INPUT_LEFT_raw.jpg").exists())
+            self.assertTrue((folder_path / "INPUT_LEFT_debug.jpg").exists())
+
+            # Check that run-specific files exist
+            for r in (1, 2, 3):
+                self.assertTrue((folder_path / f"INPUT_LEFT_run{r}.jpg").exists())
+                self.assertTrue((folder_path / f"INPUT_LEFT_run{r}_raw.jpg").exists())
+                self.assertTrue((folder_path / f"INPUT_LEFT_run{r}_debug.jpg").exists())
+
+            # Check get_part_images returns correct keys
+            images = archive.get_part_images(2)
+            self.assertIn("INPUT_LEFT", images)
+            paths = images["INPUT_LEFT"]
+            self.assertIn("raw", paths)
+            self.assertIn("raw_overlay", paths)
+            self.assertIn("debug", paths)
+            for r in (1, 2, 3):
+                self.assertIn(f"raw_run{r}", paths)
+                self.assertIn(f"raw_overlay_run{r}", paths)
+                self.assertIn(f"debug_run{r}", paths)
+
 
 if __name__ == "__main__":
     unittest.main()

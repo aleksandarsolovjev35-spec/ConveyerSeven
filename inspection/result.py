@@ -30,3 +30,6 @@ class InspectionResult:
     # run=N размечается drawings именно этого прогона, чтобы оверлей
     # совпадал с кадром. Каждый элемент — список RuleResult'ов прогона.
     run_rule_results: list = field(default_factory=list)
+
+    # Детекции моделей по каждому прогону (list из 3 dict-ов)
+    run_vision_results: list = field(default_factory=list)
