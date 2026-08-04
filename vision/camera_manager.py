@@ -110,6 +110,18 @@ _RECOVERY_PREFLIGHT = _env_float(
 _RECOVERY_REOPEN_SECONDS = _env_float(
     "CAMERA_RECOVERY_REOPEN_SECONDS", 6.0, minimum=1.0
 )
+# Сброс буфера драйвера перед захватом для инспекции. Многие UVC-драйверы
+# (DirectShow, MSMF, V4L2) игнорируют CAP_PROP_BUFFERSIZE=1 и ведут
+# собственное внутреннее кольцевое буферирование. Пока live-просмотр
+# читает камеры непрерывно — буфер дренируется. Но когда live
+# приостанавливается на CAPTURE-фазу, cap.read() возвращает самый старый
+# кадр из буфера, а не самый свежий. Метод drain_buffers() читает и
+# отбрасывает несколько кадров параллельно со всех камер, чтобы следующий
+# capture_roles() / capture_all() гарантированно получил свежий кадр.
+_BUFFER_DRAIN_COUNT = _env_int("CAMERA_BUFFER_DRAIN_COUNT", 3, minimum=1)
+_BUFFER_DRAIN_INTERVAL = _env_float(
+    "CAMERA_BUFFER_DRAIN_INTERVAL", 0.01, minimum=0.0
+)
 
 _BACKEND_ALIASES = {
     "dshow": "CAP_DSHOW",
@@ -806,6 +818,52 @@ class CameraManager:
     def capture_single(self, role: str):
         """Прочитать одну камеру, не блокируя другие роли."""
         return self.capture_roles((role,))[role]
+
+    def drain_buffers(self, roles=None):
+        """Прочитать и отбросить устаревшие кадры из буфера драйвера.
+
+        После паузы live-просмотра внутренний буфер UVC-драйвера может
+        содержать кадры, захваченные ещё во время движения ленты или
+        предыдущего статического этапа. Метод читает и выбрасывает
+        ``_BUFFER_DRAIN_COUNT`` кадров параллельно со всех камер,
+        обеспечивая следующему ``capture_roles()`` / ``capture_all()``
+        гарантированно свежий кадр с неподвижной деталью.
+
+        Вызывается из ``_stage_capture()`` production-цикла сразу после
+        паузы live-просмотра и перед захватом для инспекции.
+        """
+        requested = tuple(dict.fromkeys(roles or self.cameras.keys()))
+        if not requested:
+            return
+        unknown = set(requested) - set(self.cameras)
+        if unknown:
+            raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
+        self._ensure_usable()
+
+        def _drain(role):
+            cap = self.cameras.get(role)
+            if cap is None:
+                return
+            lock = self._role_locks.get(role)
+            for _ in range(_BUFFER_DRAIN_COUNT):
+                try:
+                    if lock is not None:
+                        with lock:
+                            cap.read()
+                    else:
+                        cap.read()
+                except Exception:
+                    pass
+                if _BUFFER_DRAIN_INTERVAL > 0:
+                    time.sleep(_BUFFER_DRAIN_INTERVAL)
+
+        pool = self._require_pool()
+        futures = [pool.submit(_drain, role) for role in requested]
+        for future in futures:
+            try:
+                future.result(timeout=max(2.0, _CAPTURE_TIMEOUT))
+            except Exception:
+                pass
 
     def _reopen_role(self, role: str, deadline: float) -> bool:
         """Пересоздать поток роли после сбоя чтения, не латча менеджер.
