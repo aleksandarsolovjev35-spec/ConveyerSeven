@@ -101,8 +101,17 @@
 }
 
 .frame-analysis-empty { display: none; }
-.frame-analysis-list, .frame-analysis-item, .frame-analysis-header,
-.frame-analysis-reason, .frame-analysis-group { display: none; }
+/* These selectors belong to the pre-card fallback only.  The current
+   analysis card intentionally reuses ``frame-analysis-item`` and must stay
+   visible; otherwise the browser hides the whole rule card before its
+   ``is-active`` state can be applied. */
+#frame-analysis-rules-scroll .frame-analysis-list,
+#frame-analysis-rules-scroll .frame-analysis-item,
+#frame-analysis-rules-scroll .frame-analysis-header,
+#frame-analysis-rules-scroll .frame-analysis-reason,
+#frame-analysis-rules-scroll .frame-analysis-group,
+#frame-analysis-models-scroll .frame-analysis-list,
+#frame-analysis-models-scroll .frame-analysis-item { display: none; }
 
 .stats-title {
     grid-column: 1 / -1;

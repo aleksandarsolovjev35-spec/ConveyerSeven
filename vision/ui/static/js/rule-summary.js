@@ -404,14 +404,28 @@ let faActiveIndex = 0;
 let faPrevRender = null;
 let faDrag = null;
 
+function faRuleRenderSignature(rule) {
+    // Статус правила может оставаться тем же, пока меняются сами замеры.
+    // Сигнатура только по name/triggered оставляла на экране значения
+    // предыдущего анализа. Данные приходят из JSON, поэтому полная
+    // сериализация безопасна и заодно учитывает run_cards, run_status,
+    // пороги и fallback summary_cards.
+    try {
+        return JSON.stringify(rule || null);
+    } catch (error) {
+        // Защита от неожиданного не-сериализуемого поля: карточка всё равно
+        // должна быть перерисована, а не показывать устаревшую статистику.
+        return String(rule);
+    }
+}
+
 function faRenderChanged(all, pictureRun) {
     if (!faPrevRender) return true;
     if (faPrevRender.length !== all.length) return true;
     for (let i = 0; i < all.length; i++) {
-        if (faPrevRender[i].name !== all[i].name) return true;
-        if (faPrevRender[i].triggered !== all[i].triggered) return true;
-        if (faPrevRender[i].skipped !== all[i].skipped) return true;
-        if (faPrevRender[i].status_label !== all[i].status_label) return true;
+        if (faPrevRender[i].signature !== faRuleRenderSignature(all[i])) {
+            return true;
+        }
     }
     if (faPrevRender.pictureRun !== pictureRun) return true;
     return false;
@@ -461,7 +475,10 @@ function renderFrameAnalysisPanel(rules, pictureRun) {
         }
         return;
     }
-    faPrevRender = all.map(r => ({ name: r.name, triggered: r.triggered, skipped: r.skipped, status_label: r.status_label }));
+    faPrevRender = all.map(rule => ({
+        name: rule.name,
+        signature: faRuleRenderSignature(rule),
+    }));
     faPrevRender.pictureRun = pictureRun;
     tabsEl.innerHTML = '';
     all.forEach((rule, idx) => {
