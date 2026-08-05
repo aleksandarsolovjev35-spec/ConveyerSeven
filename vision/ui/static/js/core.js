@@ -188,10 +188,16 @@ const els = {
     frameAnalysisVerdict: $('frame-analysis-verdict'),
     frameAnalysisPicture: $('frame-analysis-picture'),
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
+    // Legacy ids (hidden containers for compat)
     frameAnalysisRules:   $('frame-analysis-rules'),
     frameAnalysisRulesScroll: $('frame-analysis-rules-scroll'),
     frameAnalysisFilterTriggered: $('frame-analysis-filter-triggered'),
     frameAnalysisFilterAll: $('frame-analysis-filter-all'),
+    // New analysis block as thresholds
+    frameAnalysisBody:    $('frame-analysis-body'),
+    frameAnalysisTabs:    $('frame-analysis-tabs'),
+    frameAnalysisCards:   $('frame-analysis-cards'),
+    frameAnalysisScrollTrack: $('frame-analysis-scroll-track'),
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),
     statsService:         $('stats-service'),

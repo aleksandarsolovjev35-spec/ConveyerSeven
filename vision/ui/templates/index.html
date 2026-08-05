@@ -6,11 +6,11 @@
     <meta charset="UTF-8">
     <title>Роботехнический комплекс конвейерного типа 7</title>
     <link rel="stylesheet" href="/static/css/base.css?v=27">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=9">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=10">
     <link rel="stylesheet" href="/static/css/camera.css?v=28">
     <link rel="stylesheet" href="/static/css/axis.css?v=27">
     <link rel="stylesheet" href="/static/css/history-strip.css?v=27">
-    <link rel="stylesheet" href="/static/css/stats.css?v=35">
+    <link rel="stylesheet" href="/static/css/stats.css?v=36">
     <link rel="stylesheet" href="/static/css/jog.css?v=25">
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
@@ -202,25 +202,30 @@
                 </section>
 
                 <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed" data-ui-block="frame-analysis">
-                    <div class="frame-analysis-header">
-                        <h2 id="frame-analysis-title">АНАЛИЗ КАДРА</h2>
-                        <span id="frame-analysis-verdict" class="frame-analysis-verdict">—</span>
+                    <div class="fa-head">
+                        <span id="frame-analysis-title" class="fa-title">АНАЛИЗ КАДРА</span>
+                        <span id="frame-analysis-verdict" class="fa-verdict">—</span>
                     </div>
-                    <div id="frame-analysis-picture" class="frame-analysis-picture is-hidden"></div>
-                    <div class="frame-analysis-rules-toolbar">
-                        <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
-                        <div class="frame-analysis-filter" role="group" aria-label="Фильтр правил">
-                            <button type="button" id="frame-analysis-filter-triggered"
-                                    class="frame-analysis-filter-btn is-active"
-                                    aria-pressed="true">СРАБОТАВШИЕ</button>
-                            <button type="button" id="frame-analysis-filter-all"
-                                    class="frame-analysis-filter-btn"
-                                    aria-pressed="false">ВСЕ</button>
+                    <div id="frame-analysis-picture" class="fa-picture is-hidden"></div>
+                    <div class="fa-toolbar">
+                        <h3 id="frame-analysis-rules-title" class="fa-rules-title">ПРАВИЛА</h3>
+                        <div class="fa-filter" role="group" aria-label="Фильтр правил">
+                            <button type="button" id="frame-analysis-filter-triggered" class="fa-filter-btn is-active" aria-pressed="true">СРАБОТАВШИЕ</button>
+                            <button type="button" id="frame-analysis-filter-all" class="fa-filter-btn" aria-pressed="false">ВСЕ</button>
                         </div>
                     </div>
-                    <div id="frame-analysis-rules-scroll" class="frame-analysis-rules-scroll">
-                        <div id="frame-analysis-rules" class="frame-analysis-list"></div>
+                    <!-- Новый блок анализа кадра — как блок порогов правил: вкладки правил + карточка с порогами и тремя замерами -->
+                    <div id="frame-analysis-body" class="fa-body">
+                        <div id="frame-analysis-tabs" class="fa-tabs" role="tablist" aria-label="Правила камеры"></div>
+                        <div class="fa-cards-wrap">
+                            <div id="frame-analysis-cards" class="fa-cards"></div>
+                            <div id="frame-analysis-scroll-track" class="fa-scroll-track" aria-label="Прокрутка анализа" tabindex="0">
+                                <div class="fa-scroll-thumb"></div>
+                            </div>
+                        </div>
                     </div>
+                    <!-- Legacy контейнеры для совместимости старых модулей, скрыты -->
+                    <div id="frame-analysis-rules-scroll" class="is-hidden"><div id="frame-analysis-rules"></div></div>
                 </section>
 
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse" data-ui-block="jog">
@@ -293,10 +298,10 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=33"></script>
+    <script src="/static/js/core.js?v=34"></script>
     <script src="/static/js/boot.js?v=25"></script>
-    <script src="/static/js/diagnostics.js?v=38"></script>
-    <script src="/static/js/rule-summary.js?v=9"></script>
+    <script src="/static/js/diagnostics.js?v=39"></script>
+    <script src="/static/js/rule-summary.js?v=10"></script>
     <script src="/static/js/status.js?v=30"></script>
     <script src="/static/js/controls.js?v=29"></script>
     <script src="/static/js/thresholds.js?v=9"></script>
