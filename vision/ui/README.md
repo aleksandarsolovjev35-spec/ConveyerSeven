@@ -2,8 +2,6 @@
 
 UI uses ordered classic browser modules and does not require a production bundler.
 
-Визуальная карта DOM ↔ JS ↔ FastAPI ↔ ProductionCycle: `docs/ui_architecture_map_ru.svg`.
-
 ## JavaScript load order
 
 1. `core.js` — constants, state, DOM cache, API and shared helpers.
@@ -16,7 +14,7 @@ UI uses ordered classic browser modules and does not require a production bundle
 8. `history.js` — recent parts, archive gallery and fullscreen.
 9. `bootstrap.js` — hotkeys, initialization and test-only hook.
 
-Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html` without updating the asset-order regression test.
+Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html`.
 
 ## CSS modules
 
@@ -87,13 +85,4 @@ Functions may call functions from later modules only after all scripts have load
 - A physical action must have backend state validation, local pending lock and API error display.
 - Polling requests must not overlap.
 - Dynamic operator data must use `textContent`, not untrusted `innerHTML`.
-- Add every new interaction to `tests/ui_interaction_matrix.js`.
 
-## Tests
-
-```bash
-npm ci
-npm run test:ui
-```
-
-The JSDOM suite loads the exact modules in the exact production order from `index.html`.
