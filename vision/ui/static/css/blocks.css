@@ -203,18 +203,27 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding-right: 2px;
+    /* Такой же тонкий операторский скролл, как шкала хода заслонок
+       в блоке «Распределитель»: он не перетягивает внимание с замеров. */
     scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) var(--bg-2);
+    scrollbar-color: var(--accent) var(--bg-2);
 }
-.frame-analysis-rules-scroll::-webkit-scrollbar { width: 8px; }
+.frame-analysis-rules-scroll::-webkit-scrollbar { width: 6px; }
 .frame-analysis-rules-scroll::-webkit-scrollbar-track {
     background: var(--bg-2);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
 }
 .frame-analysis-rules-scroll::-webkit-scrollbar-thumb {
-    background: var(--border-strong);
-    border-radius: 999px;
-    border: 1px solid var(--bg-2);
+    /* Визуально ближе к blade-marker: тонкий прямоугольный бегунок,
+       а не широкий «браузерный» скролл. */
+    min-height: 18px;
+    background: var(--accent);
+    border: none;
+    border-radius: 2px;
+}
+.frame-analysis-rules-scroll::-webkit-scrollbar-thumb:hover {
+    filter: brightness(1.15);
 }
 
 .fa-measurements {
@@ -258,14 +267,23 @@
     white-space: nowrap;
 }
 .fa-threshold-limit {
+    /* Read-only analogue of .thresholds-input: порог нельзя случайно
+       изменить во время просмотра, но он выглядит тем же полем. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
     flex: 0 0 auto;
+    min-width: 60px;
+    min-height: 25px;
+    box-sizing: border-box;
     color: var(--text);
     font: 700 10px var(--font-mono);
     white-space: nowrap;
-    padding: 1px 5px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.04);
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-0);
     border: 1px solid var(--border);
+    user-select: none;
 }
 .fa-threshold-runs {
     display: grid;
@@ -298,6 +316,12 @@
 .fa-measurement-value:focus-visible {
     outline: 1px solid var(--accent);
     outline-offset: 1px;
+}
+.fa-mv-run {
+    color: var(--text-muted);
+    font: 700 7px var(--font-ui);
+    letter-spacing: 0.4px;
+    line-height: 1;
 }
 .fa-mv-value {
     min-width: 0;
