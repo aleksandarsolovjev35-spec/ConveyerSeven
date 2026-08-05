@@ -1,578 +1,94 @@
-/* blocks.css — переписанный блок анализа кадра как пороги правил */
+/* blocks.css — блок анализа кадра как пороги правил */
+[data-ui-block] { min-width: 0; min-height: 0; isolation: isolate; }
+[data-ui-block] :where(h1, h2, h3, strong, span, b, small, button) { min-width: 0; }
+[data-ui-block] :where(.ui-text-clip,.title,.state-label,.metrics>span,.preview-cam-label,.camera-label,.mode-badge,.process-line-title,.history-title,.history-card-id,.history-card-symbol,.accordion-header span,.stats-label,.stats-service-label,.stats-service-value,.distributor-title,.axis-name,.axis-state,.axis-route span,.axis-route b,.axis-action,.jog-title,.jog-action,.jog-hint,.fa-title,.fa-verdict,.fa-rules-title,.fa-card-title,.dist-route,.hotkeys,.gallery-title,.gallery-meta>span,.gallery-card-label,.gallery-defects-items,.calibration-title-block h1,.calibration-title-block span,.calibration-state,.calibration-counter span,.panel-heading h2,.step-counter,.assigned-count,.candidate-position span,.role-name strong,.role-name span,.role-camera,.config-path,.calibration-footer>span) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-ui-block] :where(.camera-overlay-sub,.control-error,.fa-picture,.fa-thr-label,.fa-detail-row,.review-message,.fatal-error,.saved-message,.preview-error,.gallery-defects) { overflow-wrap: anywhere; }
+[data-ui-block="calibration-assignment"] { scrollbar-gutter: stable; }
+[data-ui-block="main-camera"] { contain: layout paint; }
+[data-ui-block="process-line"] { contain: layout paint style; }
+[data-ui-block="operator-footer"] .buttons,[data-ui-block="camera-controls"],[data-ui-block="gallery"] .gallery-header,[data-ui-block="calibration-header"],[data-ui-block="calibration-footer"] { min-width: 0; }
 
-[data-ui-block] {
-    min-width: 0;
-    min-height: 0;
-    isolation: isolate;
-}
-
-[data-ui-block] :where(h1, h2, h3, strong, span, b, small, button) {
-    min-width: 0;
-}
-
-[data-ui-block] :where(
-    .ui-text-clip,
-    .title,
-    .state-label,
-    .metrics > span,
-    .preview-cam-label,
-    .camera-label,
-    .mode-badge,
-    .process-line-title,
-    .history-title,
-    .history-card-id,
-    .history-card-symbol,
-    .accordion-header span,
-    .stats-label,
-    .stats-service-label,
-    .stats-service-value,
-    .distributor-title,
-    .axis-name,
-    .axis-state,
-    .axis-route span,
-    .axis-route b,
-    .axis-action,
-    .jog-title,
-    .jog-action,
-    .jog-hint,
-    .fa-title,
-    .fa-verdict,
-    .fa-rules-title,
-    .fa-card-title,
-    .dist-route,
-    .hotkeys,
-    .gallery-title,
-    .gallery-meta > span,
-    .gallery-card-label,
-    .gallery-defects-items,
-    .calibration-title-block h1,
-    .calibration-title-block span,
-    .calibration-state,
-    .calibration-counter span,
-    .panel-heading h2,
-    .step-counter,
-    .assigned-count,
-    .candidate-position span,
-    .role-name strong,
-    .role-name span,
-    .role-camera,
-    .config-path,
-    .calibration-footer > span
-) {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-[data-ui-block] :where(
-    .camera-overlay-sub,
-    .control-error,
-    .fa-picture,
-    .fa-thr-label,
-    .fa-detail-row,
-    .review-message,
-    .fatal-error,
-    .saved-message,
-    .preview-error,
-    .gallery-defects
-) {
-    overflow-wrap: anywhere;
-}
-
-[data-ui-block="calibration-assignment"] {
-    scrollbar-gutter: stable;
-}
-
-[data-ui-block="main-camera"] {
-    contain: layout paint;
-}
-
-[data-ui-block="process-line"] {
-    contain: layout paint style;
-}
-
-[data-ui-block="operator-footer"] .buttons,
-[data-ui-block="camera-controls"],
-[data-ui-block="gallery"] .gallery-header,
-[data-ui-block="calibration-header"],
-[data-ui-block="calibration-footer"] {
-    min-width: 0;
-}
-
-/* ─── Новый блок анализа кадра — как блок пороги правил ───────────────
-   Визуально повторяет thresholds.css: заголовок, подсказка, вкладки,
-   карточка правила и пороги с тремя замерами [Значение] [Значение] [Значение]
-   Пример из ТЗ:
-     Геометрия входного окна
-       Низ зоны окон: макс. px [Значение]
-         [Значение] [Значение] [Значение]
-*/
-
-.frame-analysis-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    /* Как thresholds-panel — фиксированная высота чтобы правая колонка не разъезжалась */
-    flex: 1 1 auto;
-    min-height: 220px;
-    max-height: 420px;
-    overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    padding: 6px 7px;
-}
-
-/* Шапка: АНАЛИЗ КАДРА + вердикт */
-.fa-head {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--border);
-}
-.fa-title {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    color: var(--text);
-    white-space: nowrap;
-}
-.fa-verdict {
-    flex: 1 1 auto;
-    text-align: right;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--accent);
-    font: 700 8px var(--font-mono);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* Тулбар: ПРАВИЛА · N + фильтр СРАБОТАВШИЕ/ВСЕ */
-.fa-toolbar {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    min-width: 0;
-}
-.fa-rules-title {
-    margin: 0;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: 8px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.fa-filter {
-    display: flex;
-    flex: 0 0 auto;
-    gap: 2px;
-}
-.fa-filter-btn {
-    min-width: 0;
-    height: 20px;
-    padding: 0 6px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-1);
-    color: var(--text-muted);
-    font: 700 7px var(--font-mono);
-    letter-spacing: 0.3px;
-    cursor: pointer;
-}
-.fa-filter-btn.is-active {
-    border-color: var(--border-strong);
-    color: var(--text);
-    background: var(--panel-raised);
-}
+/* Новый блок анализа кадра — как блок пороги правил */
+.frame-analysis-panel { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; min-height: 220px; max-height: 420px; overflow: hidden; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 7px; }
+.fa-head { display: flex; flex: 0 0 auto; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.fa-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.8px; color: var(--text); white-space: nowrap; }
+.fa-verdict { flex: 1 1 auto; text-align: right; min-width: 0; overflow: hidden; color: var(--accent); font: 700 8px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.fa-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.fa-rules-title { margin: 0; min-width: 0; overflow: hidden; color: var(--text-muted); font-size: 8px; letter-spacing: 1px; text-transform: uppercase; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.fa-filter { display: flex; flex: 0 0 auto; gap: 2px; }
+.fa-filter-btn { min-width: 0; height: 20px; padding: 0 6px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-1); color: var(--text-muted); font: 700 7px var(--font-mono); letter-spacing: 0.3px; cursor: pointer; }
+.fa-filter-btn.is-active { border-color: var(--border-strong); color: var(--text); background: var(--panel-raised); }
 .fa-filter-btn:hover:not(.is-active) { color: var(--text-dim); }
-
-/* Тело: вкладки + карточка */
-.fa-body {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-}
-
-/* Вкладки правил — как thresholds-tabs */
-.fa-tabs {
-    display: flex;
-    align-items: stretch;
-    gap: 2px;
-    flex: 0 0 auto;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-    border-bottom: 1px solid var(--border);
-    contain: layout style;
-}
+.fa-body { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.fa-tabs { display: flex; align-items: stretch; gap: 2px; flex: 0 0 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); contain: layout style; }
 .fa-tabs::-webkit-scrollbar { display: none; }
-
-.fa-tab {
-    flex: 1 1 0;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    min-height: 20px;
-    padding: 2px 3px 2px;
-    border: 1px solid var(--border);
-    border-bottom: none;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    background: var(--bg-1);
-    color: var(--text-muted);
-    font: 700 7px var(--font-ui);
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: color 150ms var(--ease);
-    contain: layout style;
-}
-.fa-tab.is-active {
-    border-color: var(--border-strong);
-    color: var(--text-dim);
-    background: var(--panel-raised);
-}
+.fa-tab { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 20px; padding: 2px 3px 2px; border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--bg-1); color: var(--text-muted); font: 700 7px var(--font-ui); letter-spacing: 0.4px; text-transform: uppercase; cursor: pointer; transition: color 150ms var(--ease); contain: layout style; }
+.fa-tab.is-active { border-color: var(--border-strong); color: var(--text-dim); background: var(--panel-raised); }
 .fa-tab.is-bad { color: var(--bad); }
 .fa-tab.is-bad.is-active { border-color: var(--bad); color: var(--bad); }
 .fa-tab.is-warn { color: var(--warn); }
 .fa-tab:hover:not(.is-active) { color: var(--text-dim); }
-.fa-tab-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-/* Обёртка карточки + скролл-трек */
-.fa-cards-wrap {
-    display: flex;
-    align-items: stretch;
-    gap: 7px;
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-}
-.fa-cards {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-/* Карточка правила — как thresholds-card */
-.fa-card {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: none;
-    flex-direction: column;
-    gap: 4px;
-    background: rgba(15, 19, 23, 0.62);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 5px 6px;
-    overflow: hidden;
-    contain: layout style;
-}
+.fa-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fa-cards-wrap { display: flex; align-items: stretch; gap: 7px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.fa-cards { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.fa-card { flex: 1 1 auto; min-height: 0; display: none; flex-direction: column; gap: 4px; background: rgba(15,19,23,0.62); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 6px; overflow: hidden; contain: layout style; }
 .fa-card.is-active { display: flex; }
 .fa-card.ok { border-left: 2px solid var(--ok); }
 .fa-card.triggered { border-left: 2px solid var(--bad); }
 .fa-card.skipped { border-left: 2px solid var(--warn); }
-.fa-card.part-absent {
-    border-left: 2px solid var(--warn);
-    background: var(--warn-bg);
-}
-
-.fa-card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
-    padding-bottom: 3px;
-    border-bottom: 1px solid var(--border);
-}
-.fa-card-title-wrap {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-.fa-card-title {
-    color: var(--text);
-    font: 700 10px var(--font-ui);
-    letter-spacing: 0.3px;
-}
-.fa-card-cause {
-    color: var(--bad);
-    font: 700 7px var(--font-mono);
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-}
-.fa-card-status {
-    flex: 0 0 auto;
-    color: var(--text-dim);
-    font: 700 8px var(--font-mono);
-    letter-spacing: 0.3px;
-    white-space: nowrap;
-}
+.fa-card.part-absent { border-left: 2px solid var(--warn); background: var(--warn-bg); }
+.fa-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.fa-card-title-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.fa-card-title { color: var(--text); font: 700 10px var(--font-ui); letter-spacing: 0.3px; }
+.fa-card-cause { color: var(--bad); font: 700 7px var(--font-mono); letter-spacing: 0.3px; text-transform: uppercase; }
+.fa-card-status { flex: 0 0 auto; color: var(--text-dim); font: 700 8px var(--font-mono); letter-spacing: 0.3px; white-space: nowrap; }
 .fa-card.ok .fa-card-status { color: var(--ok); }
 .fa-card.triggered .fa-card-status { color: var(--bad); }
-.fa-card.skipped .fa-card-status,
-.fa-card.part-absent .fa-card-status { color: var(--warn); }
-
-/* Статус прогонов (область не построена и т.п.) */
-.fa-run-status {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-}
-.fa-run-chip {
-    padding: 1px 5px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-1);
-    color: var(--text-muted);
-    font: 700 7px var(--font-mono);
-    letter-spacing: 0.2px;
-    white-space: nowrap;
-}
+.fa-card.skipped .fa-card-status,.fa-card.part-absent .fa-card-status { color: var(--warn); }
+.fa-run-status { display: flex; flex-wrap: wrap; gap: 3px; }
+.fa-run-chip { padding: 1px 5px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-1); color: var(--text-muted); font: 700 7px var(--font-mono); letter-spacing: 0.2px; white-space: nowrap; }
 .fa-run-chip.is-ok { color: var(--ok); border-color: var(--ok); }
-.fa-run-chip.is-bad {
-    color: var(--bad);
-    border-color: var(--bad);
-    background: var(--bad-bg);
-}
-
-/* Скроллируемые пороги */
-.fa-rows {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    padding-right: 2px;
-}
+.fa-run-chip.is-bad { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
+.fa-rows { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; padding-right: 2px; }
 .fa-rows::-webkit-scrollbar { display: none; width: 0; height: 0; }
-
-/* Один порог — как thresholds-item + три замера снизу */
-.fa-thr-item {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-    padding: 4px 5px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--bg-1);
-    contain: layout;
-}
-.fa-thr-item.is-decisive {
-    border-color: var(--bad);
-    background: var(--bad-bg);
-    box-shadow: inset 3px 0 0 var(--bad);
-}
-.fa-thr-head {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 72px;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-.fa-thr-label {
-    min-width: 0;
-    font-family: var(--font-ui);
-    font-size: 9px;
-    color: var(--text-dim);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
+.fa-thr-item { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 4px 5px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg-1); contain: layout; }
+.fa-thr-item.is-decisive { border-color: var(--bad); background: var(--bad-bg); box-shadow: inset 3px 0 0 var(--bad); }
+.fa-thr-head { display: grid; grid-template-columns: minmax(0,1fr) 72px; align-items: center; gap: 8px; min-width: 0; }
+.fa-thr-label { min-width: 0; font-family: var(--font-ui); font-size: 9px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fa-thr-item.is-decisive .fa-thr-label { color: var(--bad); }
-.fa-thr-limit {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    width: 100%;
-    height: 20px;
-    padding: 0 5px;
-    box-sizing: border-box;
-    background: var(--bg-0);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    font: 700 10px var(--font-mono);
-    white-space: nowrap;
-    user-select: none;
-}
-
-/* Три замера [Значение] [Значение] [Значение] — точно как в примере ТЗ */
-.fa-thr-values {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-    min-width: 0;
-}
-.fa-thr-value {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1px;
-    min-width: 0;
-    min-height: 28px;
-    padding: 2px 3px 1px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-0);
-    color: var(--text-muted);
-    font: 700 9px var(--font-mono);
-    text-align: center;
-    cursor: pointer;
-    user-select: none;
-    transition: border-color 120ms var(--ease), color 120ms var(--ease);
-}
-.fa-thr-value:hover {
-    border-color: var(--accent);
-    color: var(--text);
-}
-.fa-thr-value:focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: 1px;
-}
-.fa-mv-run {
-    color: var(--text-muted);
-    font: 700 7px var(--font-ui);
-    letter-spacing: 0.4px;
-    line-height: 1;
-}
-.fa-mv-value {
-    min-width: 0;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: inherit;
-}
-.fa-mv-delta {
-    font: 700 8px var(--font-mono);
-    letter-spacing: 0.2px;
-}
+.fa-thr-limit { display: inline-flex; align-items: center; justify-content: flex-end; width: 100%; height: 20px; padding: 0 5px; box-sizing: border-box; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); font: 700 10px var(--font-mono); white-space: nowrap; user-select: none; }
+.fa-thr-values { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; min-width: 0; }
+.fa-thr-value { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-width: 0; min-height: 28px; padding: 2px 3px 1px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-0); color: var(--text-muted); font: 700 9px var(--font-mono); text-align: center; cursor: pointer; user-select: none; transition: border-color 120ms var(--ease), color 120ms var(--ease); }
+.fa-thr-value:hover { border-color: var(--accent); color: var(--text); }
+.fa-thr-value:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.fa-mv-run { color: var(--text-muted); font: 700 7px var(--font-ui); letter-spacing: 0.4px; line-height: 1; }
+.fa-mv-value { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
+.fa-mv-delta { font: 700 8px var(--font-mono); letter-spacing: 0.2px; }
 .fa-mv-delta.is-ok { color: var(--ok); }
 .fa-mv-delta.is-bad { color: var(--bad); }
-
-.fa-thr-value.is-ok {
-    color: var(--ok);
-    border-color: rgba(114, 163, 126, 0.45);
-}
-.fa-thr-value.is-bad {
-    color: var(--bad);
-    background: var(--bad-bg);
-    border-color: var(--bad);
-}
+.fa-thr-value.is-ok { color: var(--ok); border-color: rgba(114,163,126,0.45); }
+.fa-thr-value.is-bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
 .fa-thr-value.is-neutral { color: var(--text-muted); }
-.fa-thr-value.is-picture-run {
-    outline: 1px dashed var(--accent);
-    outline-offset: 1px;
-    color: var(--accent);
-}
+.fa-thr-value.is-picture-run { outline: 1px dashed var(--accent); outline-offset: 1px; color: var(--accent); }
 .fa-thr-value.is-picture-run .fa-mv-delta { color: var(--accent); }
-
-.fa-detail-row {
-    padding: 3px 4px;
-    color: var(--text-dim);
-    font: 8px/1.4 var(--font-mono);
-    white-space: normal;
-    border-left: 2px solid var(--border);
-}
-
-.fa-empty {
-    padding: 6px;
-    color: var(--text-muted);
-    font-size: 9px;
-    border: 1px dashed var(--border);
-    border-radius: 3px;
-    text-align: center;
-}
-
-/* Картинка-причина выбора прогона */
-.fa-picture {
-    margin-top: 2px;
-    padding: 3px 5px;
-    border: 1px dashed var(--border-strong);
-    border-radius: 2px;
-    background: var(--bg-1);
-    color: var(--text-dim);
-    font: 700 8px var(--font-mono);
-    overflow-wrap: anywhere;
-}
+.fa-detail-row { padding: 3px 4px; color: var(--text-dim); font: 8px/1.4 var(--font-mono); white-space: normal; border-left: 2px solid var(--border); }
+.fa-empty { padding: 6px; color: var(--text-muted); font-size: 9px; border: 1px dashed var(--border); border-radius: 3px; text-align: center; }
+.fa-picture { margin-top: 2px; padding: 3px 5px; border: 1px dashed var(--border-strong); border-radius: 2px; background: var(--bg-1); color: var(--text-dim); font: 700 8px var(--font-mono); overflow-wrap: anywhere; }
 .fa-picture.is-hidden { display: none !important; }
-
-/* Скролл трек — как у порогов правил */
-.fa-scroll-track {
-    flex: 0 0 10px;
-    width: 10px;
-    min-width: 10px;
-    align-self: stretch;
-    position: relative;
-    margin: 0;
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    cursor: pointer;
-    user-select: none;
-}
-.fa-scroll-thumb {
-    position: absolute;
-    left: 50%;
-    top: 0;
-    width: 14px;
-    height: 28px;
-    min-height: 22px;
-    border-radius: 3px;
-    background: var(--accent);
-    border: 1px solid var(--border-accent);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
-    transform: translateX(-50%);
-    cursor: grab;
-    will-change: top, height;
-    transition: background 150ms var(--ease), height 120ms var(--ease);
-}
-.fa-scroll-thumb:active,
-.fa-scroll-track.is-dragging .fa-scroll-thumb {
-    cursor: grabbing;
-    filter: brightness(1.15);
-}
-.fa-scroll-track:focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: 2px;
-}
+.fa-scroll-track { flex: 0 0 10px; width: 10px; min-width: 10px; align-self: stretch; position: relative; margin: 0; background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 999px; cursor: pointer; user-select: none; }
+.fa-scroll-thumb { position: absolute; left: 50%; top: 0; width: 14px; height: 28px; min-height: 22px; border-radius: 3px; background: var(--accent); border: 1px solid var(--border-accent); box-shadow: 0 1px 2px rgba(0,0,0,0.35); transform: translateX(-50%); cursor: grab; will-change: top,height; transition: background 150ms var(--ease), height 120ms var(--ease); }
+.fa-scroll-thumb:active,.fa-scroll-track.is-dragging .fa-scroll-thumb { cursor: grabbing; filter: brightness(1.15); }
+.fa-scroll-track:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .fa-scroll-track.is-idle { display: none; }
-
-/* Legacy совместимость — старые классы теперь скрыты/нейтральны */
 .fa-measurements { display: none; }
-.fa-group, .fa-threshold, .frame-analysis-rules-scroll, .frame-analysis-list { display: none; }
+.fa-group,.fa-threshold,.frame-analysis-rules-scroll,.frame-analysis-list { display: none; }
+.fa-threshold.is-decisive { border-color: var(--bad); }
+.fa-threshold-runs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 4px; }
+.fa-measurement-value { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 28px; padding: 2px 3px 1px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-0); color: var(--text-muted); font: 700 9px var(--font-mono); text-align: center; cursor: pointer; user-select: none; }
+.fa-measurement-value.is-ok { color: var(--ok); border-color: rgba(114,163,126,0.45); }
+.fa-measurement-value.is-bad { color: var(--bad); background: var(--bad-bg); border-color: var(--bad); }
+.fa-measurement-value.is-picture-run { outline: 1px dashed var(--accent); outline-offset: 1px; color: var(--accent); }
+.frame-analysis-item b { max-width: 116px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame-analysis-reason { font: 700 9px var(--font-mono); color: var(--text-dim); }
+.frame-analysis-filter-btn { min-width: 0; height: 20px; padding: 0 6px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-1); color: var(--text-muted); font: 700 7px var(--font-mono); letter-spacing: 0.3px; cursor: pointer; }
+

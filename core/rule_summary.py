@@ -120,7 +120,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         residual = role_details.get("top_line_actual_max_residual_px")
         residual_max = role_details.get("top_line_max_residual_px")
         add(_metric(
-            "откл. верх. линии", residual, residual_max,
+            "отклонение линии", residual, residual_max,
             ok=_within(residual, residual_max), unit=" px",
             key="top_line_max_residual_px",
         ))
@@ -242,7 +242,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         }.get(role_details.get("placement"), role_details.get("placement"))
         if placement:
             metrics.append({
-                "label": "Положение",
+                "label": "положение",
                 "value": str(placement),
                 "limit": None,
                 "ok": role_details.get("placement") == "centered",
@@ -488,7 +488,7 @@ def build_presence_summary(details: dict) -> list:
             present = int(found) > limit
         metrics = [
             metric for metric in (
-                _metric("flatness, шт", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
+                _metric("flatness", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
                 _metric("Зачтено, шт", details.get(effective_key), key="effective_flatness"),
             ) if metric is not None
         ]
