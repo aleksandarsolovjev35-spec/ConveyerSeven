@@ -94,147 +94,15 @@
     margin-top: 5px;
 }
 
+/* frame-analysis-panel полностью переписан в blocks.css — как блок порогов правил.
+   Здесь оставляем только заглушку чтобы не ломать порядок, реальные стили в blocks.css */
 .frame-analysis-panel {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--panel-raised);
-}
-.frame-analysis-panel > .frame-analysis-header,
-.frame-analysis-panel > .frame-analysis-message,
-.frame-analysis-panel > .frame-analysis-picture,
-.frame-analysis-panel > .frame-analysis-group:not(.frame-analysis-rules-group) {
-    flex: 0 0 auto;
+    /* наследуется из blocks.css */
 }
 
-.frame-analysis-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
-    padding-bottom: 7px;
-    border-bottom: 1px solid var(--border);
-}
-
-.frame-analysis-header h2 {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text);
-    font-size: 10px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 700;
-    letter-spacing: 0.7px;
-}
-
-.frame-analysis-header span {
-    flex: 0 1 52%;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--accent);
-    font: 700 8px var(--font-mono);
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.frame-analysis-message {
-    padding: 7px 0;
-    color: var(--text-dim);
-    font-size: 9px;
-    line-height: 1.35;
-}
-
-.frame-analysis-group + .frame-analysis-group { margin-top: 8px; }
-.frame-analysis-group h3 {
-    margin-bottom: 4px;
-    color: var(--text-muted);
-    font-size: 8px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    font-weight: 700;
-}
-/* Заголовок правил — в toolbar (blocks.css), без нижнего margin. */
-.frame-analysis-rules-toolbar h3 { margin-bottom: 0; }
-
-.frame-analysis-list {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-}
-
-.frame-analysis-item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 7px;
-    align-items: center;
-    min-height: 23px;
-    padding: 5px 6px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--bg-1);
-    font: 8px var(--font-mono);
-}
-/* Название правила — крупнее, чем пороги под ним. */
-.frame-analysis-item > span {
-    font: 700 10px var(--font-ui);
-    letter-spacing: 0.3px;
-    color: var(--text);
-}
-.frame-analysis-item > b {
-    font: 700 9px var(--font-mono);
-}
-
-.frame-analysis-item span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-dim);
-}
-
-.frame-analysis-item.has-detail { align-items: start; }
-.frame-analysis-reason {
-    grid-column: 1 / -1;
-    display: block;
-    padding-top: 3px;
-    border-top: 1px solid var(--border);
-    color: var(--text-dim);
-    font: 8px/1.4 var(--font-mono);
-    white-space: normal;
-    overflow-wrap: anywhere;
-}
-.frame-analysis-item.triggered .frame-analysis-reason { color: var(--bad); }
-.frame-analysis-item.skipped .frame-analysis-reason { color: var(--warn); }
-
-.frame-analysis-item b { max-width: 116px; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
-.frame-analysis-item.ok { border-left: 2px solid var(--ok); }
-.frame-analysis-item.triggered,
-.frame-analysis-item.error { border-left: 2px solid var(--bad); }
-.frame-analysis-item.skipped { border-left: 2px solid var(--warn); }
-/* Решающее правило «деталь не обнаружена» — JS ставит .part-absent. */
-.frame-analysis-item.part-absent { border-left: 2px solid var(--warn); background: var(--warn-bg); }
-.frame-analysis-item.part-absent b { color: var(--warn); }
-.frame-analysis-item.triggered b,
-.frame-analysis-item.error b { color: var(--bad); }
-.frame-analysis-item.skipped b { color: var(--warn); }
-.frame-analysis-item.ok b { color: var(--ok); }
-
-.frame-analysis-empty {
-    padding: 5px;
-    color: var(--text-muted);
-    font-size: 9px;
-    border: 1px dashed var(--border);
-    border-radius: 3px;
-}
+.frame-analysis-empty { display: none; }
+.frame-analysis-list, .frame-analysis-item, .frame-analysis-header,
+.frame-analysis-reason, .frame-analysis-group { display: none; }
 
 .stats-title {
     grid-column: 1 / -1;

@@ -1,4 +1,4 @@
-/* blocks.css — named UI block containment and text safety */
+/* blocks.css — переписанный блок анализа кадра как пороги правил */
 
 [data-ui-block] {
     min-width: 0;
@@ -35,10 +35,10 @@
     .jog-title,
     .jog-action,
     .jog-hint,
-    .frame-analysis-header h2,
-    .frame-analysis-header span,
-    .frame-analysis-item > span,
-    .frame-analysis-item > b,
+    .fa-title,
+    .fa-verdict,
+    .fa-rules-title,
+    .fa-card-title,
     .dist-route,
     .hotkeys,
     .gallery-title,
@@ -68,10 +68,9 @@
 [data-ui-block] :where(
     .camera-overlay-sub,
     .control-error,
-    .frame-analysis-message,
-    .frame-analysis-reason,
-    .frame-analysis-human-cause,
-    .fa-threshold-name,
+    .fa-picture,
+    .fa-thr-label,
+    .fa-detail-row,
     .review-message,
     .fatal-error,
     .saved-message,
@@ -101,60 +100,70 @@
     min-width: 0;
 }
 
-/* ─── Анализ кадра: свёрнутый по умолчанию блок моделей ────────────
-   Заголовок «какие модели сработали» — кнопка-аккордеон: свёрнута по
-   умолчанию, разворачивается по клику для уточнения деталей. */
-.frame-analysis-group-toggle {
+/* ─── Новый блок анализа кадра — как блок пороги правил ───────────────
+   Визуально повторяет thresholds.css: заголовок, подсказка, вкладки,
+   карточка правила и пороги с тремя замерами [Значение] [Значение] [Значение]
+   Пример из ТЗ:
+     Геометрия входного окна
+       Низ зоны окон: макс. px [Значение]
+         [Значение] [Значение] [Значение]
+*/
+
+.frame-analysis-panel {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    width: 100%;
-    margin-bottom: 4px;
-    padding: 3px 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    font-family: var(--font-ui);
-    color: var(--text-muted);
-    font-size: 8px;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    font-weight: 700;
+    flex-direction: column;
+    gap: 5px;
+    /* Как thresholds-panel — фиксированная высота чтобы правая колонка не разъезжалась */
+    flex: 1 1 auto;
+    min-height: 220px;
+    max-height: 420px;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 6px 7px;
 }
 
-.frame-analysis-group-title {
+/* Шапка: АНАЛИЗ КАДРА + вердикт */
+.fa-head {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+.fa-title {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: var(--text);
+    white-space: nowrap;
+}
+.fa-verdict {
+    flex: 1 1 auto;
+    text-align: right;
     min-width: 0;
     overflow: hidden;
+    color: var(--accent);
+    font: 700 8px var(--font-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.frame-analysis-group-chevron {
-    flex: 0 0 auto;
-    font-size: 9px;
-    line-height: 1;
-    transition: transform 180ms var(--ease);
-}
-
-.frame-analysis-group-toggle[aria-expanded="true"] .frame-analysis-group-chevron {
-    transform: rotate(180deg);
-}
-
-.frame-analysis-list-collapsed {
-    display: none;
-}
-
-/* ─── Анализ кадра: правило → порог → три замера (+Δ, клик=прогон) ─ */
-.frame-analysis-rules-toolbar {
+/* Тулбар: ПРАВИЛА · N + фильтр СРАБОТАВШИЕ/ВСЕ */
+.fa-toolbar {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
     min-width: 0;
-    margin-bottom: 4px;
 }
-.frame-analysis-rules-toolbar h3 {
+.fa-rules-title {
     margin: 0;
     min-width: 0;
     overflow: hidden;
@@ -166,12 +175,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.frame-analysis-filter {
+.fa-filter {
     display: flex;
     flex: 0 0 auto;
     gap: 2px;
 }
-.frame-analysis-filter-btn {
+.fa-filter-btn {
     min-width: 0;
     height: 20px;
     padding: 0 6px;
@@ -183,173 +192,255 @@
     letter-spacing: 0.3px;
     cursor: pointer;
 }
-.frame-analysis-filter-btn.is-active {
+.fa-filter-btn.is-active {
     border-color: var(--border-strong);
     color: var(--text);
     background: var(--panel-raised);
 }
-.frame-analysis-filter-btn:hover:not(.is-active) { color: var(--text-dim); }
+.fa-filter-btn:hover:not(.is-active) { color: var(--text-dim); }
 
-/* Скролл только у списка правил — панель/колонка не листаются. */
-.frame-analysis-rules-group {
+/* Тело: вкладки + карточка */
+.fa-body {
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    gap: 6px;
     flex: 1 1 auto;
-}
-.frame-analysis-rules-scroll {
-    flex: 0 0 auto;
     min-height: 0;
-    max-height: min(42vh, 340px);
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding-right: 2px;
-    /* Такой же тонкий операторский скролл, как шкала хода заслонок
-       в блоке «Распределитель»: он не перетягивает внимание с замеров. */
-    scrollbar-width: thin;
-    scrollbar-color: var(--accent) var(--bg-2);
-}
-.frame-analysis-rules-scroll::-webkit-scrollbar { width: 6px; }
-.frame-analysis-rules-scroll::-webkit-scrollbar-track {
-    background: var(--bg-2);
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-}
-.frame-analysis-rules-scroll::-webkit-scrollbar-thumb {
-    /* Визуально ближе к blade-marker: тонкий прямоугольный бегунок,
-       а не широкий «браузерный» скролл. */
-    min-height: 18px;
-    background: var(--accent);
-    border: none;
-    border-radius: 2px;
-}
-.frame-analysis-rules-scroll::-webkit-scrollbar-thumb:hover {
-    filter: brightness(1.15);
+    overflow: hidden;
 }
 
-.fa-measurements {
-    grid-column: 1 / -1;
+/* Вкладки правил — как thresholds-tabs */
+.fa-tabs {
     display: flex;
-    flex-direction: column;
-    gap: 5px;
-    margin-top: 5px;
-    padding-top: 5px;
-    border-top: 1px solid var(--border);
-}
-
-/* ─── Анализ кадра: правило → секция в стиле «Порогов правил» ────
-   Каждое правило — группа-карточка: заголовок (название + статус),
-   под ним read-only пороги с тремя замерами. Вердикт — в шапке панели,
-   единственный акцент. */
-.fa-group {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
+    align-items: stretch;
+    gap: 2px;
+    flex: 0 0 auto;
     min-width: 0;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    background: var(--bg-1);
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--border);
 }
-.fa-group-head {
+.fa-tabs::-webkit-scrollbar { display: none; }
+
+.fa-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 22px;
+    padding: 2px 4px 3px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    font: 700 7px var(--font-ui);
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 150ms var(--ease);
+}
+.fa-tab.is-active {
+    border-color: var(--border-strong);
+    color: var(--text-dim);
+    background: var(--panel-raised);
+}
+.fa-tab.is-bad { color: var(--bad); }
+.fa-tab.is-bad.is-active { border-color: var(--bad); color: var(--bad); }
+.fa-tab.is-warn { color: var(--warn); }
+.fa-tab:hover:not(.is-active) { color: var(--text-dim); }
+.fa-tab-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Обёртка карточки + скролл-трек */
+.fa-cards-wrap {
+    display: flex;
+    align-items: stretch;
+    gap: 7px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+.fa-cards {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Карточка правила — как thresholds-card */
+.fa-card {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    background: rgba(15, 19, 23, 0.62);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 5px 6px;
+    overflow: hidden;
+}
+.fa-card.is-active { display: flex; }
+.fa-card.ok { border-left: 2px solid var(--ok); }
+.fa-card.triggered { border-left: 2px solid var(--bad); }
+.fa-card.skipped { border-left: 2px solid var(--warn); }
+.fa-card.part-absent {
+    border-left: 2px solid var(--warn);
+    background: var(--warn-bg);
+}
+
+.fa-card-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
     min-width: 0;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--border);
 }
-.fa-group-name {
+.fa-card-title-wrap {
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.fa-card-title {
     color: var(--text);
     font: 700 10px var(--font-ui);
     letter-spacing: 0.3px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
-.fa-group-status {
+.fa-card-cause {
+    color: var(--bad);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+.fa-card-status {
     flex: 0 0 auto;
     color: var(--text-dim);
     font: 700 8px var(--font-mono);
     letter-spacing: 0.3px;
     white-space: nowrap;
 }
-.fa-group.ok { border-left: 2px solid var(--ok); }
-.fa-group.triggered { border-left: 2px solid var(--bad); }
-.fa-group.skipped { border-left: 2px solid var(--warn); }
-.fa-group.part-absent {
-    border-left: 2px solid var(--warn);
-    background: var(--warn-bg);
+.fa-card.ok .fa-card-status { color: var(--ok); }
+.fa-card.triggered .fa-card-status { color: var(--bad); }
+.fa-card.skipped .fa-card-status,
+.fa-card.part-absent .fa-card-status { color: var(--warn); }
+
+/* Статус прогонов (область не построена и т.п.) */
+.fa-run-status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
 }
-.fa-group.ok .fa-group-status { color: var(--ok); }
-.fa-group.triggered .fa-group-status { color: var(--bad); }
-.fa-group.skipped .fa-group-status { color: var(--warn); }
-.fa-group.part-absent .fa-group-status { color: var(--warn); }
-.fa-threshold {
+.fa-run-chip {
+    padding: 1px 5px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+}
+.fa-run-chip.is-ok { color: var(--ok); border-color: var(--ok); }
+.fa-run-chip.is-bad {
+    color: var(--bad);
+    border-color: var(--bad);
+    background: var(--bad-bg);
+}
+
+/* Скроллируемые пороги */
+.fa-rows {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-right: 2px;
+}
+.fa-rows::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* Один порог — как thresholds-item + три замера снизу */
+.fa-thr-item {
     display: flex;
     flex-direction: column;
     gap: 3px;
     min-width: 0;
-    padding: 4px 6px;
+    padding: 5px 6px;
     border: 1px solid var(--border);
     border-radius: 3px;
     background: var(--bg-1);
 }
-.fa-threshold.is-decisive {
+.fa-thr-item.is-decisive {
     border-color: var(--bad);
     background: var(--bad-bg);
     box-shadow: inset 3px 0 0 var(--bad);
 }
-.fa-threshold.is-decisive .fa-threshold-name { color: var(--bad); }
-.fa-threshold-head {
+.fa-thr-head {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) 72px;
+    align-items: center;
     gap: 8px;
-    align-items: baseline;
     min-width: 0;
 }
-.fa-threshold-name {
+.fa-thr-label {
     min-width: 0;
-    overflow: hidden;
+    font-family: var(--font-ui);
+    font-size: 9px;
     color: var(--text-dim);
-    font: 700 9px var(--font-mono);
-    text-overflow: ellipsis;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.fa-threshold-limit {
-    /* Read-only analogue of .thresholds-input: порог нельзя случайно
-       изменить во время просмотра, но он выглядит тем же полем. */
+.fa-thr-item.is-decisive .fa-thr-label { color: var(--bad); }
+.fa-thr-limit {
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
-    flex: 0 0 auto;
-    min-width: 60px;
-    min-height: 25px;
-    box-sizing: border-box;
-    color: var(--text);
-    font: 700 10px var(--font-mono);
-    white-space: nowrap;
+    width: 100%;
+    height: 25px;
     padding: 0 6px;
-    border-radius: var(--radius-sm);
+    box-sizing: border-box;
     background: var(--bg-0);
+    color: var(--text);
     border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font: 700 11px var(--font-mono);
+    white-space: nowrap;
     user-select: none;
 }
-.fa-threshold-runs {
+
+/* Три замера [Значение] [Значение] [Значение] — точно как в примере ТЗ */
+.fa-thr-values {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 4px;
     min-width: 0;
 }
-.fa-measurement-value {
+.fa-thr-value {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 1px;
     min-width: 0;
-    min-height: 28px;
+    min-height: 36px;
     padding: 3px 3px 2px;
     border: 1px solid var(--border);
     border-radius: 2px;
@@ -359,12 +450,13 @@
     text-align: center;
     cursor: pointer;
     user-select: none;
+    transition: border-color 120ms var(--ease), color 120ms var(--ease);
 }
-.fa-measurement-value:hover {
+.fa-thr-value:hover {
     border-color: var(--accent);
     color: var(--text);
 }
-.fa-measurement-value:focus-visible {
+.fa-thr-value:focus-visible {
     outline: 1px solid var(--accent);
     outline-offset: 1px;
 }
@@ -380,53 +472,52 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: inherit;
 }
 .fa-mv-delta {
     font: 700 8px var(--font-mono);
-    color: var(--text-muted);
     letter-spacing: 0.2px;
 }
 .fa-mv-delta.is-ok { color: var(--ok); }
 .fa-mv-delta.is-bad { color: var(--bad); }
-.fa-measurement-value.is-ok {
+
+.fa-thr-value.is-ok {
     color: var(--ok);
     border-color: rgba(114, 163, 126, 0.45);
 }
-.fa-measurement-value.is-bad {
+.fa-thr-value.is-bad {
     color: var(--bad);
     background: var(--bad-bg);
     border-color: var(--bad);
 }
-.fa-measurement-value.is-neutral { color: var(--text-muted); }
-.fa-measurement-value.is-picture-run {
+.fa-thr-value.is-neutral { color: var(--text-muted); }
+.fa-thr-value.is-picture-run {
     outline: 1px dashed var(--accent);
     outline-offset: 1px;
     color: var(--accent);
 }
-.fa-measurement-value.is-picture-run .fa-mv-delta { color: var(--accent); }
-.fa-run-status { display: flex; flex-wrap: wrap; gap: 3px; }
-.fa-run-status-chip {
-    padding: 1px 5px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-1);
+.fa-thr-value.is-picture-run .fa-mv-delta { color: var(--accent); }
+
+.fa-detail-row {
+    padding: 3px 4px;
+    color: var(--text-dim);
+    font: 8px/1.4 var(--font-mono);
+    white-space: normal;
+    border-left: 2px solid var(--border);
+}
+
+.fa-empty {
+    padding: 6px;
     color: var(--text-muted);
-    font: 700 8px var(--font-mono);
-    letter-spacing: 0.3px;
-    white-space: nowrap;
+    font-size: 9px;
+    border: 1px dashed var(--border);
+    border-radius: 3px;
+    text-align: center;
 }
-.fa-run-status-chip.is-ok { color: var(--ok); border-color: var(--ok); }
-.fa-run-status-chip.is-bad {
-    color: var(--bad);
-    border-color: var(--bad);
-    background: var(--bad-bg);
-}
-.fa-run-status-chip.is-picture-run {
-    outline: 1px dashed var(--accent);
-    outline-offset: 1px;
-}
-.frame-analysis-picture {
-    margin-top: 3px;
+
+/* Картинка-причина выбора прогона */
+.fa-picture {
+    margin-top: 2px;
     padding: 3px 5px;
     border: 1px dashed var(--border-strong);
     border-radius: 2px;
@@ -435,3 +526,49 @@
     font: 700 8px var(--font-mono);
     overflow-wrap: anywhere;
 }
+.fa-picture.is-hidden { display: none !important; }
+
+/* Скролл трек — как у порогов правил */
+.fa-scroll-track {
+    flex: 0 0 10px;
+    width: 10px;
+    min-width: 10px;
+    align-self: stretch;
+    position: relative;
+    margin: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    cursor: pointer;
+    user-select: none;
+}
+.fa-scroll-thumb {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 14px;
+    height: 28px;
+    min-height: 22px;
+    border-radius: 3px;
+    background: var(--accent);
+    border: 1px solid var(--border-accent);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    transform: translateX(-50%);
+    cursor: grab;
+    will-change: top, height;
+    transition: background 150ms var(--ease), height 120ms var(--ease);
+}
+.fa-scroll-thumb:active,
+.fa-scroll-track.is-dragging .fa-scroll-thumb {
+    cursor: grabbing;
+    filter: brightness(1.15);
+}
+.fa-scroll-track:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+.fa-scroll-track.is-idle { display: none; }
+
+/* Legacy совместимость — старые классы теперь скрыты/нейтральны */
+.fa-measurements { display: none; }
+.fa-group, .fa-threshold, .frame-analysis-rules-scroll, .frame-analysis-list { display: none; }

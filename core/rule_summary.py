@@ -10,7 +10,7 @@
 рядом, поэтому UI одинаково наглядно показывает и норму, и отклонение.
 """
 
-METRICS_PER_ROLE_LIMIT = 5
+METRICS_PER_ROLE_LIMIT = 20
 
 _UNKNOWN = "—"
 
@@ -207,32 +207,79 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         ))
 
     elif rule_name == "window_geometry":
+        # Полный разбор как запросил пользователь: пороги в стиле
+        # «Низ зоны окон: макс. px [Значение]» и три замера под ними.
         top_limits = role_details.get("top_limits_px") or []
         bottom_limits = role_details.get("bottom_limits_px") or []
+        top_values = role_details.get("top_values_px") or []
+        bottom_values = role_details.get("bottom_values_px") or []
         items = role_details.get("items") or []
-        bad = [item for item in items if not item.get("valid")
-               or item.get("top_fail") or item.get("bottom_fail")]
-        if len(top_limits) == 2:
-            metrics.append({
-                "label": "допуск T",
-                "value": f"{_number(top_limits[0])}…{_number(top_limits[1])} px",
-                "limit": None,
-                "ok": None,
-            })
-        if len(bottom_limits) == 2:
-            metrics.append({
-                "label": "допуск B",
-                "value": (
-                    f"{_number(bottom_limits[0])}…"
-                    f"{_number(bottom_limits[1])} px"
-                ),
-                "limit": None,
-                "ok": None,
-            })
+
+        # 4 базовых порога входной геометрии
+        if len(top_limits) == 2 and top_values:
+            try:
+                min_top = float(min(top_values))
+                max_top = float(max(top_values))
+            except Exception:
+                min_top = max_top = None
+            if min_top is not None:
+                add(_metric(
+                    "Верх зоны окон: мин. px",
+                    min_top, top_limits[0],
+                    ok=min_top >= float(top_limits[0]),
+                    unit=" px", key="top_px_min",
+                ))
+            if max_top is not None:
+                add(_metric(
+                    "Верх зоны окон: макс. px",
+                    max_top, top_limits[1],
+                    ok=max_top <= float(top_limits[1]),
+                    unit=" px", key="top_px_max",
+                ))
+        if len(bottom_limits) == 2 and bottom_values:
+            try:
+                min_bottom = float(min(bottom_values))
+                max_bottom = float(max(bottom_values))
+            except Exception:
+                min_bottom = max_bottom = None
+            if min_bottom is not None:
+                add(_metric(
+                    "Низ зоны окон: мин. px",
+                    min_bottom, bottom_limits[0],
+                    ok=min_bottom >= float(bottom_limits[0]),
+                    unit=" px", key="bottom_px_min",
+                ))
+            if max_bottom is not None:
+                add(_metric(
+                    "Низ зоны окон: макс. px",
+                    max_bottom, bottom_limits[1],
+                    ok=max_bottom <= float(bottom_limits[1]),
+                    unit=" px", key="bottom_px_max",
+                ))
+
+        # Детализация по каждому из 7 окон — чтобы было видно откуда взялись min/max
+        # Показываем верх и низ каждого окна; лимиты не ставим, только факт.
+        # Это даёт в карточке «Окно #1: верх px [value] → три прогона [v][v][v]»
+        for idx, (t_val, b_val) in enumerate(zip(top_values, bottom_values), start=1):
+            if idx > 7:
+                break
+            try:
+                t = float(t_val)
+            except Exception:
+                t = None
+            try:
+                b = float(b_val)
+            except Exception:
+                b = None
+            if t is not None:
+                add(_metric(f"Окно #{idx}: верх, px", t, unit=" px", key=f"window_{idx}_top_px"))
+            if b is not None:
+                add(_metric(f"Окно #{idx}: низ, px", b, unit=" px", key=f"window_{idx}_bottom_px"))
+
+        # Итоговая проверка — сколько окон вне допуска
         if items:
-            add(_metric(
-                "окон вне допуска", len(bad), 0, ok=not bad,
-            ))
+            bad = [it for it in items if not it.get("valid") or it.get("top_fail") or it.get("bottom_fail")]
+            add(_metric("Окон вне допуска", len(bad), 0, ok=not bad))
 
     elif rule_name in ("window_sinks", "sinks"):
         hits = role_details.get("hits") or []
