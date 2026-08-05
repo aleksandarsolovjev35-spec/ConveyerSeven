@@ -80,8 +80,15 @@
 .fa-scroll-thumb:active,.fa-scroll-track.is-dragging .fa-scroll-thumb { cursor: grabbing; filter: brightness(1.15); }
 .fa-scroll-track:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .fa-scroll-track.is-idle { display: none; }
-.fa-measurements { display: none; }
-.fa-group,.fa-threshold,.frame-analysis-rules-scroll,.frame-analysis-list { display: none; }
+/* Legacy fallback containers are hidden, but the live rule card uses the
+   same ``fa-measurements``/``fa-threshold`` class names.  Scoping the
+   compatibility rule to the legacy subtree keeps the actual measurements
+   visible in the current panel. */
+#frame-analysis-rules-scroll .fa-measurements,
+#frame-analysis-rules-scroll .fa-group,
+#frame-analysis-rules-scroll .fa-threshold,
+.frame-analysis-rules-scroll,
+#frame-analysis-models-scroll .frame-analysis-list { display: none; }
 .fa-threshold.is-decisive { border-color: var(--bad); }
 .fa-threshold-runs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 4px; }
 .fa-measurement-value { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 28px; padding: 2px 3px 1px; border: 1px solid var(--border); border-radius: 2px; background: var(--bg-0); color: var(--text-muted); font: 700 9px var(--font-mono); text-align: center; cursor: pointer; user-select: none; }
