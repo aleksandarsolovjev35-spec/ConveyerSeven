@@ -302,19 +302,19 @@ class CameraAndConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         thresholds = ThresholdLoader(root / "thresholds.json").get_all()
         expected = {
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 11.5,
-            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_px": 8.6,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_px": 25.2,
-            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_px": 9.6,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 38,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_px": 18,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_px": 30,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_px": 18,
             "TOP.top_contacts_side_rect_width_px": 28,
             "TOP.top_contacts_side_rect_height_px": 35,
             "TOP.top_contacts_edge_rect_width_px": 30,
             "TOP.top_contacts_edge_rect_height_px": 28,
-            "TOP.top_platform_inscribed_rect_width_px": 260,
-            "TOP.top_platform_inscribed_rect_height_px": 120,
+            "TOP.top_platform_inscribed_rect_width_px": 270,
+            "TOP.top_platform_inscribed_rect_height_px": 130,
             "TOP.top_platform_overlap_excess_component_min_px": 3,
             "TOP.top_platform_overlap_contact_min_confidence": 0.3,
-            "TOP.top_platform_overlap_contact_inner_ratio": 0.5,
+            "TOP.top_platform_overlap_contact_inner_ratio": 0.1,
             "TOP.top_platform_overlap_margin_px": 0,
             "TOP.top_platform_overlap_expand_x_ratio": 1.0,
             "TOP.top_platform_overlap_expand_y_ratio": 1.0,
@@ -341,6 +341,40 @@ class CameraAndConfigTests(unittest.TestCase):
             "TOP.top_glass_pin_min_confidence",
         ):
             self.assertIn(key, thresholds)
+
+    def test_current_calibrated_threshold_values_are_preserved(self):
+        """Профиль порогов из утверждённого calibration-набора не дрейфует.
+
+        Это не заменяет проверку на реальных кадрах, но защищает рабочий
+        thresholds.json от случайного отката размеров эталонов, порогов
+        omission и границы TOP при рефакторинге.
+        """
+        root = Path(__file__).resolve().parents[1]
+        thresholds = ThresholdLoader(root / "thresholds.json").get_all()
+        expected = {
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_width_px": 38,
+            "SPIDER_LEFT.spider_contacts_long_inscribed_rect_height_px": 18,
+            "SPIDER_LEFT.spider_long_omission_min_confidence": 0.1,
+            "SPIDER_LEFT.spider_long_omission_allowed_thickness_px": 20.5,
+            "SPIDER_RIGHT.spider_contacts_long_inscribed_rect_width_px": 38,
+            "SPIDER_RIGHT.spider_contacts_long_inscribed_rect_height_px": 18,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_width_px": 30,
+            "SPIDER_IN.spider_contacts_short_inscribed_rect_height_px": 18,
+            "SPIDER_IN.spider_contacts_short_omission_tilt_ratio_max": 0.3,
+            "SPIDER_IN.spider_short_omission_allowed_thickness_px": 25,
+            "SPIDER_OUT.spider_contacts_short_min_confidence": 0.28,
+            "SPIDER_OUT.spider_contacts_short_level_deviation_ratio": 0.4,
+            "SPIDER_OUT.spider_contacts_short_omission_tilt_ratio_max": 0.3,
+            "SPIDER_OUT.spider_contacts_short_inscribed_rect_width_px": 30,
+            "SPIDER_OUT.spider_contacts_short_inscribed_rect_height_px": 18,
+            "SPIDER_OUT.spider_short_omission_min_confidence": 0.4,
+            "SPIDER_OUT.spider_short_omission_allowed_thickness_px": 27,
+            "TOP.top_platform_overlap_contact_inner_ratio": 0.1,
+            "TOP.top_platform_inscribed_rect_width_px": 270,
+            "TOP.top_platform_inscribed_rect_height_px": 130,
+        }
+        for key, value in expected.items():
+            self.assertAlmostEqual(thresholds[key], value, msg=key)
 
     def test_camera_manager_rejects_black_frame_before_use_and_releases(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -208,13 +208,13 @@ class TopRuleTests(unittest.TestCase):
         self.assertEqual(invalid_details["selected"], 14)
         self.assertEqual(invalid_details["ignored"], 1)
 
-    def test_platform_is_independent_and_uses_260_by_120_px(self):
+    def test_platform_is_independent_and_uses_270_by_130_px(self):
         rule = TopPlatformRule(self.thresholds)
         good = rule.check({"TOP": [top_platform()]})
         details = good.details["per_role"]["TOP"]
         self.assertFalse(good.triggered)
-        self.assertEqual(details["rect_width_px"], 260.0)
-        self.assertEqual(details["rect_height_px"], 120.0)
+        self.assertEqual(details["rect_width_px"], 270.0)
+        self.assertEqual(details["rect_height_px"], 130.0)
         self.assertEqual(details["placement"], "centered")
         self.assertAlmostEqual(details["shift_distance_px"], 0.0)
         self.assertTrue(any(
@@ -299,7 +299,7 @@ class TopRuleTests(unittest.TestCase):
         self.assertNotIn("overlap_mask", contacts_source)
         self.assertNotIn("platform_overlap_region", contacts_source)
 
-    def test_platform_overlap_area_is_built_from_contact_centers(self):
+    def test_platform_overlap_area_uses_configured_contact_anchors(self):
         rule = TopPlatformOverlapRule(self.thresholds)
         self.assertEqual(rule.name, "platform_contacts_overlap")
         contacts = top_contacts()
@@ -307,14 +307,15 @@ class TopRuleTests(unittest.TestCase):
         details = clean.details["per_role"]["TOP"]
         self.assertFalse(clean.triggered)
         self.assertEqual(details["anchor"], "contacts_rectangle")
-        self.assertEqual(details["contact_inner_ratio"], 0.5)
+        self.assertEqual(details["contact_inner_ratio"], 0.1)
         self.assertEqual(details["used_contacts"], 14)
         self.assertEqual(
             details["contact_groups"], {"L": 5, "R": 5, "T": 2, "B": 2},
         )
-        # Границы проходят через центры контактов: 250..750 x 150..550.
-        self.assertAlmostEqual(details["boundary_width_px"], 500.0, places=1)
-        self.assertAlmostEqual(details["boundary_height_px"], 400.0, places=1)
+        # ratio=0.1 берёт точки у внутренних кромок контактов:
+        # 266..734 x 166..534.
+        self.assertAlmostEqual(details["boundary_width_px"], 468.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 368.0, places=1)
         np.testing.assert_allclose(
             details["boundary_center"], [500.0, 350.0], atol=0.51,
         )
@@ -451,9 +452,10 @@ class TopRuleTests(unittest.TestCase):
         self.assertEqual(
             details["contact_groups"], {"L": 5, "R": 5, "T": 2, "B": 2},
         )
-        # width — поперёк детали, height — вдоль неё.
-        self.assertAlmostEqual(details["boundary_width_px"], 380.0, places=1)
-        self.assertAlmostEqual(details["boundary_height_px"], 480.0, places=1)
+        # width — поперёк детали, height — вдоль неё. ratio=0.1 смещает
+        # каждую границу на 4 px от центра к внутренней кромке контакта.
+        self.assertAlmostEqual(details["boundary_width_px"], 348.0, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 448.0, places=1)
 
         # expand_x растягивает область по горизонтали экрана.
         thresholds = dict(self.thresholds)
@@ -466,8 +468,8 @@ class TopRuleTests(unittest.TestCase):
             if drawing.get("type") == "platform_overlap_boundary"
         ), dtype=float)
         spans = points.max(axis=0) - points.min(axis=0)
-        self.assertAlmostEqual(spans[0], 760.0, places=1)
-        self.assertAlmostEqual(spans[1], 480.0, places=1)
+        self.assertAlmostEqual(spans[0], 696.0, places=1)
+        self.assertAlmostEqual(spans[1], 448.0, places=1)
 
     def test_platform_overlap_angle_is_normalized_to_upright(self):
         rule = TopPlatformOverlapRule(self.thresholds)
@@ -492,9 +494,9 @@ class TopRuleTests(unittest.TestCase):
             "TOP": [top_platform(), *top_contacts()],
         })
         details = result.details["per_role"]["TOP"]
-        # (500 + 2*10) * 1.2 и (400 + 2*10) * 0.5
-        self.assertAlmostEqual(details["boundary_width_px"], 624.0, places=1)
-        self.assertAlmostEqual(details["boundary_height_px"], 210.0, places=1)
+        # (468 + 2*10) * 1.2 и (368 + 2*10) * 0.5
+        self.assertAlmostEqual(details["boundary_width_px"], 585.6, places=1)
+        self.assertAlmostEqual(details["boundary_height_px"], 194.0, places=1)
         self.assertTrue(result.triggered)
 
     def test_platform_overlap_boundary_ignores_only_one_or_two_connected_pixels(self):
