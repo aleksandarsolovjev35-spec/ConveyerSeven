@@ -64,6 +64,168 @@ class RuleReportSummaryTests(unittest.TestCase):
                          ["part_presence", "window_sinks"])
         self.assertFalse(rows[0]["part_absent"])
 
+    def test_build_rows_scopes_to_selected_camera_role(self):
+        """Анализ кадра показывает только вычисления выбранной камеры."""
+        multi = SimpleNamespace(
+            rule_name="contacts_long",
+            triggered=True,
+            details={"per_role": {
+                "SPIDER_LEFT": {
+                    "triggered": True,
+                    "reason": "wrong_count: 3/5",
+                    "found": 3,
+                },
+                "SPIDER_RIGHT": {
+                    "triggered": False,
+                    "reason": None,
+                    "found": 5,
+                    "line_tolerance_px": 7.0,
+                    "rect_width_px": 11.5,
+                    "rect_height_px": 8.6,
+                    "omission_tilt_ratio_max": 0.2,
+                    "omission_tilt_check": {"status": "ok", "distance_trend_ratio": 0.01},
+                    "items": [],
+                },
+            }},
+        )
+        top = SimpleNamespace(
+            rule_name="top_contacts",
+            triggered=False,
+            details={"per_role": {"TOP": {"triggered": False}}},
+        )
+        rows = build_rule_report_rows([multi, top], role="SPIDER_LEFT")
+        self.assertEqual([row["name"] for row in rows], ["contacts_long"])
+        self.assertTrue(rows[0]["triggered"])
+        self.assertTrue(all(
+            "SPIDER_RIGHT" not in line
+            for line in rows[0].get("detail_lines") or []
+        ))
+        self.assertTrue(all(
+            card.get("role") == "SPIDER_LEFT"
+            for card in rows[0].get("summary_cards") or []
+        ))
+
+        rows = build_rule_report_rows([multi, top], role="SPIDER_RIGHT")
+        self.assertEqual([row["name"] for row in rows], ["contacts_long"])
+        self.assertFalse(rows[0]["triggered"])
+        self.assertTrue(all(
+            "SPIDER_LEFT" not in line
+            for line in rows[0].get("detail_lines") or []
+        ))
+
+        rows = build_rule_report_rows([multi, top], role="TOP")
+        self.assertEqual([row["name"] for row in rows], ["top_contacts"])
+
+    def test_window_geometry_exposes_every_window_measurement(self):
+        """Все 7 окон T/B и зональные пороги попадают в summary_cards."""
+        items = [
+            {
+                "index": index,
+                "valid": True,
+                "top_px": 25.0 + index * 0.1,
+                "bottom_px": 30.0 + index * 0.1,
+                "top_fail": index == 4,
+                "bottom_fail": False,
+            }
+            for index in range(1, 8)
+        ]
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="window_geometry",
+            triggered=True,
+            details={"per_role": {"INPUT_LEFT": {
+                "triggered": True,
+                "found": 7,
+                "expected_count": 7,
+                "top_limits_px": [20, 40],
+                "bottom_limits_px": [20, 40],
+                # без top_values_px/bottom_values_px — только items
+                "items": items,
+            }}},
+        ))
+        metrics = {
+            m["key"]: m for m in row["summary_cards"][0]["metrics"] if m.get("key")
+        }
+        self.assertIn("found", metrics)
+        self.assertIn("top_px_min", metrics)
+        self.assertIn("top_px_max", metrics)
+        self.assertIn("bottom_px_min", metrics)
+        self.assertIn("bottom_px_max", metrics)
+        for index in range(1, 8):
+            self.assertIn(f"window_{index}_top_px", metrics)
+            self.assertIn(f"window_{index}_bottom_px", metrics)
+            self.assertIn(f"window_{index}_ok", metrics)
+            self.assertIsNotNone(metrics[f"window_{index}_top_px"]["value_raw"])
+            self.assertIsNotNone(metrics[f"window_{index}_top_px"]["limit_raw"])
+        self.assertIs(metrics["window_4_ok"]["ok"], False)
+        self.assertIs(metrics["window_1_ok"]["ok"], True)
+
+    def test_contacts_long_exposes_per_contact_and_aggregates(self):
+        """Длинные контакты: допуск, наклон, 5 контактов с отклонениями."""
+        items = [
+            {
+                "index": index,
+                "dev_top_px": float(index),
+                "dev_bottom_px": 0.0,
+                "rect_fits": index != 3,
+                "omission_distance_px": 90 + index,
+            }
+            for index in range(1, 6)
+        ]
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="contacts_long",
+            triggered=True,
+            details={"per_role": {"SPIDER_LEFT": {
+                "triggered": True,
+                "found": 5,
+                "line_tolerance_px": 7.0,
+                "max_dev_top": 5.0,
+                "level_slope": 0.02,
+                "max_level_slope": 0.10,
+                "rect_width_px": 11.5,
+                "rect_height_px": 8.6,
+                "omission_tilt_ratio_max": 0.2,
+                "omission_tilt_check": {
+                    "status": "ok",
+                    "distance_trend_ratio": 0.05,
+                },
+                "items": items,
+            }}},
+        ))
+        metrics = {
+            m["key"]: m for m in row["summary_cards"][0]["metrics"] if m.get("key")
+        }
+        self.assertIn("found", metrics)
+        self.assertIn("line_tolerance_px", metrics)
+        self.assertIn("omission_tilt_ratio_max", metrics)
+        self.assertIn("max_level_slope", metrics)
+        self.assertIn("rect_width_px", metrics)
+        for index in range(1, 6):
+            self.assertIn(f"contact_{index}_dev_top_px", metrics)
+            self.assertIn(f"contact_{index}_rect_fits", metrics)
+            self.assertIn(f"contact_{index}_omission_dist_px", metrics)
+        self.assertIs(metrics["contact_3_rect_fits"]["ok"], False)
+
+    def test_contacts_long_wrong_count_still_shows_found_metric(self):
+        """При wrong_count оператор видит хотя бы «найдено N/5»."""
+        row = build_rule_report_row(SimpleNamespace(
+            rule_name="contacts_long",
+            triggered=True,
+            details={"per_role": {"SPIDER_LEFT": {
+                "triggered": True,
+                "reason": "wrong_count: 3/5",
+                "found": 3,
+                "line_tolerance_px": 7.0,
+                "items": [],
+            }}},
+        ))
+        metrics = {
+            m["key"]: m for m in row["summary_cards"][0]["metrics"] if m.get("key")
+        }
+        self.assertEqual(metrics["found"]["value"], "3")
+        self.assertEqual(metrics["found"]["limit"], "5")
+        self.assertIs(metrics["found"]["ok"], False)
+        self.assertIn("line_tolerance_px", metrics)
+
     def test_presence_summary_is_short_and_informative(self):
         row = build_rule_report_row(_presence(True))
         self.assertEqual(len(row["summary_lines"]), 2)

@@ -731,7 +731,38 @@ class CoreCycleTests(unittest.TestCase):
             "rule_results": [SimpleNamespace(
                 rule_name="part_presence",
                 triggered=False,
-                details={"empty_tray": False},
+                details={
+                    "empty_tray": False,
+                    "flatness_left": 3,
+                    "flatness_right": 4,
+                    "false_positive_max_count_by_role": {
+                        "INPUT_LEFT": 2,
+                        "INPUT_RIGHT": 2,
+                    },
+                },
+            ), SimpleNamespace(
+                rule_name="window_geometry",
+                triggered=True,
+                details={"per_role": {
+                    "INPUT_LEFT": {
+                        "triggered": True,
+                        "reason": None,
+                        "found": 7,
+                        "expected_count": 7,
+                        "top_limits_px": [20, 40],
+                        "bottom_limits_px": [20, 40],
+                        "items": [],
+                    },
+                    "INPUT_RIGHT": {
+                        "triggered": False,
+                        "reason": None,
+                        "found": 7,
+                        "expected_count": 7,
+                        "top_limits_px": [20, 40],
+                        "bottom_limits_px": [20, 40],
+                        "items": [],
+                    },
+                }},
             )],
             "models": [{
                 "role": "INPUT_LEFT",
@@ -739,34 +770,138 @@ class CoreCycleTests(unittest.TestCase):
                 "ok": True,
                 "elapsed_ms": 9,
                 "detections": 1,
+            }, {
+                "role": "INPUT_RIGHT",
+                "model": "weights/input.pt",
+                "ok": True,
+                "elapsed_ms": 8,
+                "detections": 1,
             }],
             "updated_at": time.time(),
         }
-        # Входные камеры показывают результат ВХОДА.
+        # Входные камеры показывают результат ВХОДА — только своей роли.
         monitor.server.active_camera_role = "INPUT_LEFT"
         report = cycle._build_status()["frame_analysis"]
         self.assertEqual(report["group"], "INPUT")
         self.assertEqual(report["stage"], "ВХОД")
         self.assertEqual(report["role"], "INPUT_LEFT")
         self.assertEqual(report["part_id"], 1)
-        self.assertEqual(len(report["rules"]), 1)
+        self.assertEqual(len(report["rules"]), 2)
+        self.assertEqual(
+            [model["role"] for model in report["models"]],
+            ["INPUT_LEFT"],
+        )
+        geom = next(r for r in report["rules"] if r["name"] == "window_geometry")
+        self.assertTrue(geom["triggered"])
+        self.assertTrue(all(
+            "INPUT_RIGHT" not in line for line in geom.get("detail_lines") or []
+        ))
+        self.assertTrue(all(
+            card.get("role") == "INPUT_LEFT"
+            for card in geom.get("summary_cards") or []
+        ))
+        presence = next(r for r in report["rules"] if r["name"] == "part_presence")
+        self.assertTrue(all(
+            "INPUT_RIGHT" not in line
+            for line in presence.get("summary_lines") or []
+        ))
         self.assertIn("вход", report["message"].lower())
+
         monitor.server.active_camera_role = "INPUT_RIGHT"
         report = cycle._build_status()["frame_analysis"]
         self.assertEqual(report["group"], "INPUT")
         self.assertEqual(report["role"], "INPUT_RIGHT")
-        self.assertEqual(len(report["rules"]), 1)
+        self.assertEqual(len(report["rules"]), 2)
+        self.assertEqual(
+            [model["role"] for model in report["models"]],
+            ["INPUT_RIGHT"],
+        )
+        geom = next(r for r in report["rules"] if r["name"] == "window_geometry")
+        self.assertFalse(geom["triggered"])
+        self.assertTrue(all(
+            "INPUT_LEFT" not in line for line in geom.get("detail_lines") or []
+        ))
 
-        # При переключении на остальные камеры панель сразу показывает
-        # результат КОНТРОЛЯ +4, даже если для него данных ещё нет.
+        # SPIDER-группа: на SPIDER_LEFT — только long-правила, не TOP/short.
+        cycle._frame_analysis_groups["SPIDER"] = {
+            "part_id": 2,
+            "rule_results": [
+                SimpleNamespace(
+                    rule_name="contacts_long",
+                    triggered=True,
+                    details={"per_role": {
+                        "SPIDER_LEFT": {
+                            "triggered": True,
+                            "reason": "wrong_count: 3/5",
+                            "found": 3,
+                        },
+                        "SPIDER_RIGHT": {
+                            "triggered": False,
+                            "reason": None,
+                            "found": 5,
+                            "line_tolerance_px": 7.0,
+                            "rect_width_px": 11.5,
+                            "rect_height_px": 8.6,
+                            "items": [],
+                        },
+                    }},
+                ),
+                SimpleNamespace(
+                    rule_name="contacts_short",
+                    triggered=False,
+                    details={"per_role": {
+                        "SPIDER_IN": {"triggered": False},
+                        "SPIDER_OUT": {"triggered": False},
+                    }},
+                ),
+                SimpleNamespace(
+                    rule_name="top_contacts",
+                    triggered=False,
+                    details={"per_role": {"TOP": {"triggered": False}}},
+                ),
+            ],
+            "models": [
+                {"role": "SPIDER_LEFT", "model": "w.pt", "ok": True,
+                 "elapsed_ms": 1, "detections": 1},
+                {"role": "SPIDER_RIGHT", "model": "w.pt", "ok": True,
+                 "elapsed_ms": 1, "detections": 1},
+                {"role": "TOP", "model": "w.pt", "ok": True,
+                 "elapsed_ms": 1, "detections": 1},
+            ],
+            "updated_at": time.time(),
+        }
+        monitor.server.active_camera_role = "SPIDER_LEFT"
+        report = cycle._build_status()["frame_analysis"]
+        self.assertEqual(report["group"], "SPIDER")
+        self.assertEqual(report["role"], "SPIDER_LEFT")
+        self.assertEqual(
+            [row["name"] for row in report["rules"]],
+            ["contacts_long"],
+        )
+        self.assertEqual(
+            [model["role"] for model in report["models"]],
+            ["SPIDER_LEFT"],
+        )
+        self.assertTrue(report["rules"][0]["triggered"])
+        self.assertTrue(all(
+            "SPIDER_RIGHT" not in line
+            for line in report["rules"][0].get("detail_lines") or []
+        ))
+
         monitor.server.active_camera_role = "TOP"
         report = cycle._build_status()["frame_analysis"]
         self.assertEqual(report["group"], "SPIDER")
         self.assertEqual(report["stage"], "КОНТРОЛЬ +4")
         self.assertEqual(report["role"], "TOP")
-        self.assertIsNone(report["part_id"])
-        self.assertEqual(report["rules"], [])
-        self.assertIn("нет", report["message"])
+        self.assertEqual(report["part_id"], 2)
+        self.assertEqual(
+            [row["name"] for row in report["rules"]],
+            ["top_contacts"],
+        )
+        self.assertEqual(
+            [model["role"] for model in report["models"]],
+            ["TOP"],
+        )
 
     def test_backend_control_permissions_match_every_line_state(self):
         cycle = self.make_cycle()

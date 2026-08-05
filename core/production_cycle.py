@@ -505,8 +505,8 @@ class ProductionCycle:
         return build_rule_report_row(result)
 
     @staticmethod
-    def _rule_report_rows(results) -> list:
-        return build_rule_report_rows(results)
+    def _rule_report_rows(results, role: str | None = None) -> list:
+        return build_rule_report_rows(results, role=role)
 
     def diagnostic_analyze_selected_camera(self, role: str) -> bool:
         if not self._operation_lock.acquire(blocking=False):
@@ -1836,6 +1836,8 @@ class ProductionCycle:
         if state_name in ("RUNNING", "STOPPING"):
             # Панель следует за камерой, выбранной оператором: анализ
             # меняется при каждом переключении камеры в рабочем цикле.
+            # Показываются только правила и замеры этой камеры, а не
+            # всей группы (INPUT / SPIDER / TOP).
             group = self._active_frame_analysis_group()
             entry = self._frame_analysis_groups[group]
             stage_label = "ВХОД" if group == "INPUT" else "КОНТРОЛЬ +4"
@@ -1843,10 +1845,33 @@ class ProductionCycle:
                 active_role = self._get_active_camera_role()
             except Exception:
                 active_role = None
+            models = [
+                dict(item) for item in entry["models"]
+                if not active_role or item.get("role") == active_role
+            ]
+            rules = self._rule_report_rows(
+                entry["rule_results"], role=active_role,
+            )
             has_data = (
                 entry["updated_at"] is not None
-                and bool(entry["rule_results"] or entry["models"])
+                and bool(
+                    rules
+                    or models
+                    or entry["rule_results"]
+                    or entry["models"]
+                )
             )
+            role_suffix = f" · {active_role}" if active_role else ""
+            if has_data:
+                message = (
+                    f"{stage_label}{role_suffix}: итог трёх свежих кадров; "
+                    "голосование каждого правила 2 из 3"
+                )
+            else:
+                message = (
+                    f"{stage_label}{role_suffix}: "
+                    "результатов анализа пока нет"
+                )
             return {
                 "available": True,
                 "kind": "CYCLE",
@@ -1856,20 +1881,17 @@ class ProductionCycle:
                 "group": group,
                 "stage": stage_label,
                 "part_id": entry["part_id"],
-                "message": (
-                    f"{stage_label}: итог трёх свежих кадров; "
-                    "голосование каждого правила 2 из 3"
-                    if has_data
-                    else f"{stage_label}: результатов анализа пока нет"
-                ),
-                "models": [dict(item) for item in entry["models"]],
-                "rules": self._rule_report_rows(entry["rule_results"]),
+                "message": message,
+                "models": models,
+                "rules": rules,
                 "picture_run": entry.get("picture_run"),
                 "picture_reason": entry.get("picture_reason"),
                 "updated_at": entry["updated_at"],
             }
 
         if selected_report:
+            # Ручной анализ уже снимает и считает только выбранную камеру
+            # (rules_for_role + capture_single), поэтому extra-filter не нужен.
             return {
                 "available": True,
                 "kind": "SELECTED",

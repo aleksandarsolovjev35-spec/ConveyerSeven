@@ -15,7 +15,8 @@
 Метрика — ``{"label", "value", "limit", "ok", "key"}``.
 """
 
-METRICS_PER_ROLE_LIMIT = 50
+# top_contacts: 4 группы + 14 контактов × 3 метрики ≈ 46; с запасом.
+METRICS_PER_ROLE_LIMIT = 80
 
 _UNKNOWN = "—"
 
@@ -66,6 +67,26 @@ def _within(value, limit):
         return None
 
 
+def _in_range(value, low, high):
+    try:
+        number = float(value)
+        return float(low) <= number <= float(high)
+    except (TypeError, ValueError):
+        return None
+
+
+def _finite_numbers(values) -> list:
+    numbers = []
+    for value in values or []:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number:  # not NaN
+            numbers.append(number)
+    return numbers
+
+
 def _count_found(role_details: dict) -> list:
     found = []
     pairs = (
@@ -110,13 +131,26 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
     if rule_name in ("long_omission", "short_omission"):
         thickness = role_details.get("allowed_thickness_px")
         excess = role_details.get("excess_pixels")
+        component_min = role_details.get("excess_component_min_px")
+        # «избыток» + порог размера фрагмента — основная пара для UI
+        # и выбора картинки (key=excess_component_min_px).
         add(_metric(
-            "избыток", excess, role_details.get("excess_component_min_px"),
-            ok=not role_details.get("triggered"), unit=" px",
+            "избыток", excess, component_min,
+            ok=(
+                not role_details.get("triggered")
+                if excess is not None else None
+            ),
+            unit=" px",
             key="excess_component_min_px",
         ))
-        add(_metric("доп. толщина", thickness, unit=" px", key="allowed_thickness_px"))
-        add(_metric("глубина", role_details.get("max_excess_depth_px"), unit=" px", key="max_excess_depth_px"))
+        add(_metric(
+            "доп. толщина", thickness, unit=" px",
+            key="allowed_thickness_px",
+        ))
+        add(_metric(
+            "глубина", role_details.get("max_excess_depth_px"),
+            unit=" px", key="max_excess_depth_px",
+        ))
         residual = role_details.get("top_line_actual_max_residual_px")
         residual_max = role_details.get("top_line_max_residual_px")
         add(_metric(
@@ -124,20 +158,81 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             ok=_within(residual, residual_max), unit=" px",
             key="top_line_max_residual_px",
         ))
-        # На каждый объект — здесь один объект (основная omission mask), но покажем также largest component
-        add(_metric("крупн. фрагмент", role_details.get("largest_component_pixels"), unit=" px", key="largest_component_px"))
+        add(_metric(
+            "крупн. фрагмент",
+            role_details.get("largest_component_pixels"),
+            unit=" px",
+            key="largest_component_px",
+        ))
+        if role_details.get("found") is not None:
+            expected = role_details.get("expected_count")
+            add(_metric(
+                "Найдено, шт", role_details.get("found"), expected,
+                key="found",
+            ))
 
     # ─── Длинные контакты 5 шт ───────────────────────────────
     elif rule_name == "contacts_long":
         tolerance = role_details.get("line_tolerance_px") or role_details.get("tolerance")
-        # Агрегированные дельты
-        for label, key in (
-            ("Δ верх, px", "delta_top"),
-            ("Δ низ, px", "delta_bottom"),
-            ("Δ высота, px", "delta_height"),
+        expected = role_details.get("expected_count") or 5
+        found = role_details.get("found")
+        if found is not None:
+            add(_metric(
+                "Найдено контактов, шт", found, expected,
+                ok=int(found) == int(expected),
+                key="found",
+            ))
+        # Агрегированные дельты (если есть)
+        for label, key, metric_key in (
+            ("Δ верх, px", "delta_top", "delta_top"),
+            ("Δ низ, px", "delta_bottom", "delta_bottom"),
+            ("Δ высота, px", "delta_height", "delta_height"),
         ):
-            if key in role_details:
-                add(_metric(label, role_details.get(key), tolerance, ok=_within(role_details.get(key), tolerance), unit=" px", key="line_tolerance_px"))
+            if key in role_details and role_details.get(key) is not None:
+                add(_metric(
+                    label, role_details.get(key), tolerance,
+                    ok=_within(role_details.get(key), tolerance),
+                    unit=" px", key=metric_key,
+                ))
+        # Макс. отклонение от линии центров
+        max_dev = role_details.get("max_dev_top")
+        items = role_details.get("items") or []
+        if max_dev is None and items:
+            devs = _finite_numbers(it.get("dev_top_px") for it in items)
+            if devs:
+                max_dev = max(devs)
+        if max_dev is not None and tolerance is not None:
+            add(_metric(
+                "Макс. откл. от линии, px", max_dev, tolerance,
+                ok=_within(max_dev, tolerance), unit=" px",
+                key="line_tolerance_px",
+            ))
+        elif tolerance is not None and not items:
+            # Порог виден даже без успешного прогона (wrong_count).
+            add(_metric(
+                "Допуск линии, px", tolerance, unit=" px",
+                key="line_tolerance_px",
+            ))
+        # Наклон линии центров
+        slope = role_details.get("level_slope")
+        max_slope = role_details.get("max_level_slope")
+        if slope is not None:
+            add(_metric(
+                "Наклон линии", slope, max_slope,
+                ok=_within(abs(float(slope)), max_slope) if max_slope is not None else None,
+                key="max_level_slope",
+            ))
+        # Эталонный прямоугольник
+        if role_details.get("rect_width_px") is not None:
+            add(_metric(
+                "Ширина эталона, px", role_details.get("rect_width_px"),
+                unit=" px", key="rect_width_px",
+            ))
+        if role_details.get("rect_height_px") is not None:
+            add(_metric(
+                "Высота эталона, px", role_details.get("rect_height_px"),
+                unit=" px", key="rect_height_px",
+            ))
         # Наклон к omission
         tilt = role_details.get("omission_tilt_check") or {}
         ratio = tilt.get("distance_trend_ratio")
@@ -145,9 +240,12 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             ratio = tilt.get("distance_delta_ratio")
         ratio_max = role_details.get("omission_tilt_ratio_max")
         if ratio is not None:
-            add(_metric("Наклон к omission", ratio, ratio_max, ok=_within(ratio, ratio_max), key="omission_tilt_ratio_max"))
+            add(_metric(
+                "Наклон к omission", ratio, ratio_max,
+                ok=_within(ratio, ratio_max),
+                key="omission_tilt_ratio_max",
+            ))
         # На каждый контакт
-        items = role_details.get("items") or []
         for it in items:
             idx = int(it.get("index") or 0)
             if not idx:
@@ -157,31 +255,83 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             rect_fits = it.get("rect_fits")
             omission = it.get("omission_distance_px")
             if dev_top is not None:
-                add(_metric(f"Контакт #{idx}: откл. верх, px", dev_top, tolerance, ok=_within(dev_top, tolerance), unit=" px", key=f"contact_{idx}_dev_top_px"))
+                add(_metric(
+                    f"Контакт #{idx}: откл. верх, px", dev_top, tolerance,
+                    ok=_within(dev_top, tolerance), unit=" px",
+                    key=f"contact_{idx}_dev_top_px",
+                ))
             if dev_bot is not None and float(dev_bot) != 0.0:
-                add(_metric(f"Контакт #{idx}: откл. низ, px", dev_bot, tolerance, ok=_within(dev_bot, tolerance), unit=" px", key=f"contact_{idx}_dev_bottom_px"))
+                add(_metric(
+                    f"Контакт #{idx}: откл. низ, px", dev_bot, tolerance,
+                    ok=_within(dev_bot, tolerance), unit=" px",
+                    key=f"contact_{idx}_dev_bottom_px",
+                ))
             if rect_fits is not None:
-                add(_metric(f"Контакт #{idx}: прямоугольник", 1 if rect_fits else 0, 1, ok=rect_fits, key=f"contact_{idx}_rect_fits"))
+                add(_metric(
+                    f"Контакт #{idx}: прямоугольник",
+                    1 if rect_fits else 0, 1, ok=bool(rect_fits),
+                    key=f"contact_{idx}_rect_fits",
+                ))
             if omission is not None:
-                add(_metric(f"Контакт #{idx}: дист. до omission, px", omission, unit=" px", key=f"contact_{idx}_omission_dist_px"))
+                add(_metric(
+                    f"Контакт #{idx}: дист. до omission, px", omission,
+                    unit=" px", key=f"contact_{idx}_omission_dist_px",
+                ))
 
     # ─── Короткие контакты 2 шт ──────────────────────────────
     elif rule_name == "contacts_short":
         tolerance = role_details.get("line_tolerance_px") or role_details.get("tolerance")
-        for label, key in (
-            ("Δ верх, px", "delta_top"),
-            ("Δ низ, px", "delta_bottom"),
-            ("Δ высота, px", "delta_height"),
+        expected = role_details.get("expected_count") or 2
+        found = role_details.get("found")
+        if found is not None:
+            add(_metric(
+                "Найдено контактов, шт", found, expected,
+                ok=int(found) == int(expected),
+                key="found",
+            ))
+        area_min = role_details.get("area_absolute_min_px2")
+        if area_min is not None:
+            add(_metric(
+                "Мин. площадь, px²", area_min, unit=" px²",
+                key="area_absolute_min_px2",
+            ))
+        for label, key, metric_key in (
+            ("Δ верх, px", "delta_top", "delta_top"),
+            ("Δ низ, px", "delta_bottom", "delta_bottom"),
+            ("Δ высота, px", "delta_height", "delta_height"),
         ):
-            if key in role_details:
-                add(_metric(label, role_details.get(key), tolerance, ok=_within(role_details.get(key), tolerance), unit=" px", key="line_tolerance_px"))
+            if key in role_details and role_details.get(key) is not None:
+                add(_metric(
+                    label, role_details.get(key), tolerance,
+                    ok=_within(role_details.get(key), tolerance),
+                    unit=" px", key=metric_key,
+                ))
+        if tolerance is not None and role_details.get("delta_top") is None:
+            add(_metric(
+                "Допуск уровня, px", tolerance, unit=" px",
+                key="line_tolerance_px",
+            ))
+        if role_details.get("rect_width_px") is not None:
+            add(_metric(
+                "Ширина эталона, px", role_details.get("rect_width_px"),
+                unit=" px", key="rect_width_px",
+            ))
+        if role_details.get("rect_height_px") is not None:
+            add(_metric(
+                "Высота эталона, px", role_details.get("rect_height_px"),
+                unit=" px", key="rect_height_px",
+            ))
         tilt = role_details.get("omission_tilt_check") or {}
         ratio = tilt.get("distance_trend_ratio")
         if ratio is None:
             ratio = tilt.get("distance_delta_ratio")
         ratio_max = role_details.get("omission_tilt_ratio_max")
         if ratio is not None:
-            add(_metric("Наклон к omission", ratio, ratio_max, ok=_within(ratio, ratio_max), key="omission_tilt_ratio_max"))
+            add(_metric(
+                "Наклон к omission", ratio, ratio_max,
+                ok=_within(ratio, ratio_max),
+                key="omission_tilt_ratio_max",
+            ))
         items = role_details.get("items") or []
         for it in items:
             idx = int(it.get("index") or 0)
@@ -193,26 +343,64 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             rect_fits = it.get("rect_fits")
             omission = it.get("omission_distance_px")
             if top_y is not None:
-                add(_metric(f"Контакт #{idx}: верх, px", top_y, unit=" px", key=f"contact_{idx}_top_y"))
+                add(_metric(
+                    f"Контакт #{idx}: верх, px", top_y,
+                    unit=" px", key=f"contact_{idx}_top_y",
+                ))
             if bottom_y is not None:
-                add(_metric(f"Контакт #{idx}: низ, px", bottom_y, unit=" px", key=f"contact_{idx}_bottom_y"))
+                add(_metric(
+                    f"Контакт #{idx}: низ, px", bottom_y,
+                    unit=" px", key=f"contact_{idx}_bottom_y",
+                ))
             if height is not None:
-                add(_metric(f"Контакт #{idx}: высота, px", height, unit=" px", key=f"contact_{idx}_height_px"))
+                add(_metric(
+                    f"Контакт #{idx}: высота, px", height,
+                    unit=" px", key=f"contact_{idx}_height_px",
+                ))
             if rect_fits is not None:
-                add(_metric(f"Контакт #{idx}: прямоугольник", 1 if rect_fits else 0, 1, ok=rect_fits, key=f"contact_{idx}_rect_fits"))
+                add(_metric(
+                    f"Контакт #{idx}: прямоугольник",
+                    1 if rect_fits else 0, 1, ok=bool(rect_fits),
+                    key=f"contact_{idx}_rect_fits",
+                ))
             if omission is not None:
-                add(_metric(f"Контакт #{idx}: дист. до omission, px", omission, unit=" px", key=f"contact_{idx}_omission_dist_px"))
+                add(_metric(
+                    f"Контакт #{idx}: дист. до omission, px", omission,
+                    unit=" px", key=f"contact_{idx}_omission_dist_px",
+                ))
 
     # ─── Контакты сверху 14 шт ───────────────────────────────
     elif rule_name == "top_contacts":
+        found = role_details.get("found")
+        found_raw = role_details.get("found_raw")
+        if found is not None:
+            add(_metric(
+                "Валидных контактов, шт", found, 14,
+                ok=int(found) == 14, key="found",
+            ))
+        elif found_raw is not None:
+            add(_metric(
+                "Найдено контактов, шт", found_raw, 14,
+                ok=int(found_raw) == 14, key="found_raw",
+            ))
         # Групповые пороги
         for group in ("L", "R", "T", "B"):
             check = (role_details.get("group_checks") or {}).get(group) or {}
             deviation = check.get("max_deviation_px")
             allowed = check.get("allowed_deviation_px")
+            median = check.get("median_distance_px")
+            if median is not None:
+                add(_metric(
+                    f"Группа {group}: медиана дист., px", median,
+                    unit=" px", key=f"group_{group}_median_px",
+                ))
             if deviation is None:
                 continue
-            add(_metric(f"Группа {group}: откл., px", deviation, allowed, ok=_within(deviation, allowed), unit=" px", key=f"group_{group}_deviation_px"))
+            add(_metric(
+                f"Группа {group}: откл., px", deviation, allowed,
+                ok=_within(deviation, allowed), unit=" px",
+                key=f"group_{group}_deviation_px",
+            ))
         # На каждый контакт
         items = role_details.get("items") or []
         for it in items:
@@ -227,11 +415,22 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             else:
                 lab = f"Контакт {group}:"
             if distance is not None:
-                add(_metric(f"{lab} дист. до края, px", distance, unit=" px", key=f"contact_{idx}_distance_px"))
+                add(_metric(
+                    f"{lab} дист. до края, px", distance,
+                    unit=" px", key=f"contact_{idx}_distance_px",
+                ))
             if deviation is not None:
-                add(_metric(f"{lab} откл., px", deviation, allowed, ok=_within(deviation, allowed), unit=" px", key=f"contact_{idx}_deviation_px"))
+                add(_metric(
+                    f"{lab} откл., px", deviation, allowed,
+                    ok=_within(deviation, allowed), unit=" px",
+                    key=f"contact_{idx}_deviation_px",
+                ))
             if rect_fits is not None:
-                add(_metric(f"{lab} прямоугольник", 1 if rect_fits else 0, 1, ok=rect_fits, key=f"contact_{idx}_rect_fits"))
+                add(_metric(
+                    f"{lab} прямоугольник",
+                    1 if rect_fits else 0, 1, ok=bool(rect_fits),
+                    key=f"contact_{idx}_rect_fits",
+                ))
 
     # ─── Платформа ───────────────────────────────────────────
     elif rule_name == "top_platform":
@@ -246,11 +445,26 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 "value": str(placement),
                 "limit": None,
                 "ok": role_details.get("placement") == "centered",
+                "value_raw": None,
+                "limit_raw": None,
+                "key": "placement",
             })
-        add(_metric("Смещение, px", role_details.get("shift_distance_px"), unit=" px", key="shift_distance_px"))
-        add(_metric("Угол, °", role_details.get("angle_deg"), unit="°", key="angle_deg"))
-        add(_metric("Ширина эталона, px", role_details.get("rect_width_px"), unit=" px", key="rect_width_px"))
-        add(_metric("Высота эталона, px", role_details.get("rect_height_px"), unit=" px", key="rect_height_px"))
+        add(_metric(
+            "Смещение, px", role_details.get("shift_distance_px"),
+            unit=" px", key="shift_distance_px",
+        ))
+        add(_metric(
+            "Угол, °", role_details.get("angle_deg"),
+            unit="°", key="angle_deg",
+        ))
+        add(_metric(
+            "Ширина эталона, px", role_details.get("rect_width_px"),
+            unit=" px", key="rect_width_px",
+        ))
+        add(_metric(
+            "Высота эталона, px", role_details.get("rect_height_px"),
+            unit=" px", key="rect_height_px",
+        ))
 
     # ─── Заплыв платформы ────────────────────────────────────
     elif rule_name == "platform_contacts_overlap":
@@ -260,90 +474,253 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             ok=not role_details.get("triggered"), unit=" px",
             key="excess_component_min_px",
         ))
-        add(_metric("Макс. компонент, px", role_details.get("largest_component_pixels"), unit=" px", key="largest_component_px"))
-        add(_metric("Контакты области, шт", role_details.get("used_contacts"), unit="", key="used_contacts"))
-        add(_metric("Ширина области, px", role_details.get("boundary_width_px"), unit=" px", key="boundary_width_px"))
-        add(_metric("Высота области, px", role_details.get("boundary_height_px"), unit=" px", key="boundary_height_px"))
+        add(_metric(
+            "Макс. компонент, px",
+            role_details.get("largest_component_pixels"),
+            unit=" px", key="largest_component_px",
+        ))
+        add(_metric(
+            "Контакты области, шт", role_details.get("used_contacts"),
+            unit="", key="used_contacts",
+        ))
+        add(_metric(
+            "Ширина области, px", role_details.get("boundary_width_px"),
+            unit=" px", key="boundary_width_px",
+        ))
+        add(_metric(
+            "Высота области, px", role_details.get("boundary_height_px"),
+            unit=" px", key="boundary_height_px",
+        ))
 
     # ─── Геометрия входного окна — 7 окон ────────────────────
     elif rule_name == "window_geometry":
         top_limits = role_details.get("top_limits_px") or []
         bottom_limits = role_details.get("bottom_limits_px") or []
-        top_values = role_details.get("top_values_px") or []
-        bottom_values = role_details.get("bottom_values_px") or []
-        items = role_details.get("items") or []
+        top_values = list(role_details.get("top_values_px") or [])
+        bottom_values = list(role_details.get("bottom_values_px") or [])
+        items = list(role_details.get("items") or [])
 
-        if len(top_limits) == 2 and top_values:
-            try:
-                min_top = float(min(top_values))
-                max_top = float(max(top_values))
-            except Exception:
-                min_top = max_top = None
-            if min_top is not None:
-                add(_metric("Верх зоны окон: мин. px", min_top, top_limits[0], ok=min_top >= float(top_limits[0]), unit=" px", key="top_px_min"))
-            if max_top is not None:
-                add(_metric("Верх зоны окон: макс. px", max_top, top_limits[1], ok=max_top <= float(top_limits[1]), unit=" px", key="top_px_max"))
-        if len(bottom_limits) == 2 and bottom_values:
-            try:
-                min_bottom = float(min(bottom_values))
-                max_bottom = float(max(bottom_values))
-            except Exception:
-                min_bottom = max_bottom = None
-            if min_bottom is not None:
-                add(_metric("Низ зоны окон: мин. px", min_bottom, bottom_limits[0], ok=min_bottom >= float(bottom_limits[0]), unit=" px", key="bottom_px_min"))
-            if max_bottom is not None:
-                add(_metric("Низ зоны окон: макс. px", max_bottom, bottom_limits[1], ok=max_bottom <= float(bottom_limits[1]), unit=" px", key="bottom_px_max"))
+        # Если массивы T/B не пришли, собираем из items — иначе окна
+        # пропадают из анализа кадра.
+        if not top_values and items:
+            top_values = [
+                it.get("top_px") for it in sorted(
+                    items, key=lambda row: int(row.get("index") or 0),
+                )
+                if it.get("top_px") is not None
+            ]
+        if not bottom_values and items:
+            bottom_values = [
+                it.get("bottom_px") for it in sorted(
+                    items, key=lambda row: int(row.get("index") or 0),
+                )
+                if it.get("bottom_px") is not None
+            ]
 
-        for idx, (t_val, b_val) in enumerate(zip(top_values, bottom_values), start=1):
-            if idx > 7:
+        found = role_details.get("found")
+        expected = role_details.get("expected_count") or 7
+        if found is not None:
+            add(_metric(
+                "Найдено окон, шт", found, expected,
+                ok=int(found) == int(expected), key="found",
+            ))
+
+        top_nums = _finite_numbers(top_values)
+        bottom_nums = _finite_numbers(bottom_values)
+        if len(top_limits) == 2 and top_nums:
+            min_top = min(top_nums)
+            max_top = max(top_nums)
+            add(_metric(
+                "Верх зоны окон: мин. px", min_top, top_limits[0],
+                ok=min_top >= float(top_limits[0]), unit=" px",
+                key="top_px_min",
+            ))
+            add(_metric(
+                "Верх зоны окон: макс. px", max_top, top_limits[1],
+                ok=max_top <= float(top_limits[1]), unit=" px",
+                key="top_px_max",
+            ))
+        if len(bottom_limits) == 2 and bottom_nums:
+            min_bottom = min(bottom_nums)
+            max_bottom = max(bottom_nums)
+            add(_metric(
+                "Низ зоны окон: мин. px", min_bottom, bottom_limits[0],
+                ok=min_bottom >= float(bottom_limits[0]), unit=" px",
+                key="bottom_px_min",
+            ))
+            add(_metric(
+                "Низ зоны окон: макс. px", max_bottom, bottom_limits[1],
+                ok=max_bottom <= float(bottom_limits[1]), unit=" px",
+                key="bottom_px_max",
+            ))
+
+        # На каждое окно: T, B и статус допуска (с порогами диапазона).
+        by_index = {
+            int(it.get("index") or 0): it
+            for it in items
+            if int(it.get("index") or 0) > 0
+        }
+        max_windows = max(len(top_values), len(bottom_values), len(by_index), 0)
+        for idx in range(1, max_windows + 1):
+            if idx > 14:
                 break
-            try:
-                t = float(t_val)
-            except Exception:
-                t = None
-            try:
-                b = float(b_val)
-            except Exception:
-                b = None
-            # На каждый объект — окно
+            it = by_index.get(idx)
+            t = None
+            b = None
+            if idx - 1 < len(top_values):
+                try:
+                    t = float(top_values[idx - 1])
+                except (TypeError, ValueError):
+                    t = None
+            if idx - 1 < len(bottom_values):
+                try:
+                    b = float(bottom_values[idx - 1])
+                except (TypeError, ValueError):
+                    b = None
+            if t is None and it is not None and it.get("top_px") is not None:
+                try:
+                    t = float(it.get("top_px"))
+                except (TypeError, ValueError):
+                    t = None
+            if b is None and it is not None and it.get("bottom_px") is not None:
+                try:
+                    b = float(it.get("bottom_px"))
+                except (TypeError, ValueError):
+                    b = None
+
             if t is not None:
-                add(_metric(f"Окно #{idx}: верх, px", t, unit=" px", key=f"window_{idx}_top_px"))
+                nearest_top = None
+                top_ok = None
+                if len(top_limits) == 2:
+                    try:
+                        low, high = float(top_limits[0]), float(top_limits[1])
+                        top_ok = low <= float(t) <= high
+                        if float(t) < low:
+                            nearest_top = low
+                        elif float(t) > high:
+                            nearest_top = high
+                        else:
+                            nearest_top = (
+                                low if abs(float(t) - low) <= abs(high - float(t))
+                                else high
+                            )
+                    except (TypeError, ValueError):
+                        nearest_top = None
+                metric = _metric(
+                    f"Окно #{idx}: верх, px", t, nearest_top,
+                    ok=top_ok, unit=" px",
+                    key=f"window_{idx}_top_px",
+                )
+                if metric is not None and len(top_limits) == 2:
+                    # Понятный оператору диапазон вместо одной границы.
+                    metric["limit"] = (
+                        f"{_number(top_limits[0])}…{_number(top_limits[1])} px"
+                    )
+                add(metric)
+
             if b is not None:
-                add(_metric(f"Окно #{idx}: низ, px", b, unit=" px", key=f"window_{idx}_bottom_px"))
-            # Статус конкретного окна
-            # Найдём соответствующий item
-            it = next((x for x in items if int(x.get("index") or 0) == idx), None)
-            if it:
+                nearest_bot = None
+                bottom_ok = None
+                if len(bottom_limits) == 2:
+                    try:
+                        low, high = float(bottom_limits[0]), float(bottom_limits[1])
+                        bottom_ok = low <= float(b) <= high
+                        if float(b) < low:
+                            nearest_bot = low
+                        elif float(b) > high:
+                            nearest_bot = high
+                        else:
+                            nearest_bot = (
+                                low if abs(float(b) - low) <= abs(high - float(b))
+                                else high
+                            )
+                    except (TypeError, ValueError):
+                        nearest_bot = None
+                metric = _metric(
+                    f"Окно #{idx}: низ, px", b, nearest_bot,
+                    ok=bottom_ok, unit=" px",
+                    key=f"window_{idx}_bottom_px",
+                )
+                if metric is not None and len(bottom_limits) == 2:
+                    metric["limit"] = (
+                        f"{_number(bottom_limits[0])}…"
+                        f"{_number(bottom_limits[1])} px"
+                    )
+                add(metric)
+
+            if it is not None:
                 top_fail = it.get("top_fail")
                 bottom_fail = it.get("bottom_fail")
-                if top_fail is not None or bottom_fail is not None:
-                    ok = not (top_fail or bottom_fail)
-                    add(_metric(f"Окно #{idx}: в допуске", 1 if ok else 0, 1, ok=ok, key=f"window_{idx}_ok"))
+                valid = it.get("valid")
+                if top_fail is not None or bottom_fail is not None or valid is False:
+                    ok = bool(valid is not False) and not (
+                        top_fail or bottom_fail
+                    )
+                    add(_metric(
+                        f"Окно #{idx}: в допуске",
+                        1 if ok else 0, 1, ok=ok,
+                        key=f"window_{idx}_ok",
+                    ))
 
         if items:
-            bad = [it for it in items if not it.get("valid") or it.get("top_fail") or it.get("bottom_fail")]
-            add(_metric("Окон вне допуска, шт", len(bad), 0, ok=not bad, key="windows_out_of_tolerance"))
+            bad = [
+                it for it in items
+                if not it.get("valid")
+                or it.get("top_fail")
+                or it.get("bottom_fail")
+            ]
+            add(_metric(
+                "Окон вне допуска, шт", len(bad), 0,
+                ok=not bad, key="windows_out_of_tolerance",
+            ))
 
     # ─── Раковины в окнах ────────────────────────────────────
     elif rule_name == "window_sinks":
         hits = role_details.get("hits") or []
-        add(_metric("Пересечений, шт", len(hits), role_details.get("overlap_min_px"), ok=not hits, key="overlap_count"))
+        limit = role_details.get("overlap_min_px")
+        add(_metric(
+            "Пересечений, шт", len(hits), 0,
+            ok=not hits, key="overlap_count",
+        ))
         # На каждый объект — пара раковина/окно
         for h in hits:
             sink_idx = h.get("sink_index")
             win_idx = h.get("window_index")
             overlap = h.get("overlap_px")
-            limit = role_details.get("overlap_min_px")
             if overlap is not None:
-                add(_metric(f"Раковина #{sink_idx} → окно #{win_idx}: перехл., px", overlap, limit, ok=_within(overlap, limit) is False or overlap < (limit or 0), unit=" px", key=f"sink_{sink_idx}_win_{win_idx}_overlap_px"))
+                # Брак: overlap >= порога (перекрытие слишком большое)
+                ok = None
+                if limit is not None:
+                    try:
+                        ok = float(overlap) < float(limit)
+                    except (TypeError, ValueError):
+                        ok = None
+                add(_metric(
+                    f"Раковина #{sink_idx} → окно #{win_idx}: перехл., px",
+                    overlap, limit, ok=ok, unit=" px",
+                    key=f"sink_{sink_idx}_win_{win_idx}_overlap_px",
+                ))
         if hits:
             worst = max((hit.get("overlap_px") or 0) for hit in hits)
-            add(_metric("Макс. перекрытие, px", worst, role_details.get("overlap_min_px"), ok=False, unit=" px", key="max_overlap_px"))
+            ok = None
+            if limit is not None:
+                try:
+                    ok = float(worst) < float(limit)
+                except (TypeError, ValueError):
+                    ok = False
+            add(_metric(
+                "Макс. перекрытие, px", worst, limit,
+                ok=ok if ok is not None else False, unit=" px",
+                key="max_overlap_px",
+            ))
 
     # ─── Раковины корпуса ────────────────────────────────────
     elif rule_name == "sinks":
         hits = role_details.get("hits") or []
-        add(_metric("Пересечений, шт", len(hits), 0, ok=not hits, key="sinks_hits"))
+        add(_metric(
+            "Пересечений, шт", len(hits), 0,
+            ok=not hits, key="sinks_hits",
+        ))
         for h in hits:
             idx = h.get("sink_index")
             forbidden = h.get("forbidden_pixels")
@@ -351,18 +728,33 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             platform = h.get("platform_overlap_px")
             contacts = h.get("contacts_overlap_px")
             if forbidden is not None:
-                add(_metric(f"Shell #{idx}: запрещ., px", forbidden, unit=" px", key=f"shell_{idx}_forbidden_px"))
+                add(_metric(
+                    f"Shell #{idx}: запрещ., px", forbidden,
+                    unit=" px", key=f"shell_{idx}_forbidden_px",
+                ))
             if central is not None:
-                add(_metric(f"Shell #{idx}: центр. перехл., px", central, unit=" px", key=f"shell_{idx}_central_px"))
+                add(_metric(
+                    f"Shell #{idx}: центр. перехл., px", central,
+                    unit=" px", key=f"shell_{idx}_central_px",
+                ))
             if platform is not None:
-                add(_metric(f"Shell #{idx}: платформа, px", platform, unit=" px", key=f"shell_{idx}_platform_px"))
+                add(_metric(
+                    f"Shell #{idx}: платформа, px", platform,
+                    unit=" px", key=f"shell_{idx}_platform_px",
+                ))
             if contacts is not None:
-                add(_metric(f"Shell #{idx}: контакты, px", contacts, unit=" px", key=f"shell_{idx}_contacts_px"))
+                add(_metric(
+                    f"Shell #{idx}: контакты, px", contacts,
+                    unit=" px", key=f"shell_{idx}_contacts_px",
+                ))
 
     # ─── Стекло ──────────────────────────────────────────────
     elif rule_name == "glass":
         hits = role_details.get("hits") or []
-        add(_metric("Совпадений стекла, шт", len(hits), 0, ok=not hits, key="glass_hits"))
+        add(_metric(
+            "Совпадений стекла, шт", len(hits), 0,
+            ok=not hits, key="glass_hits",
+        ))
         for h in hits:
             idx = h.get("glass_index")
             plat = h.get("platform_overlap_px")
@@ -370,35 +762,61 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             ring = h.get("ring_overlap_px")
             union = h.get("cleanup_overlap_px")
             if plat is not None:
-                add(_metric(f"Стекло #{idx}: платформа, px", plat, unit=" px", key=f"glass_{idx}_platform_px"))
+                add(_metric(
+                    f"Стекло #{idx}: платформа, px", plat,
+                    unit=" px", key=f"glass_{idx}_platform_px",
+                ))
             if pin is not None:
-                add(_metric(f"Стекло #{idx}: пины, px", pin, unit=" px", key=f"glass_{idx}_pin_px"))
+                add(_metric(
+                    f"Стекло #{idx}: пины, px", pin,
+                    unit=" px", key=f"glass_{idx}_pin_px",
+                ))
             if ring is not None:
-                add(_metric(f"Стекло #{idx}: кольцо, px", ring, unit=" px", key=f"glass_{idx}_ring_px"))
+                add(_metric(
+                    f"Стекло #{idx}: кольцо, px", ring,
+                    unit=" px", key=f"glass_{idx}_ring_px",
+                ))
             if union is not None:
-                add(_metric(f"Стекло #{idx}: union, px", union, unit=" px", key=f"glass_{idx}_union_px"))
+                add(_metric(
+                    f"Стекло #{idx}: union, px", union,
+                    unit=" px", key=f"glass_{idx}_union_px",
+                ))
 
     elif rule_name == "glass_on_contacts":
         pairs = role_details.get("pairs") or []
         hits = role_details.get("hits")
         if isinstance(hits, int):
             add(_metric("Стекла, шт", hits, unit="", key="glass_count"))
-        add(_metric("Пар стекло/контакт, шт", len(pairs), 0, ok=not pairs, key="glass_contact_pairs"))
+        pins = role_details.get("pins_found")
+        if pins is not None:
+            add(_metric(
+                "Пинов, шт", pins, 14,
+                ok=int(pins) == 14, key="pins_found",
+            ))
+        add(_metric(
+            "Пар стекло/контакт, шт", len(pairs), 0,
+            ok=not pairs, key="glass_contact_pairs",
+        ))
         for p in pairs:
             g_idx = p.get("glass_index")
             c_idx = p.get("contact_index")
             overlap = p.get("overlap_pixels")
             if overlap is not None:
-                add(_metric(f"Стекло #{g_idx} → контакт #{c_idx}: перехл., px", overlap, unit=" px", key=f"glass_{g_idx}_contact_{c_idx}_overlap_px"))
+                add(_metric(
+                    f"Стекло #{g_idx} → контакт #{c_idx}: перехл., px",
+                    overlap, unit=" px",
+                    key=f"glass_{g_idx}_contact_{c_idx}_overlap_px",
+                ))
 
-    # Универсальный fallback
+    # Универсальный fallback: хотя бы счётчик/площадь, если метрик нет.
     if not metrics:
         for label, key, unit in (
             ("Найдено, шт", "found", ""),
+            ("Найдено (сырые), шт", "found_raw", ""),
             ("Пересечение, px", "overlap_px", " px"),
             ("Площадь, px²", "mask_area_px2", " px²"),
         ):
-            if key in role_details:
+            if key in role_details and role_details.get(key) is not None:
                 add(_metric(label, role_details.get(key), unit=unit, key=key))
 
     if len(metrics) > METRICS_PER_ROLE_LIMIT:

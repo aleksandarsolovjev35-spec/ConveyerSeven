@@ -733,6 +733,39 @@ PART_PRESENCE_RULE = "part_presence"
 
 PART_ABSENT_TEXT = "КОРПУС НЕ ОБНАРУЖЕН"
 
+# Камеры, для которых правило имеет смысл в анализе кадра.
+# Панель «Анализ кадра» показывает только вычисления выбранной камеры,
+# а не всю группу (INPUT / SPIDER / TOP).
+RULE_CAMERA_ROLES = {
+    "part_presence": ("INPUT_LEFT", "INPUT_RIGHT"),
+    "window_geometry": ("INPUT_LEFT", "INPUT_RIGHT"),
+    "window_sinks": ("INPUT_LEFT", "INPUT_RIGHT"),
+    "contacts_long": ("SPIDER_LEFT", "SPIDER_RIGHT"),
+    "long_omission": ("SPIDER_LEFT", "SPIDER_RIGHT"),
+    "contacts_short": ("SPIDER_IN", "SPIDER_OUT"),
+    "short_omission": ("SPIDER_IN", "SPIDER_OUT"),
+    "top_contacts": ("TOP",),
+    "top_platform": ("TOP",),
+    "platform_contacts_overlap": ("TOP",),
+    "sinks": ("TOP",),
+    "glass": ("TOP",),
+    "glass_on_contacts": ("TOP",),
+}
+
+# Поля part_presence, привязанные к конкретной INPUT-камере.
+_PRESENCE_ROLE_FIELDS = {
+    "INPUT_LEFT": {
+        "flatness": "flatness_left",
+        "effective": "effective_flatness_left",
+        "ignored": "false_positive_ignored_left",
+    },
+    "INPUT_RIGHT": {
+        "flatness": "flatness_right",
+        "effective": "effective_flatness_right",
+        "ignored": "false_positive_ignored_right",
+    },
+}
+
 
 def _presence_summary(details: dict) -> list:
     """Короткая сводка по правилу присутствия детали."""
@@ -742,7 +775,13 @@ def _presence_summary(details: dict) -> list:
         ("INPUT_LEFT", "flatness_left"),
         ("INPUT_RIGHT", "flatness_right"),
     ):
-        found = int(details.get(key) or 0)
+        raw = details.get(key)
+        if raw is None and key not in details:
+            # Поле отсутствует (срез до одной камеры) — не показываем.
+            continue
+        if raw is None:
+            continue
+        found = int(raw or 0)
         limit = limits.get(role)
         limit_text = (
             f" (порог ложных {int(limit)})" if isinstance(limit, int) else ""
@@ -879,11 +918,141 @@ def filter_rule_report_rows(rows) -> list:
     return rows
 
 
-def build_rule_report_rows(results) -> list:
-    """Собрать строки отчёта и отфильтровать неинформативные правила."""
-    return filter_rule_report_rows(
-        [build_rule_report_row(result) for result in results or []]
+def rule_applies_to_role(rule_name: str, role: str | None) -> bool:
+    """Правило относится к выбранной камере (или роль не задана)."""
+    if not role:
+        return True
+    roles = RULE_CAMERA_ROLES.get(rule_name)
+    if roles is None:
+        # Неизвестное правило: оставляем, если role явно есть в данных.
+        return True
+    return role in roles
+
+
+def _filter_role_cards(cards, role: str) -> list:
+    if not isinstance(cards, list):
+        return []
+    return [
+        card for card in cards
+        if isinstance(card, dict) and card.get("role") == role
+    ]
+
+
+def _filter_run_cards(run_cards, role: str) -> list:
+    if not isinstance(run_cards, list):
+        return []
+    return [_filter_role_cards(cards, role) for cards in run_cards]
+
+
+def _filter_run_status(run_status, role: str) -> list:
+    if not isinstance(run_status, list):
+        return []
+    filtered = []
+    for rows in run_status:
+        if not isinstance(rows, list):
+            filtered.append([])
+            continue
+        filtered.append([
+            row for row in rows
+            if isinstance(row, dict) and (
+                row.get("role") == role
+                # part_presence пишет общий статус role=INPUT — оставляем.
+                or row.get("role") in (None, "", "INPUT")
+            )
+        ])
+    return filtered
+
+
+def _scope_presence_details(details: dict, role: str) -> dict:
+    """Оставить в part_presence только поля выбранной INPUT-камеры."""
+    scoped = dict(details)
+    if role not in _PRESENCE_ROLE_FIELDS:
+        return scoped
+
+    for details_key in (
+        "min_confidence_by_role",
+        "false_positive_max_count_by_role",
+        "presence_by_role",
+    ):
+        raw = details.get(details_key)
+        if isinstance(raw, dict):
+            scoped[details_key] = {
+                key: value for key, value in raw.items() if key == role
+            }
+
+    # Убираем поля чужой камеры (None → summary её пропустит).
+    other = "INPUT_RIGHT" if role == "INPUT_LEFT" else "INPUT_LEFT"
+    for key in _PRESENCE_ROLE_FIELDS[other].values():
+        scoped[key] = None
+    return scoped
+
+
+def _scope_consensus_to_role(consensus: dict, role: str) -> dict:
+    """Оставить в consensus только карточки/статусы выбранной камеры."""
+    scoped = dict(consensus)
+    if "run_cards" in scoped:
+        scoped["run_cards"] = _filter_run_cards(scoped.get("run_cards"), role)
+    if "run_status" in scoped:
+        scoped["run_status"] = _filter_run_status(scoped.get("run_status"), role)
+    return scoped
+
+
+def scope_rule_result_to_role(result, role: str | None):
+    """Срез RuleResult до данных одной камеры.
+
+    В UI анализа кадра остаются только измерения выбранной роли.
+    ``triggered`` берётся из per_role выбранной камеры (если есть),
+    чтобы статус «СРАБОТАЛО/НОРМА» соответствовал тому, что видно на кадре.
+    """
+    if not role or result is None:
+        return result
+
+    rule_name = getattr(result, "rule_name", "") or ""
+    if not rule_applies_to_role(rule_name, role):
+        return None
+
+    import copy
+    from types import SimpleNamespace
+
+    details = copy.deepcopy(getattr(result, "details", {}) or {})
+    triggered = bool(getattr(result, "triggered", False))
+
+    if rule_name == PART_PRESENCE_RULE:
+        details = _scope_presence_details(details, role)
+    else:
+        per_role = details.get("per_role")
+        if isinstance(per_role, dict) and per_role:
+            if role not in per_role:
+                return None
+            role_details = per_role[role]
+            details["per_role"] = {role: role_details}
+            if isinstance(role_details, dict) and "triggered" in role_details:
+                triggered = bool(role_details.get("triggered"))
+
+    consensus = details.get("consensus")
+    if isinstance(consensus, dict):
+        details["consensus"] = _scope_consensus_to_role(consensus, role)
+
+    return SimpleNamespace(
+        rule_name=rule_name,
+        triggered=triggered,
+        details=details,
+        drawings=getattr(result, "drawings", []) or [],
     )
+
+
+def build_rule_report_rows(results, role: str | None = None) -> list:
+    """Собрать строки отчёта; при ``role`` — только выбранная камера."""
+    rows = []
+    for result in results or []:
+        if role:
+            scoped = scope_rule_result_to_role(result, role)
+            if scoped is None:
+                continue
+            rows.append(build_rule_report_row(scoped))
+        else:
+            rows.append(build_rule_report_row(result))
+    return filter_rule_report_rows(rows)
 
 
 def build_rule_report_row(result) -> dict:
