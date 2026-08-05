@@ -6,16 +6,16 @@
     <meta charset="UTF-8">
     <title>Роботехнический комплекс конвейерного типа 7</title>
     <link rel="stylesheet" href="/static/css/base.css?v=27">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=8">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=9">
     <link rel="stylesheet" href="/static/css/camera.css?v=28">
     <link rel="stylesheet" href="/static/css/axis.css?v=27">
     <link rel="stylesheet" href="/static/css/history-strip.css?v=27">
-    <link rel="stylesheet" href="/static/css/stats.css?v=34">
+    <link rel="stylesheet" href="/static/css/stats.css?v=35">
     <link rel="stylesheet" href="/static/css/jog.css?v=25">
     <link rel="stylesheet" href="/static/css/controls.css?v=25">
     <link rel="stylesheet" href="/static/css/gallery.css?v=25">
-    <link rel="stylesheet" href="/static/css/process.css?v=31">
-    <link rel="stylesheet" href="/static/css/motion.css?v=26">
+    <link rel="stylesheet" href="/static/css/process.css?v=32">
+    <link rel="stylesheet" href="/static/css/motion.css?v=27">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=11">
 </head>
 <body>
@@ -204,34 +204,22 @@
                 <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed" data-ui-block="frame-analysis">
                     <div class="frame-analysis-header">
                         <h2 id="frame-analysis-title">АНАЛИЗ КАДРА</h2>
-                        <span id="frame-analysis-context">—</span>
+                        <span id="frame-analysis-verdict" class="frame-analysis-verdict">—</span>
                     </div>
-                    <div id="frame-analysis-message" class="frame-analysis-message">—</div>
                     <div id="frame-analysis-picture" class="frame-analysis-picture is-hidden"></div>
-                    <div class="frame-analysis-group">
-                        <button type="button" id="frame-analysis-models-toggle"
-                                class="frame-analysis-group-toggle"
-                                aria-expanded="false">
-                            <span id="frame-analysis-models-title" class="frame-analysis-group-title">МОДЕЛИ</span>
-                            <span class="frame-analysis-group-chevron" aria-hidden="true">▾</span>
-                        </button>
-                        <div id="frame-analysis-models" class="frame-analysis-list frame-analysis-list-collapsed"></div>
+                    <div class="frame-analysis-rules-toolbar">
+                        <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
+                        <div class="frame-analysis-filter" role="group" aria-label="Фильтр правил">
+                            <button type="button" id="frame-analysis-filter-triggered"
+                                    class="frame-analysis-filter-btn is-active"
+                                    aria-pressed="true">СРАБОТАВШИЕ</button>
+                            <button type="button" id="frame-analysis-filter-all"
+                                    class="frame-analysis-filter-btn"
+                                    aria-pressed="false">ВСЕ</button>
+                        </div>
                     </div>
-                    <div class="frame-analysis-group frame-analysis-rules-group">
-                        <div class="frame-analysis-rules-toolbar">
-                            <h3 id="frame-analysis-rules-title">ПРАВИЛА</h3>
-                            <div class="frame-analysis-filter" role="group" aria-label="Фильтр правил">
-                                <button type="button" id="frame-analysis-filter-triggered"
-                                        class="frame-analysis-filter-btn is-active"
-                                        aria-pressed="true">СРАБОТАВШИЕ</button>
-                                <button type="button" id="frame-analysis-filter-all"
-                                        class="frame-analysis-filter-btn"
-                                        aria-pressed="false">ВСЕ</button>
-                            </div>
-                        </div>
-                        <div id="frame-analysis-rules-scroll" class="frame-analysis-rules-scroll">
-                            <div id="frame-analysis-rules" class="frame-analysis-list"></div>
-                        </div>
+                    <div id="frame-analysis-rules-scroll" class="frame-analysis-rules-scroll">
+                        <div id="frame-analysis-rules" class="frame-analysis-list"></div>
                     </div>
                 </section>
 
@@ -305,9 +293,9 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=32"></script>
+    <script src="/static/js/core.js?v=33"></script>
     <script src="/static/js/boot.js?v=25"></script>
-    <script src="/static/js/diagnostics.js?v=37"></script>
+    <script src="/static/js/diagnostics.js?v=38"></script>
     <script src="/static/js/rule-summary.js?v=9"></script>
     <script src="/static/js/status.js?v=30"></script>
     <script src="/static/js/controls.js?v=29"></script>

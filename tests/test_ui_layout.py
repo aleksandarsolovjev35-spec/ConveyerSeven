@@ -130,7 +130,10 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("pointer-events: none", self.css)
         self.assertNotIn("animation: pulse 1.2s", self.css)
         self.assertIn('id="frame-analysis-panel"', self.html)
-        self.assertIn('id="frame-analysis-models"', self.html)
+        # Вердикт — единственный акцент в шапке панели; группа «МОДЕЛИ»
+        # убрана, правила рендерятся секциями в стиле «Порогов правил».
+        self.assertNotIn('id="frame-analysis-models"', self.html)
+        self.assertIn('id="frame-analysis-verdict"', self.html)
         self.assertIn('id="frame-analysis-rules"', self.html)
         production_source = (
             Path(__file__).resolve().parents[1] / "core/production_cycle.py"
@@ -142,10 +145,11 @@ class UiLayoutTests(unittest.TestCase):
         self.assertIn("rule.triggered || rule.skipped || rule.show_detail", self.js)
         self.assertIn("rule.detail_lines", self.js)
         self.assertIn("rule.status_label ||", self.js)
-        self.assertIn("${runCount} ПРОГОНА", self.js)
-        self.assertIn("model.detections_by_run", self.js)
+        self.assertIn("buildFrameAnalysisRuleGroup", self.js)
+        self.assertIn("renderRuleMeasurements(rule, pictureRun)", self.js)
         self.assertIn("const stateClass = rule.neutral", self.js)
         self.assertIn(".frame-analysis-reason", self.css)
+        self.assertIn(".fa-group", self.css)
         self.assertIn("state.mainCamAnalysisKey === analysisKey", self.js)
         self.assertIn("state.frameVersions[role]", self.js)
         self.assertIn("img.dataset.frameKey === frameKey", self.js)
@@ -345,7 +349,7 @@ class UiLayoutTests(unittest.TestCase):
         for element_id in (
             "stats-summary",
             "frame-analysis-panel",
-            "frame-analysis-models",
+            "frame-analysis-verdict",
             "frame-analysis-rules",
             "frame-analysis-rules-scroll",
             "frame-analysis-filter-triggered",
