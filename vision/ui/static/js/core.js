@@ -186,6 +186,8 @@ const els = {
     frameAnalysisPanel:   $('frame-analysis-panel'),
     frameAnalysisTitle:   $('frame-analysis-title'),
     frameAnalysisVerdict: $('frame-analysis-verdict'),
+    frameAnalysisContext: $('frame-analysis-context'),
+    frameAnalysisMessage: $('frame-analysis-message'),
     frameAnalysisPicture: $('frame-analysis-picture'),
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
     // Legacy ids (hidden containers for compat)

@@ -159,6 +159,23 @@ function frameAnalysisVerdict(report, ls) {
     return 'ВХОД: КОРПУС ПРИНЯТ, ДЕФЕКТОВ НЕТ';
 }
 
+function frameAnalysisContext(report) {
+    if (!report) return '';
+    const parts = [];
+    const stage = String(report.stage || '').toUpperCase();
+    const roleLabel = report.role ? cameraRoleLabel(report.role) : '';
+    if (stage && !roleLabel.toUpperCase().startsWith(stage)) {
+        parts.push(stage);
+    }
+    if (roleLabel) {
+        parts.push(roleLabel);
+    }
+    if (report.part_id != null) {
+        parts.push('КОРПУС #' + report.part_id);
+    }
+    return parts.join(' · ');
+}
+
 function decisiveRules(rules) {
     const absent = rules.find(rule => rule.part_absent === true);
     if (absent) return [absent];
@@ -179,6 +196,30 @@ function visibleFrameAnalysisRules(rules) {
     const base = decisiveRules(rules);
     if (state.frameAnalysisRulesFilter === 'all') return base;
     return triggeredRules(rules);
+}
+
+function setupFrameAnalysisModelsToggle() {
+    const toggle = document.getElementById('frame-analysis-models-toggle');
+    const list = document.getElementById('frame-analysis-models');
+    if (!toggle || !list || toggle.dataset.bound === '1') return;
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('click', () => {
+        const col = list.classList.toggle('frame-analysis-list-collapsed');
+        toggle.setAttribute('aria-expanded', col ? 'false' : 'true');
+    });
+}
+
+function updateFrameAnalysisModels(models) {
+    setupFrameAnalysisModelsToggle();
+    const list = document.getElementById('frame-analysis-models');
+    if (!list) return;
+    list.innerHTML = '';
+    (Array.isArray(models) ? models : []).forEach(m => {
+        const item = document.createElement('div');
+        item.className = 'frame-analysis-item';
+        item.textContent = (m.role || '') + ': ' + (m.model || '');
+        list.appendChild(item);
+    });
 }
 
 function updateFrameAnalysisRulesTitle(rules) {
@@ -250,7 +291,7 @@ function appendFaEmpty(container, text) {
 function setupFrameAnalysisRunClicks() {
     const list = els.frameAnalysisCards || document.getElementById('frame-analysis-cards');
     const tabs = els.frameAnalysisTabs || document.getElementById('frame-analysis-tabs');
-    const root = document.getElementById('frame-analysis-body') || list;
+    const root = document.getElementById('frame-analysis-panel') || document.getElementById('frame-analysis-body') || list;
     if (!root || root.dataset.runClicksBound === '1') return;
     root.dataset.runClicksBound = '1';
     const activate = (event) => {
@@ -350,6 +391,10 @@ function updateFrameAnalysisStatus(ls) {
     const verdict = frameAnalysisVerdict(report, ls) || report.message || '—';
     setIfChanged(els.frameAnalysisTitle, report.title || 'АНАЛИЗ КАДРА');
     setIfChanged(els.frameAnalysisVerdict, verdict);
+    const msgEl = els.frameAnalysisMessage || document.getElementById('frame-analysis-message');
+    if (msgEl) setIfChanged(msgEl, verdict);
+    const ctxEl = els.frameAnalysisContext || document.getElementById('frame-analysis-context');
+    if (ctxEl) setIfChanged(ctxEl, frameAnalysisContext(report));
 
     const picEl = els.frameAnalysisPicture || document.getElementById('frame-analysis-picture');
     if (report.picture_reason && picEl) {
@@ -365,6 +410,7 @@ function updateFrameAnalysisStatus(ls) {
 
     updateFrameAnalysisFilterButtons();
     updateFrameAnalysisRulesTitle(rules);
+    updateFrameAnalysisModels(report.models);
 
     const renderKey = JSON.stringify({
         kind: report.kind,

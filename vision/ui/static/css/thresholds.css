@@ -360,3 +360,50 @@
     padding: 4px 12px;
     font-size: 10px;
 }
+
+/* Структурированное отображение по объектам (окна, контакты, раковины и т.д.) */
+.fa-obj-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.fa-obj-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 3px;
+    border-bottom: 1px dashed var(--border);
+}
+
+.fa-obj-title {
+    font: 700 10px var(--font-ui);
+    color: var(--text);
+    letter-spacing: 0.3px;
+}
+
+.fa-obj-status {
+    font: 700 9px var(--font-mono);
+    color: var(--ok);
+}
+
+.fa-obj-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.fa-empty-status {
+    padding: 8px 10px;
+    text-align: center;
+    color: var(--warn);
+    font: 700 11px var(--font-ui);
+    background: var(--warn-bg);
+    border: 1px solid var(--warn);
+    border-radius: var(--radius-sm);
+}

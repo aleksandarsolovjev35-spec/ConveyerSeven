@@ -204,7 +204,9 @@
                 <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed" data-ui-block="frame-analysis">
                     <div class="fa-head">
                         <span id="frame-analysis-title" class="fa-title">АНАЛИЗ КАДРА</span>
+                        <span id="frame-analysis-context" class="fa-context"></span>
                         <span id="frame-analysis-verdict" class="fa-verdict">—</span>
+                        <span id="frame-analysis-message" class="is-hidden">—</span>
                     </div>
                     <div id="frame-analysis-picture" class="fa-picture is-hidden"></div>
                     <div class="fa-toolbar">
@@ -226,6 +228,10 @@
                     </div>
                     <!-- Legacy контейнеры для совместимости старых модулей, скрыты -->
                     <div id="frame-analysis-rules-scroll" class="is-hidden"><div id="frame-analysis-rules"></div></div>
+                    <div id="frame-analysis-models-scroll" class="is-hidden">
+                        <button type="button" id="frame-analysis-models-toggle" class="fa-models-toggle" aria-expanded="false">МОДЕЛИ</button>
+                        <div id="frame-analysis-models" class="frame-analysis-list-collapsed"></div>
+                    </div>
                 </section>
 
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse" data-ui-block="jog">

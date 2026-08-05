@@ -121,29 +121,29 @@ function faCollectMetrics(runCards) {
 }
 
 function faBuildThresholdBlock(roleLabel, metric, pictureRun, isDecisive) {
-    const block = faEl('div', 'fa-thr-item' + (isDecisive ? ' is-decisive' : ''));
+    const block = faEl('div', 'fa-thr-item fa-threshold' + (isDecisive ? ' is-decisive' : ''));
     if (isDecisive) block.title = 'Решающий порог — из-за него сработало правило';
     const head = faEl('div', 'fa-thr-head');
-    const name = faEl('span', 'fa-thr-label');
+    const name = faEl('span', 'fa-thr-label fa-threshold-name');
     const dictKey = metric.key || '';
     const niceLabel = FA_THRESHOLD_LABELS[dictKey] || metric.label || metric.key || '—';
     const fullLabel = roleLabel ? (roleLabel + ' · ' + niceLabel) : niceLabel;
     name.textContent = fullLabel;
     name.title = (metric.key || niceLabel) + (roleLabel ? ' (' + roleLabel + ')' : '');
     head.appendChild(name);
-    const limit = faEl('span', 'fa-thr-limit');
+    const limit = faEl('span', 'fa-thr-limit fa-threshold-limit');
     limit.textContent = faFormatLimit(metric);
     limit.title = 'Порог: ' + limit.textContent;
     limit.setAttribute('role', 'textbox');
     limit.setAttribute('aria-readonly', 'true');
     head.appendChild(limit);
     block.appendChild(head);
-    const valuesRow = faEl('div', 'fa-thr-values');
+    const valuesRow = faEl('div', 'fa-thr-values fa-threshold-runs');
     const runs = Array.isArray(metric.runs) ? metric.runs : [];
     const limRaw = typeof metric.limit_raw === 'number' ? metric.limit_raw : null;
     for (let i = 0; i < 3; i++) {
         const run = runs[i] || null;
-        const chip = faEl('span', 'fa-thr-value ' + faMeasurementClass(run));
+        const chip = faEl('span', 'fa-thr-value fa-measurement-value ' + faMeasurementClass(run));
         chip.setAttribute('data-run', String(i + 1));
         chip.setAttribute('role', 'button');
         chip.tabIndex = 0;
@@ -164,8 +164,165 @@ function faBuildThresholdBlock(roleLabel, metric, pictureRun, isDecisive) {
     return block;
 }
 
+function faGetObjIndex(label) {
+    if (!label) return null;
+    let m = label.match(/(?:Окно|Контакт|Раковина|Стекло|Shell)\s*(?:корпуса\s*)?#(\d+)/i);
+    if (m) return Number(m[1]);
+    m = label.match(/#(\d+)/);
+    if (m) return Number(m[1]);
+    return null;
+}
+
+function faGroupAndAppendBlocks(rule, blocks, rowsWrap, pictureRun) {
+    if (!blocks || !blocks.length) return;
+
+    if (rule && rule.part_absent) {
+        const banner = faEl('div', 'fa-empty-status', 'КОРПУС НЕ ОБНАРУЖЕН');
+        rowsWrap.appendChild(banner);
+        return;
+    }
+
+    const getOrder = (b) => {
+        const lbl = b.metric && (b.metric.label || b.metric.key || '');
+        const idx = faGetObjIndex(lbl);
+        if (idx != null) return 1000 + idx;
+        if (lbl.includes('Группа ') || lbl.includes('группа ')) return 2000;
+        if (lbl.includes('Допуск') || lbl.includes('Наклон') || lbl.includes('эталона') || lbl.includes('Ширина') || lbl.includes('Высота')) return 3000;
+        return 0;
+    };
+
+    const sorted = [...blocks].sort((a, b) => {
+        const oA = getOrder(a);
+        const oB = getOrder(b);
+        if (oA !== oB) return oA - oB;
+        return 0;
+    });
+
+    const objBlocks = new Map();
+    const generalItems = [];
+    const lineParamsItems = [];
+    const groupStatsItems = [];
+    const ruleName = rule ? rule.name : '';
+
+    for (const b of sorted) {
+        const lbl = b.metric && (b.metric.label || b.metric.key || '');
+        const idx = faGetObjIndex(lbl);
+
+        if (ruleName === 'top_contacts' && (lbl.includes('Группа ') || lbl.includes('группа '))) {
+            groupStatsItems.push(b);
+            continue;
+        }
+
+        if ((ruleName === 'contacts_long' || ruleName === 'contacts_short') &&
+            (lbl.includes('Допуск') || lbl.includes('Наклон') || lbl.includes('эталона') || lbl.includes('Ширина') || lbl.includes('Высота'))) {
+            lineParamsItems.push(b);
+            continue;
+        }
+
+        if (idx != null) {
+            let objType = 'Объект';
+            if (/Окно/i.test(lbl) || /win_/i.test(b.metric?.key || '')) objType = 'Окно';
+            else if (/Контакт/i.test(lbl) || /contact_/i.test(b.metric?.key || '')) objType = 'Контакт';
+            else if (/Раковина|Shell/i.test(lbl) || /sink_/i.test(b.metric?.key || '')) objType = 'Раковина корпуса';
+            else if (/Стекло|glass_/i.test(lbl)) objType = 'Стекло';
+
+            let groupKey = objType + ' #' + idx;
+            if (ruleName === 'window_sinks') {
+                const wm = lbl.match(/окно\s*#(\d+)/i) || (b.metric?.key || '').match(/win_(\d+)/i);
+                if (wm) groupKey = `Окно #${Number(wm[1])}`;
+            } else if (ruleName === 'glass_on_contacts') {
+                const pm = lbl.match(/Стекло\s*#(\d+)\s*→\s*контакт\s*#(\d+)/i);
+                if (pm) groupKey = `Стекло #${Number(pm[1])} → контакт #${Number(pm[2])}`;
+            } else if (ruleName === 'top_contacts') {
+                const gm = lbl.match(/#(\d+)\s+([LRTB])/i);
+                if (gm) groupKey = `Контакт #${idx} ${gm[2].toUpperCase()}`;
+            }
+
+            if (!objBlocks.has(groupKey)) {
+                objBlocks.set(groupKey, {
+                    title: groupKey,
+                    status: 'Обнаружено',
+                    items: []
+                });
+            }
+            objBlocks.get(groupKey).items.push(b);
+        } else {
+            generalItems.push(b);
+        }
+    }
+
+    for (const b of generalItems) {
+        rowsWrap.appendChild(b.node);
+    }
+
+    for (const [key, group] of objBlocks) {
+        let isBad = false;
+        for (const item of group.items) {
+            if (item.metric && item.metric.ok === false) isBad = true;
+            if (item.metric && Array.isArray(item.metric.runs)) {
+                for (const run of item.metric.runs) {
+                    if (run && run.ok === false) isBad = true;
+                }
+            }
+        }
+        let statusText = 'В норме';
+        let statusCls = 'fa-obj-status is-ok';
+        if (/Раковина|Стекло|glass|sink/i.test(key)) {
+            statusText = isBad ? 'Брак · Пересечение' : 'Обнаружено';
+            statusCls = isBad ? 'fa-obj-status is-bad' : 'fa-obj-status is-ok';
+        } else if (/Окно/i.test(key)) {
+            statusText = isBad ? 'Вне допуска' : 'В допуске';
+            statusCls = isBad ? 'fa-obj-status is-bad' : 'fa-obj-status is-ok';
+        } else if (/Контакт/i.test(key)) {
+            statusText = isBad ? 'Вне допуска' : 'В норме';
+            statusCls = isBad ? 'fa-obj-status is-bad' : 'fa-obj-status is-ok';
+        } else if (isBad) {
+            statusText = 'Отклонение';
+            statusCls = 'fa-obj-status is-bad';
+        }
+
+        const groupEl = faEl('div', 'fa-obj-block');
+        const header = faEl('div', 'fa-obj-header');
+        header.appendChild(faEl('span', 'fa-obj-title', group.title));
+        header.appendChild(faEl('span', statusCls, statusText));
+        groupEl.appendChild(header);
+        const content = faEl('div', 'fa-obj-content');
+        for (const item of group.items) {
+            content.appendChild(item.node);
+        }
+        groupEl.appendChild(content);
+        rowsWrap.appendChild(groupEl);
+    }
+
+    if (lineParamsItems.length) {
+        const lineEl = faEl('div', 'fa-obj-block fa-line-params-block');
+        const header = faEl('div', 'fa-obj-header');
+        header.appendChild(faEl('span', 'fa-obj-title', 'Параметры линии и эталона'));
+        lineEl.appendChild(header);
+        const content = faEl('div', 'fa-obj-content');
+        for (const item of lineParamsItems) {
+            content.appendChild(item.node);
+        }
+        lineEl.appendChild(content);
+        rowsWrap.appendChild(lineEl);
+    }
+
+    if (groupStatsItems.length) {
+        const grpEl = faEl('div', 'fa-obj-block fa-group-stats-block');
+        const header = faEl('div', 'fa-obj-header');
+        header.appendChild(faEl('span', 'fa-obj-title', 'Групповые статистики (L/R/T/B)'));
+        grpEl.appendChild(header);
+        const content = faEl('div', 'fa-obj-content');
+        for (const item of groupStatsItems) {
+            content.appendChild(item.node);
+        }
+        grpEl.appendChild(content);
+        rowsWrap.appendChild(grpEl);
+    }
+}
+
 function faBuildRuleCard(rule, pictureRun, isActive) {
-    const card = faEl('section', 'fa-card' + (isActive ? ' is-active' : ''));
+    const card = faEl('section', 'fa-card frame-analysis-item' + (isActive ? ' is-active' : ''));
     card.dataset.rule = rule.name || '';
     const head = faEl('div', 'fa-card-head');
     const titleWrap = faEl('div', 'fa-card-title-wrap');
@@ -185,11 +342,11 @@ function faBuildRuleCard(rule, pictureRun, isActive) {
         if (hasBad) {
             const statusStrip = faEl('div', 'fa-run-status');
             runStatus.forEach((rows, idx) => {
-                if (!rows || !rows.length) return;
-                const badInRun = rows.some(r => (r.status || '').includes('НЕ') || (r.status || '').includes('ОБЛАСТЬ') || r.status === 'ОТКЛОНЕНИЕ');
-                if (!badInRun) return;
-                rows.forEach(row => {
-                    const chip = faEl('span', 'fa-run-chip' + ((row.status || '').includes('В НОРМЕ') ? ' is-ok' : ' is-bad'));
+                const list = (Array.isArray(rows) && rows.length) ? rows : [{role: '', status: '—', reason: null}];
+                list.forEach(row => {
+                    const ok = (row.status || '').includes('В НОРМЕ');
+                    const cls = 'fa-run-chip fa-run-status-chip' + (ok ? ' is-ok' : ' is-bad') + (((idx + 1) === (pictureRun || 1)) ? ' is-picture-run' : '');
+                    const chip = faEl('span', cls);
                     chip.textContent = 'П' + (idx + 1) + ': ' + (row.role ? cameraRoleLabel(row.role) + ' · ' : '') + (row.status || '—') + (row.reason ? ' (' + row.reason + ')' : '');
                     statusStrip.appendChild(chip);
                 });
@@ -197,7 +354,7 @@ function faBuildRuleCard(rule, pictureRun, isActive) {
             if (statusStrip.children.length) card.appendChild(statusStrip);
         }
     }
-    const rowsWrap = faEl('div', 'fa-rows');
+    const rowsWrap = faEl('div', 'fa-rows fa-measurements');
     const byRole = faCollectMetrics(runCards);
     const blocks = [];
     let hasMetrics = false;
@@ -206,12 +363,11 @@ function faBuildRuleCard(rule, pictureRun, isActive) {
             const roleLabel = role ? cameraRoleLabel(role) : '';
             for (const metric of metricsMap.values()) {
                 const decisive = faIsDecisive(metric, role, decisiveKeys);
-                blocks.push({ decisive, node: faBuildThresholdBlock(roleLabel, metric, pictureRun, decisive) });
+                blocks.push({ decisive, node: faBuildThresholdBlock(roleLabel, metric, pictureRun, decisive), metric, roleLabel });
                 hasMetrics = true;
             }
         }
-        blocks.sort((a, b) => Number(b.decisive) - Number(a.decisive));
-        blocks.forEach(b => rowsWrap.appendChild(b.node));
+        faGroupAndAppendBlocks(rule, blocks, rowsWrap, pictureRun);
     }
     if (!hasMetrics) {
         const summaryCards = Array.isArray(rule.summary_cards) ? rule.summary_cards : [];
@@ -275,7 +431,15 @@ function renderFrameAnalysisPanel(rules, pictureRun) {
     }
     const all = Array.isArray(rules) ? rules : [];
     if (titleEl) titleEl.textContent = all.length ? ('ПРАВИЛА · ' + all.length) : 'ПРАВИЛА';
-    if (!all.length) { tabsEl.innerHTML = ''; cardsEl.innerHTML = ''; cardsEl.appendChild(faEl('div', 'fa-empty', 'Ожидание результатов правил')); faPrevRender = null; return; }
+    if (!all.length) {
+        tabsEl.innerHTML = '';
+        cardsEl.innerHTML = '';
+        cardsEl.appendChild(faEl('div', 'fa-empty', 'Ожидание результатов правил'));
+        const legacy = document.getElementById('frame-analysis-rules');
+        if (legacy) legacy.innerHTML = '';
+        faPrevRender = null;
+        return;
+    }
     if (faActiveIndex < 0 || faActiveIndex >= all.length) faActiveIndex = 0;
     const prev = faPrevRender;
     const changed = !prev || faRenderChanged(all, pictureRun);
@@ -287,6 +451,13 @@ function renderFrameAnalysisPanel(rules, pictureRun) {
             const activeRule = all[faActiveIndex];
             if (activeRule) cardsEl.appendChild(faBuildRuleCard(activeRule, pictureRun, true));
             if (typeof faSyncScroll === 'function') requestAnimationFrame(() => faSyncScroll());
+        }
+        const legacy = document.getElementById('frame-analysis-rules');
+        if (legacy && legacy.children.length !== all.length) {
+            legacy.innerHTML = '';
+            all.forEach(rule => {
+                legacy.appendChild(faBuildRuleCard(rule, pictureRun, true));
+            });
         }
         return;
     }
@@ -310,6 +481,13 @@ function renderFrameAnalysisPanel(rules, pictureRun) {
     cardsEl.innerHTML = '';
     const activeRule = all[faActiveIndex];
     if (activeRule) cardsEl.appendChild(faBuildRuleCard(activeRule, pictureRun, true));
+    const legacy = document.getElementById('frame-analysis-rules');
+    if (legacy) {
+        legacy.innerHTML = '';
+        all.forEach(rule => {
+            legacy.appendChild(faBuildRuleCard(rule, pictureRun, true));
+        });
+    }
     if (typeof faSyncScroll === 'function') requestAnimationFrame(() => faSyncScroll());
 }
 
