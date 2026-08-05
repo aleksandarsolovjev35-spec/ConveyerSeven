@@ -111,21 +111,21 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         thickness = role_details.get("allowed_thickness_px")
         excess = role_details.get("excess_pixels")
         add(_metric(
-            "Избыток, px", excess, role_details.get("excess_component_min_px"),
+            "избыток", excess, role_details.get("excess_component_min_px"),
             ok=not role_details.get("triggered"), unit=" px",
             key="excess_component_min_px",
         ))
-        add(_metric("Доп. толщина, px", thickness, unit=" px", key="allowed_thickness_px"))
-        add(_metric("Глубина, px", role_details.get("max_excess_depth_px"), unit=" px", key="max_excess_depth_px"))
+        add(_metric("доп. толщина", thickness, unit=" px", key="allowed_thickness_px"))
+        add(_metric("глубина", role_details.get("max_excess_depth_px"), unit=" px", key="max_excess_depth_px"))
         residual = role_details.get("top_line_actual_max_residual_px")
         residual_max = role_details.get("top_line_max_residual_px")
         add(_metric(
-            "Откл. верх. линии, px", residual, residual_max,
+            "отклонение линии", residual, residual_max,
             ok=_within(residual, residual_max), unit=" px",
             key="top_line_max_residual_px",
         ))
         # На каждый объект — здесь один объект (основная omission mask), но покажем также largest component
-        add(_metric("Крупн. фрагмент, px", role_details.get("largest_component_pixels"), unit=" px", key="largest_component_px"))
+        add(_metric("крупн. фрагмент", role_details.get("largest_component_pixels"), unit=" px", key="largest_component_px"))
 
     # ─── Длинные контакты 5 шт ───────────────────────────────
     elif rule_name == "contacts_long":
@@ -242,7 +242,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         }.get(role_details.get("placement"), role_details.get("placement"))
         if placement:
             metrics.append({
-                "label": "Положение",
+                "label": "положение",
                 "value": str(placement),
                 "limit": None,
                 "ok": role_details.get("placement") == "centered",
@@ -488,7 +488,7 @@ def build_presence_summary(details: dict) -> list:
             present = int(found) > limit
         metrics = [
             metric for metric in (
-                _metric("flatness, шт", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
+                _metric("flatness", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
                 _metric("Зачтено, шт", details.get(effective_key), key="effective_flatness"),
             ) if metric is not None
         ]

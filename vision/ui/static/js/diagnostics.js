@@ -372,6 +372,7 @@ function updateFrameAnalysisStatus(ls) {
         part: report.part_id,
         updated: report.updated_at,
         rules,
+        picture_run: report.picture_run,
     });
     if (state.lastFrameAnalysisRenderKey === renderKey) {
         // данные те же — но фильтр мог смениться, перерисуем с фильтром
@@ -410,6 +411,43 @@ function renderFrameAnalysisRulesCompat(rules, pictureRun) {
     if (typeof renderFrameAnalysisPanel === 'function') {
         renderFrameAnalysisPanel(rules, pictureRun);
     }
+}
+
+// Старый рендеринг карточки правила — для совместимости с тестами UI
+function renderLegacyRuleCard(rule, pictureRun) {
+    // Формируем класс состояния карточки по rule.neutral (как в старом UI)
+    const stateClass = rule.neutral ? 'is-neutral' : (rule.triggered ? 'is-bad' : 'is-ok');
+    // Старая логика видимости: rule.triggered || rule.skipped || rule.show_detail
+    const visible = rule.triggered || rule.skipped || rule.show_detail;
+    if (!visible) return null;
+    const detailLines = Array.isArray(rule.detail_lines)
+        ? rule.detail_lines.filter(Boolean).map(String)
+        : [];
+    const lines = detailLines.length ? detailLines : (rule.detail ? [String(rule.detail)] : []);
+    const card = document.createElement('div');
+    card.className = 'frame-analysis-item' + (stateClass ? ' ' + stateClass : '');
+    card.dataset.rule = rule.name || '';
+    const head = document.createElement('div');
+    const title = document.createElement('b');
+    title.textContent = rule.status_label || (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА');
+    head.appendChild(title);
+    const reason = document.createElement('span');
+    reason.className = 'frame-analysis-reason';
+    reason.textContent = rule.human_cause || (lines[0] || '');
+    head.appendChild(reason);
+    card.appendChild(head);
+    if (lines.length > 1) {
+        const body = document.createElement('div');
+        body.className = 'frame-analysis-detail';
+        lines.slice(1).forEach(line => {
+            const row = document.createElement('div');
+            row.className = 'frame-analysis-item-row';
+            row.textContent = line;
+            body.appendChild(row);
+        });
+        card.appendChild(body);
+    }
+    return card;
 }
 
 function setupSelectedFrameAnalysis() {
@@ -470,6 +508,8 @@ function setupSelectedFrameAnalysis() {
 }
 
 // Экспорт для тестов/совместимости
+// renderRuleMeasurements(rule, pictureRun) — рендер порогов правила (определён в rule-summary.js)
+// Вызывается из renderFrameAnalysisPanel и updateFrameAnalysisStatus
 if (typeof window !== 'undefined') {
     window.visibleFrameAnalysisRules = visibleFrameAnalysisRules;
     window.updateFrameAnalysisFilterButtons = updateFrameAnalysisFilterButtons;
