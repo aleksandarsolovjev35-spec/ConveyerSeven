@@ -47,8 +47,8 @@ const FA_RULE_LABELS = {
     part_presence: 'Наличие корпуса',
     contacts_long: 'Длинные контакты',
     contacts_short: 'Короткие контакты',
-    long_omission: 'Длинный пропуск',
-    short_omission: 'Короткий пропуск',
+    long_omission: 'Длинная полоса пропуска',
+    short_omission: 'Короткая полоса пропуска',
     top_contacts: 'Контакты сверху',
     top_platform: 'Платформа',
     platform_contacts_overlap: 'Заплыв платформы',
@@ -57,18 +57,21 @@ const FA_RULE_LABELS = {
     glass_on_contacts: 'Стекло на контактах',
 };
 
+// Запасные подписи нужны для legacy-ответов без label. В обычном пути
+// приоритет у подписи, которую backend уже сопоставил с реальным порогом:
+// она содержит точный смысл T/B, нормированную долю, число пикселей и т.д.
 const FA_THRESHOLD_LABELS = {
-    top_px_min: 'Верх зоны окон: мин. px',
-    top_px_max: 'Верх зоны окон: макс. px',
-    bottom_px_min: 'Низ зоны окон: мин. px',
-    bottom_px_max: 'Низ зоны окон: макс. px',
-    top_limits: 'Верх зоны окон: допуск px',
-    bottom_limits: 'Низ зоны окон: допуск px',
-    excess_component_min_px: 'Мин. размер фрагмента, px',
-    top_line_max_residual_px: 'Отклонение верхней линии, px',
+    top_px_min: 'T до перекладины: мин., px',
+    top_px_max: 'T до перекладины: макс., px',
+    bottom_px_min: 'B после перекладины: мин., px',
+    bottom_px_max: 'B после перекладины: макс., px',
+    top_limits: 'T до перекладины: диапазон, px',
+    bottom_limits: 'B после перекладины: диапазон, px',
+    excess_component_min_px: 'Мин. число пикселей в компоненте, px',
+    top_line_max_residual_px: 'Макс. остаточное отклонение верхней линии, px',
     line_tolerance_px: 'Допуск линии, px',
-    omission_tilt_ratio_max: 'Макс. наклон, %',
-    overlap_min_px: 'Мин. перекрытие, px',
+    omission_tilt_ratio_max: 'Макс. наклон, доля высоты',
+    overlap_min_px: 'Мин. число общих пикселей, px',
 };
 
 function faDecisiveKeys(rule) {
@@ -126,7 +129,7 @@ function faBuildThresholdBlock(roleLabel, metric, pictureRun, isDecisive) {
     const head = faEl('div', 'fa-thr-head');
     const name = faEl('span', 'fa-thr-label fa-threshold-name');
     const dictKey = metric.key || '';
-    const niceLabel = FA_THRESHOLD_LABELS[dictKey] || metric.label || metric.key || '—';
+    const niceLabel = metric.label || FA_THRESHOLD_LABELS[dictKey] || metric.key || '—';
     const fullLabel = roleLabel ? (roleLabel + ' · ' + niceLabel) : niceLabel;
     name.textContent = fullLabel;
     name.title = (metric.key || niceLabel) + (roleLabel ? ' (' + roleLabel + ')' : '');

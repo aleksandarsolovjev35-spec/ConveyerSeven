@@ -33,6 +33,11 @@ class SpiderContactsLongRule(BaseRule):
 
             min_conf = self._get("spider_contacts_long_min_confidence", 0.3, role=role)
             expected = self._get("spider_contacts_long_expected_count", 5, role=role)
+            if type(expected) is not int or expected < 2:
+                raise ValueError(
+                    f"{role}.spider_contacts_long_expected_count "
+                    "должен быть целым числом >= 2"
+                )
             line_dev = self._get("spider_contacts_long_line_deviation_ratio", 0.35, role=role)
             max_level_slope = self._get(
                 "spider_contacts_long_max_level_slope", 0.10, role=role,

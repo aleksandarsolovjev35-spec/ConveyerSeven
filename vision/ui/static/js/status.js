@@ -170,9 +170,6 @@ function updateLineStatus(ls) {
         state.startPending = false;
     }
     updateOperationalAccordions(lineState);
-    if (typeof updateThresholdsPanel === 'function') {
-        updateThresholdsPanel();
-    }
 
     els.stateIndicator.className =
         `state-dot state-${lineState.toLowerCase()}`;
@@ -251,6 +248,14 @@ function updateLineStatus(ls) {
     updateStateOverlay(ls);
     updateJogHardware(ls);
     handleJogAutoToggle(lineState, ls.jog || null);
+
+    // Пороги зависят не только от состояния линии, но и от результата
+    // updateSelectedAnalysisStatus/updateJogState выше. Обновляем панель
+    // после всех этих полей, иначе во время JOG она могла оставаться
+    // визуально доступной один тик статуса.
+    if (typeof updateThresholdsPanel === 'function') {
+        updateThresholdsPanel();
+    }
 }
 
 // ─── Line cells — путь деталей по позициям линии ───────────────────────────

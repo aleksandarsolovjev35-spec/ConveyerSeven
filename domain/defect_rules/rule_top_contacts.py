@@ -33,6 +33,14 @@ class TopContactsRule(BaseRule):
             expected_count = self._get(
                 "top_contacts_expected_count", 14, role=role,
             )
+            # Раскладка дальше по коду фиксирована: 5L + 5R + 2T + 2B.
+            # Не принимаем иное значение как будто правило умеет динамически
+            # перераспределить группы.
+            if type(expected_count) is not int or expected_count != 14:
+                raise ValueError(
+                    f"{role}.top_contacts_expected_count должен быть равен 14 "
+                    "(5L+5R+2T+2B)"
+                )
             platform_min_conf = self._get(
                 "top_contacts_platform_min_confidence", 0.3, role=role,
             )

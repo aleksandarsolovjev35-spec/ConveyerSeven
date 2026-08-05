@@ -339,13 +339,15 @@ class ThresholdsApiTests(unittest.TestCase):
             if key.startswith("TOP.")
         }
         self.assertEqual(keys, role_keys)
-        # У каждого параметра есть метаданные для редактора
+        # У каждого параметра есть перевод, пояснение и шаг редактора.
+        # ``max`` намеренно есть только там, где его задаёт схема (например,
+        # confidence 0..1), а не как произвольный UI-потолок.
         for group in payload["rules"]:
             for param in group["params"]:
                 self.assertIn("label", param)
+                self.assertIn("description", param)
+                self.assertTrue(param["description"])
                 self.assertIn("step", param)
-                self.assertIn("min", param)
-                self.assertIn("max", param)
         self.assertEqual(
             payload["values"]["top_contacts_min_confidence"],
             self.thresholds["TOP.top_contacts_min_confidence"],
@@ -357,14 +359,18 @@ class ThresholdsApiTests(unittest.TestCase):
             for param in group["params"]
             if param["key"] == "top_contacts_min_confidence"
         )
-        self.assertEqual(contacts["label"], "Мин. уверенность контактов")
+        self.assertEqual(
+            contacts["label"], "Мин. уверенность контактов сверху",
+        )
         platform = next(
             param
             for group in payload["rules"]
             for param in group["params"]
             if param["key"] == "top_platform_inscribed_rect_width_px"
         )
-        self.assertEqual(platform["label"], "Ширина эталона платформы, px")
+        self.assertEqual(
+            platform["label"], "Вписываемый эталон платформы: ширина, px",
+        )
         self.assertEqual(payload["labels"], {})
 
     def test_get_thresholds_unknown_role_is_not_available(self):

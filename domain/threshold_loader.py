@@ -226,6 +226,10 @@ class ThresholdLoader:
                 type(value) is not int or value < 0
             ):
                 raise ValueError(f"{key} должен быть целым числом >= 0")
+            if key.endswith("_overlap_min_px") and (
+                type(value) is not int or value < 1
+            ):
+                raise ValueError(f"{key} должен быть целым числом >= 1")
             if key.endswith("_center_zone_ratio") and not 0.0 < float(value) <= 1.0:
                 raise ValueError(f"{key} должен быть числом > 0 и <= 1")
 
@@ -255,6 +259,14 @@ class ThresholdLoader:
                 type(value) is not int or value <= 0
             ):
                 raise ValueError(f"{key} должен быть целым числом > 0")
+            # short rule реализован строго для пары: при другом количестве
+            # он не мог бы честно проверить разность двух уровней.
+            if key.endswith("spider_contacts_short_expected_count") and value != 2:
+                raise ValueError(f"{key} должен быть равен 2 (пара контактов)")
+            # long rule строит линии и тренд расстояний, для чего нужны хотя
+            # бы две точки. Большее число контактов остаётся поддержанным.
+            if key.endswith("spider_contacts_long_expected_count") and value < 2:
+                raise ValueError(f"{key} должен быть целым числом >= 2")
             if "inscribed_rect_" in key and float(value) <= 0.0:
                 raise ValueError(f"{key} должен быть числом > 0")
 
@@ -311,6 +323,14 @@ class ThresholdLoader:
                 type(value) is not int or value <= 0
             ):
                 raise ValueError(f"{key} должен быть целым числом > 0")
+            # Топология top_contacts фиксирована в коде как 5L+5R+2T+2B.
+            # Любое другое число в UI раньше создавало ложное впечатление,
+            # что раскладка будет пересчитана, хотя правило этого не делает.
+            if key == "TOP.top_contacts_expected_count" and value != 14:
+                raise ValueError(
+                    "TOP.top_contacts_expected_count должен быть равен 14 "
+                    "(5L+5R+2T+2B)"
+                )
             if "inscribed_rect_" in key and float(value) <= 0.0:
                 raise ValueError(f"{key} должен быть числом > 0")
             if key.endswith("_excess_component_min_px") and (
@@ -479,114 +499,431 @@ class ThresholdLoader:
 # Ниже — точный перевод каждого порога на русский, максимально близкий
 # к смыслу (что именно проверяет правило).
 
+# ─── Операторские названия и пояснения порогов ──────────────────────────
+#
+# Значение порога само по себе часто недостаточно: например, часть величин
+# является долей высоты контакта, а ``*_component_min_px`` — не длиной, а
+# количеством пикселей в связной компоненте. Поэтому название и пояснение
+# держим рядом с логикой схемы. UI получает оба поля через _param_meta().
+
 PARAM_LABELS = {
-    # ── ВХОД: наличие детали ──────────────────────────────────────────
-    "input_part_presence_false_positive_max_count":
-        "Допустимо ложных срабатываний, шт.",
+    # ── INPUT: наличие детали ──────────────────────────────────────────
+    "input_part_presence_false_positive_max_count": (
+        "Допустимое число ложных срабатываний, шт."
+    ),
 
-    # ── ВХОД: геометрия окон ──────────────────────────────────────────
-    "input_window_geometry_min_confidence": "Мин. уверенность окон",
+    # ── INPUT: геометрия окон ──────────────────────────────────────────
+    "input_window_geometry_min_confidence": (
+        "Мин. уверенность обнаружения окон"
+    ),
     "input_window_geometry_expected_count": "Ожидаемое число окон, шт.",
-    "input_window_geometry_top_px_min": "Верх зоны окон: мин, px",
-    "input_window_geometry_top_px_max": "Верх зоны окон: макс, px",
-    "input_window_geometry_bottom_px_min": "Низ зоны окон: мин, px",
-    "input_window_geometry_bottom_px_max": "Низ зоны окон: макс, px",
-    "input_window_geometry_center_zone_ratio": "Доля центральной зоны окон",
+    "input_window_geometry_top_px_min": "T до перекладины: мин., px",
+    "input_window_geometry_top_px_max": "T до перекладины: макс., px",
+    "input_window_geometry_bottom_px_min": "B после перекладины: мин., px",
+    "input_window_geometry_bottom_px_max": "B после перекладины: макс., px",
+    "input_window_geometry_center_zone_ratio": (
+        "Ширина центральной зоны измерения, доля"
+    ),
 
-    # ── ВХОД: заплавы окон ────────────────────────────────────────────
-    "input_window_sinks_min_confidence": "Мин. уверенность заплав",
-    "input_window_sinks_window_min_confidence":
-        "Мин. уверенность окна для заплав",
-    "input_window_sinks_overlap_min_px": "Мин. перекрытие заплава с окном, px",
+    # ── INPUT: раковины в окнах ────────────────────────────────────────
+    "input_window_sinks_min_confidence": "Мин. уверенность раковин",
+    "input_window_sinks_window_min_confidence": (
+        "Мин. уверенность окон для проверки раковин"
+    ),
+    "input_window_sinks_overlap_min_px": (
+        "Мин. число общих пикселей раковины и окна, px"
+    ),
 
-    # ── КОНТРОЛЬ: длинные контакты ────────────────────────────────────
-    "spider_contacts_long_min_confidence": "Мин. уверенность контактов",
-    "spider_contacts_long_expected_count": "Ожидаемое число контактов, шт.",
-    "spider_contacts_long_line_deviation_ratio":
-        "Допуск отклонения контактов от линии",
-    "spider_contacts_long_max_level_slope": "Макс. наклон уровня контактов",
-    "spider_contacts_long_omission_tilt_ratio_max":
-        "Макс. наклон пропуска (от высоты)",
-    "spider_contacts_long_inscribed_rect_width_px":
-        "Ширина эталона контакта, px",
-    "spider_contacts_long_inscribed_rect_height_px":
-        "Высота эталона контакта, px",
-    "spider_contacts_long_y_filter_ratio":
-        "Фильтр контактов по вертикали (от высоты)",
+    # ── SPIDER: длинные контакты ───────────────────────────────────────
+    "spider_contacts_long_min_confidence": (
+        "Мин. уверенность длинных контактов"
+    ),
+    "spider_contacts_long_expected_count": (
+        "Ожидаемое число длинных контактов, шт."
+    ),
+    "spider_contacts_long_line_deviation_ratio": (
+        "Допуск отклонения центров от линии, доля высоты"
+    ),
+    "spider_contacts_long_max_level_slope": (
+        "Макс. наклон линии центров, px/px"
+    ),
+    "spider_contacts_long_omission_tilt_ratio_max": (
+        "Макс. наклон к линии пропуска, доля высоты"
+    ),
+    "spider_contacts_long_inscribed_rect_width_px": (
+        "Эталон длинного контакта: ширина, px"
+    ),
+    "spider_contacts_long_inscribed_rect_height_px": (
+        "Эталон длинного контакта: высота, px"
+    ),
+    "spider_contacts_long_y_filter_ratio": (
+        "Допуск отбора контактов по Y, доля высоты"
+    ),
 
-    # ── КОНТРОЛЬ: короткие контакты ───────────────────────────────────
-    "spider_contacts_short_min_confidence": "Мин. уверенность контактов",
-    "spider_contacts_short_expected_count": "Ожидаемое число контактов, шт.",
-    "spider_contacts_short_level_deviation_ratio":
-        "Допуск отклонения уровня контактов",
-    "spider_contacts_short_omission_tilt_ratio_max":
-        "Макс. наклон пропуска (от высоты)",
-    "spider_contacts_short_inscribed_rect_width_px":
-        "Ширина эталона контакта, px",
-    "spider_contacts_short_inscribed_rect_height_px":
-        "Высота эталона контакта, px",
-    "spider_contacts_short_area_absolute_min": "Мин. площадь контакта, px²",
-    "spider_contacts_short_y_filter_ratio":
-        "Фильтр контактов по вертикали (от высоты)",
+    # ── SPIDER: короткие контакты ──────────────────────────────────────
+    "spider_contacts_short_min_confidence": (
+        "Мин. уверенность коротких контактов"
+    ),
+    "spider_contacts_short_expected_count": (
+        "Фиксированное число коротких контактов, шт."
+    ),
+    "spider_contacts_short_level_deviation_ratio": (
+        "Допуск разности уровней контактов, доля высоты"
+    ),
+    "spider_contacts_short_omission_tilt_ratio_max": (
+        "Макс. наклон к линии пропуска, доля высоты"
+    ),
+    "spider_contacts_short_inscribed_rect_width_px": (
+        "Эталон короткого контакта: ширина, px"
+    ),
+    "spider_contacts_short_inscribed_rect_height_px": (
+        "Эталон короткого контакта: высота, px"
+    ),
+    "spider_contacts_short_area_absolute_min": (
+        "Мин. площадь короткого контакта, px²"
+    ),
+    "spider_contacts_short_y_filter_ratio": (
+        "Допуск отбора контактов по Y, доля высоты"
+    ),
 
-    # ── КОНТРОЛЬ: пропуски ────────────────────────────────────────────
-    "spider_long_omission_min_confidence": "Мин. уверенность пропуска",
-    "spider_long_omission_allowed_thickness_px":
-        "Допустимая толщина пропуска, px",
-    "spider_long_omission_excess_component_min_px":
-        "Мин. размер лишнего фрагмента, px",
-    "spider_long_omission_top_line_max_residual_px":
-        "Макс. отклонение верхней линии, px",
-    "spider_short_omission_min_confidence": "Мин. уверенность пропуска",
-    "spider_short_omission_allowed_thickness_px":
-        "Допустимая толщина пропуска, px",
-    "spider_short_omission_excess_component_min_px":
-        "Мин. размер лишнего фрагмента, px",
-    "spider_short_omission_top_line_max_residual_px":
-        "Макс. отклонение верхней линии, px",
+    # ── SPIDER: контроль полосы пропуска ───────────────────────────────
+    "spider_long_omission_min_confidence": (
+        "Мин. уверенность длинной полосы пропуска"
+    ),
+    "spider_long_omission_allowed_thickness_px": (
+        "Допустимая толщина длинной полосы пропуска, px"
+    ),
+    "spider_long_omission_excess_component_min_px": (
+        "Мин. число пикселей в компоненте избытка, px"
+    ),
+    "spider_long_omission_top_line_max_residual_px": (
+        "Макс. остаточное отклонение верхней линии, px"
+    ),
+    "spider_short_omission_min_confidence": (
+        "Мин. уверенность короткой полосы пропуска"
+    ),
+    "spider_short_omission_allowed_thickness_px": (
+        "Допустимая толщина короткой полосы пропуска, px"
+    ),
+    "spider_short_omission_excess_component_min_px": (
+        "Мин. число пикселей в компоненте избытка, px"
+    ),
+    "spider_short_omission_top_line_max_residual_px": (
+        "Макс. остаточное отклонение верхней линии, px"
+    ),
 
-    # ── СВЕРХУ: контакты ──────────────────────────────────────────────
-    "top_contacts_min_confidence": "Мин. уверенность контактов",
-    "top_contacts_expected_count": "Ожидаемое число контактов, шт.",
-    "top_contacts_platform_min_confidence": "Мин. уверенность платформы",
-    "top_contacts_edge_distance_deviation_ratio":
-        "Допуск расстояния контактов до края",
-    "top_contacts_side_rect_width_px": "Боковая зона: ширина, px",
-    "top_contacts_side_rect_height_px": "Боковая зона: высота, px",
-    "top_contacts_edge_rect_width_px": "Краевая зона: ширина, px",
-    "top_contacts_edge_rect_height_px": "Краевая зона: высота, px",
+    # ── TOP: контакты ─────────────────────────────────────────────────
+    "top_contacts_min_confidence": (
+        "Мин. уверенность контактов сверху"
+    ),
+    "top_contacts_expected_count": "Фиксированное число контактов сверху, шт.",
+    "top_contacts_platform_min_confidence": (
+        "Мин. уверенность платформы для контактов"
+    ),
+    "top_contacts_edge_distance_deviation_ratio": (
+        "Допуск разброса отступа до края, доля размера контакта"
+    ),
+    "top_contacts_side_rect_width_px": (
+        "Эталон контактов L/R: ширина, px"
+    ),
+    "top_contacts_side_rect_height_px": (
+        "Эталон контактов L/R: высота, px"
+    ),
+    "top_contacts_edge_rect_width_px": (
+        "Эталон контактов T/B: ширина, px"
+    ),
+    "top_contacts_edge_rect_height_px": (
+        "Эталон контактов T/B: высота, px"
+    ),
 
-    # ── СВЕРХУ: заплыв платформы ──────────────────────────────────────
-    "top_platform_overlap_platform_min_confidence":
-        "Мин. уверенность платформы",
-    "top_platform_overlap_excess_component_min_px":
-        "Мин. размер лишнего фрагмента, px",
-    "top_platform_overlap_contact_min_confidence":
-        "Мин. уверенность контактов",
-    "top_platform_overlap_contact_inner_ratio":
-        "Доля внутренней зоны контакта",
-    "top_platform_overlap_margin_px": "Запас зоны заплыва, px",
-    "top_platform_overlap_expand_x_ratio": "Расширение зоны по X",
-    "top_platform_overlap_expand_y_ratio": "Расширение зоны по Y",
+    # ── TOP: заплыв платформы ─────────────────────────────────────────
+    "top_platform_overlap_platform_min_confidence": (
+        "Мин. уверенность платформы для границы"
+    ),
+    "top_platform_overlap_excess_component_min_px": (
+        "Мин. число пикселей в компоненте заплыва, px"
+    ),
+    "top_platform_overlap_contact_min_confidence": (
+        "Мин. уверенность контактов для границы"
+    ),
+    "top_platform_overlap_contact_inner_ratio": (
+        "Положение опорной точки контакта (0…1)"
+    ),
+    "top_platform_overlap_margin_px": "Внешний отступ границы, px",
+    "top_platform_overlap_expand_x_ratio": "Масштаб границы по X",
+    "top_platform_overlap_expand_y_ratio": "Масштаб границы по Y",
 
-    # ── СВЕРХУ: платформа ─────────────────────────────────────────────
+    # ── TOP: платформа ─────────────────────────────────────────────────
     "top_platform_min_confidence": "Мин. уверенность платформы",
-    "top_platform_inscribed_rect_width_px": "Ширина эталона платформы, px",
-    "top_platform_inscribed_rect_height_px": "Высота эталона платформы, px",
+    "top_platform_inscribed_rect_width_px": (
+        "Вписываемый эталон платформы: ширина, px"
+    ),
+    "top_platform_inscribed_rect_height_px": (
+        "Вписываемый эталон платформы: высота, px"
+    ),
 
-    # ── СВЕРХУ: заплавы ───────────────────────────────────────────────
-    "top_sinks_min_confidence": "Мин. уверенность заплав",
-    "top_sinks_platform_min_confidence": "Мин. уверенность платформы",
-    "top_sinks_case_central_min_confidence":
-        "Мин. уверенность центра корпуса",
+    # ── TOP: раковины корпуса ─────────────────────────────────────────
+    "top_sinks_min_confidence": "Мин. уверенность раковин корпуса",
+    "top_sinks_platform_min_confidence": (
+        "Мин. уверенность платформы для раковин"
+    ),
+    "top_sinks_case_central_min_confidence": (
+        "Мин. уверенность центральной области корпуса"
+    ),
 
-    # ── СВЕРХУ: стекло ────────────────────────────────────────────────
+    # ── TOP: стекло ───────────────────────────────────────────────────
     "top_glass_min_confidence": "Мин. уверенность стекла",
-    "top_glass_platform_min_confidence": "Мин. уверенность платформы",
-    "top_glass_case_min_confidence": "Мин. уверенность корпуса",
-    "top_glass_case_central_min_confidence":
-        "Мин. уверенность центра корпуса",
-    "top_glass_pin_min_confidence": "Мин. уверенность пина",
+    "top_glass_platform_min_confidence": (
+        "Мин. уверенность платформы для стекла"
+    ),
+    "top_glass_case_min_confidence": (
+        "Мин. уверенность внешней области корпуса"
+    ),
+    "top_glass_case_central_min_confidence": (
+        "Мин. уверенность центральной области корпуса"
+    ),
+    "top_glass_pin_min_confidence": "Мин. уверенность штифтов",
+}
+
+# Короткая подсказка открывается наведением на подпись в интерфейсе и
+# одновременно доступна интеграциям через GET /api/thresholds. Она снимает
+# неоднозначности единиц и показывает общие пороги между правилами.
+PARAM_DESCRIPTIONS = {
+    "input_part_presence_false_positive_max_count": (
+        "До этого числа обнаружений окон включительно лоток считается "
+        "пустым. Деталь подтверждается только если порог превышен на обеих "
+        "INPUT-камерах."
+    ),
+    "input_window_geometry_min_confidence": (
+        "Минимальная уверенность YOLO для обнаружения окон. Этот общий порог также "
+        "использует правило «Наличие детали»."
+    ),
+    "input_window_geometry_expected_count": (
+        "Сколько окон должно войти в выбранный ряд."
+    ),
+    "input_window_geometry_top_px_min": (
+        "Нижняя граница диапазона T: от верха маски окна до нижнего края "
+        "перекладины."
+    ),
+    "input_window_geometry_top_px_max": (
+        "Верхняя граница диапазона T: от верха маски окна до нижнего края "
+        "перекладины."
+    ),
+    "input_window_geometry_bottom_px_min": (
+        "Нижняя граница диапазона B: от нижнего края перекладины до низа "
+        "маски окна."
+    ),
+    "input_window_geometry_bottom_px_max": (
+        "Верхняя граница диапазона B: от нижнего края перекладины до низа "
+        "маски окна."
+    ),
+    "input_window_geometry_center_zone_ratio": (
+        "Доля ширины ограничивающего прямоугольника окна, в центральной полосе которой ищется нижний "
+        "край перекладины; значение должно быть больше нуля."
+    ),
+    "input_window_sinks_min_confidence": (
+        "Минимальная уверенность YOLO для обнаружения раковин "
+        "во входном окне."
+    ),
+    "input_window_sinks_window_min_confidence": (
+        "Минимальная уверенность обнаружений окон, используемых как маски окон "
+        "только для проверки раковин."
+    ),
+    "input_window_sinks_overlap_min_px": (
+        "Брак возникает при числе общих пикселей растровых масок раковины и окна "
+        "не меньше этого целого порога."
+    ),
+    "spider_contacts_long_min_confidence": (
+        "Минимальная уверенность YOLO для длинных контактов."
+    ),
+    "spider_contacts_long_expected_count": (
+        "Число длинных контактов в контролируемом ряду."
+    ),
+    "spider_contacts_long_line_deviation_ratio": (
+        "Допуск отклонения центров вписанных эталонов от линии: "
+        "медианная высота контакта × этот коэффициент."
+    ),
+    "spider_contacts_long_max_level_slope": (
+        "Максимальный модуль наклона линии центров вписанных эталонов "
+        "в координатах px/px."
+    ),
+    "spider_contacts_long_omission_tilt_ratio_max": (
+        "Максимальная разность тренда расстояний длинных контактов до "
+        "верхней линии пропуска, нормированная на медианную высоту контакта."
+    ),
+    "spider_contacts_long_inscribed_rect_width_px": (
+        "Ширина прямоугольника, который обязан целиком поместиться в маску "
+        "каждого длинного контакта."
+    ),
+    "spider_contacts_long_inscribed_rect_height_px": (
+        "Высота прямоугольника, который обязан целиком поместиться в маску "
+        "каждого длинного контакта."
+    ),
+    "spider_contacts_long_y_filter_ratio": (
+        "При лишних обнаружениях оставляет кандидатов около медианного Y: "
+        "допуск равен медианной высоте × этот коэффициент."
+    ),
+    "spider_contacts_short_min_confidence": (
+        "Минимальная уверенность YOLO для коротких контактов."
+    ),
+    "spider_contacts_short_expected_count": (
+        "Контрольная геометрия реализована строго для пары контактов, "
+        "поэтому значение фиксировано: 2."
+    ),
+    "spider_contacts_short_level_deviation_ratio": (
+        "Допуск разности уровней пары: медианная высота контактов × этот "
+        "коэффициент."
+    ),
+    "spider_contacts_short_omission_tilt_ratio_max": (
+        "Максимальная разность расстояний двух коротких контактов до верхней "
+        "линии пропуска, нормированная на медианную высоту контакта."
+    ),
+    "spider_contacts_short_inscribed_rect_width_px": (
+        "Ширина прямоугольника, который обязан целиком поместиться в маску "
+        "каждого короткого контакта."
+    ),
+    "spider_contacts_short_inscribed_rect_height_px": (
+        "Высота прямоугольника, который обязан целиком поместиться в маску "
+        "каждого короткого контакта."
+    ),
+    "spider_contacts_short_area_absolute_min": (
+        "Минимальная площадь маски кандидата; меньшие маски "
+        "исключаются до выбора пары."
+    ),
+    "spider_contacts_short_y_filter_ratio": (
+        "При лишних кандидатах оставляет контакты около медианного Y: "
+        "допуск равен медианной высоте × этот коэффициент."
+    ),
+    "spider_long_omission_min_confidence": (
+        "Минимальная уверенность YOLO для длинной полосы пропуска. Этот порог также "
+        "использует проверка наклона длинных контактов."
+    ),
+    "spider_long_omission_allowed_thickness_px": (
+        "Перпендикулярное расстояние от верхней опорной линии до контрольной линии "
+        "полосы пропуска."
+    ),
+    "spider_long_omission_excess_component_min_px": (
+        "Минимальное число пикселей растровой маски в 8-связной компоненте ниже "
+        "контрольной линии; меньшие компоненты считаются шумом."
+    ),
+    "spider_long_omission_top_line_max_residual_px": (
+        "Максимальный остаток точек верхнего контура относительно устойчивой "
+        "опорной линии; превышение делает измерение невалидным."
+    ),
+    "spider_short_omission_min_confidence": (
+        "Минимальная уверенность YOLO для короткой полосы пропуска. Этот порог также "
+        "использует проверка наклона коротких контактов."
+    ),
+    "spider_short_omission_allowed_thickness_px": (
+        "Перпендикулярное расстояние от верхней опорной линии до контрольной линии "
+        "короткой полосы пропуска."
+    ),
+    "spider_short_omission_excess_component_min_px": (
+        "Минимальное число пикселей растровой маски в 8-связной компоненте ниже "
+        "контрольной линии; меньшие компоненты считаются шумом."
+    ),
+    "spider_short_omission_top_line_max_residual_px": (
+        "Максимальный остаток точек верхнего контура относительно устойчивой "
+        "опорной линии; превышение делает измерение невалидным."
+    ),
+    "top_contacts_min_confidence": (
+        "Минимальная уверенность YOLO для контактов. Этот общий порог также "
+        "используют правила раковин и стекла сверху."
+    ),
+    "top_contacts_expected_count": (
+        "Топология правила фиксирована: 5L + 5R + 2T + 2B, поэтому "
+        "значение фиксировано: 14."
+    ),
+    "top_contacts_platform_min_confidence": (
+        "Минимальная уверенность платформы, границы которой нужны для проверки "
+        "контактов сверху."
+    ),
+    "top_contacts_edge_distance_deviation_ratio": (
+        "Допуск разброса расстояний до стороны границы платформы: медианный "
+        "размер контакта × этот коэффициент."
+    ),
+    "top_contacts_side_rect_width_px": (
+        "Ширина эталонного прямоугольника для контактов у левой и правой "
+        "сторон платформы."
+    ),
+    "top_contacts_side_rect_height_px": (
+        "Высота эталонного прямоугольника для контактов у левой и правой "
+        "сторон платформы."
+    ),
+    "top_contacts_edge_rect_width_px": (
+        "Ширина эталонного прямоугольника для контактов у верхней и нижней "
+        "сторон платформы."
+    ),
+    "top_contacts_edge_rect_height_px": (
+        "Высота эталонного прямоугольника для контактов у верхней и нижней "
+        "сторон платформы."
+    ),
+    "top_platform_overlap_platform_min_confidence": (
+        "Минимальная уверенность платформы для проверки её выхода за границу, "
+        "построенную по контактам."
+    ),
+    "top_platform_overlap_excess_component_min_px": (
+        "Минимальное число пикселей растровой маски в 8-связной компоненте платформы "
+        "за границей; меньшие компоненты считаются шумом."
+    ),
+    "top_platform_overlap_contact_min_confidence": (
+        "Минимальная уверенность контактов, из которых строится граница "
+        "вокруг платформы."
+    ),
+    "top_platform_overlap_contact_inner_ratio": (
+        "Положение опорной координаты внутри ограничивающего прямоугольника контакта: 0 — кромка к "
+        "платформе, 0.5 — центр, 1 — внешняя кромка."
+    ),
+    "top_platform_overlap_margin_px": (
+        "Отступ, на который граница по контактам расширяется наружу с каждой "
+        "стороны; отрицательное значение сжимает её."
+    ),
+    "top_platform_overlap_expand_x_ratio": (
+        "Множитель ширины построенной по контактам границы; значение должно "
+        "быть больше нуля."
+    ),
+    "top_platform_overlap_expand_y_ratio": (
+        "Множитель высоты построенной по контактам границы; значение должно "
+        "быть больше нуля."
+    ),
+    "top_platform_min_confidence": (
+        "Минимальная уверенность YOLO для платформы в правиле вписывания "
+        "эталонного прямоугольника."
+    ),
+    "top_platform_inscribed_rect_width_px": (
+        "Ширина прямоугольника, который обязан целиком поместиться в маску "
+        "платформы."
+    ),
+    "top_platform_inscribed_rect_height_px": (
+        "Высота прямоугольника, который обязан целиком поместиться в маску "
+        "платформы."
+    ),
+    "top_sinks_min_confidence": (
+        "Минимальная уверенность YOLO для раковин корпуса."
+    ),
+    "top_sinks_platform_min_confidence": (
+        "Минимальная уверенность платформы, которая исключается из запрещённой "
+        "области раковины."
+    ),
+    "top_sinks_case_central_min_confidence": (
+        "Минимальная уверенность центральной области корпуса, внутри которой "
+        "проверяется раковина."
+    ),
+    "top_glass_min_confidence": (
+        "Минимальная уверенность YOLO для стекла."
+    ),
+    "top_glass_platform_min_confidence": (
+        "Минимальная уверенность платформы в общем контексте проверки стекла."
+    ),
+    "top_glass_case_min_confidence": (
+        "Минимальная уверенность внешней маски корпуса в общем контексте стекла."
+    ),
+    "top_glass_case_central_min_confidence": (
+        "Минимальная уверенность центральной маски корпуса в общем контексте стекла."
+    ),
+    "top_glass_pin_min_confidence": (
+        "Минимальная уверенность YOLO для 14 штифтов в общем контексте стекла."
+    ),
 }
 
 # Запасной перевод по суффиксу — для порогов, добавленных вручную,
@@ -598,35 +935,36 @@ SUFFIX_LABELS = {
     "contact_min_confidence": "Мин. уверенность контакта",
     "case_min_confidence": "Мин. уверенность корпуса",
     "case_central_min_confidence": "Мин. уверенность центра корпуса",
-    "pin_min_confidence": "Мин. уверенность пина",
-    "expected_count": "Ожидаемое количество",
-    "top_px_min": "Верх зоны: мин, px",
-    "top_px_max": "Верх зоны: макс, px",
-    "bottom_px_min": "Низ зоны: мин, px",
-    "bottom_px_max": "Низ зоны: макс, px",
-    "center_zone_ratio": "Доля центральной зоны",
-    "overlap_min_px": "Мин. заплыв, px",
-    "line_deviation_ratio": "Допуск отклонения от линии",
-    "max_level_slope": "Макс. наклон уровня",
-    "omission_tilt_ratio_max": "Макс. наклон пропуска",
-    "inscribed_rect_width_px": "Ширина впис. прямоугольника, px",
-    "inscribed_rect_height_px": "Высота впис. прямоугольника, px",
-    "y_filter_ratio": "Коэффициент фильтра по Y",
-    "level_deviation_ratio": "Допуск отклонения уровня",
+    "pin_min_confidence": "Мин. уверенность штифта",
+    "expected_count": "Ожидаемое количество, шт.",
+    "top_px_min": "T: мин., px",
+    "top_px_max": "T: макс., px",
+    "bottom_px_min": "B: мин., px",
+    "bottom_px_max": "B: макс., px",
+    "center_zone_ratio": "Ширина центральной зоны, доля",
+    "overlap_min_px": "Мин. число общих пикселей, px",
+    "line_deviation_ratio": "Допуск отклонения от линии, доля",
+    "max_level_slope": "Макс. наклон уровня, px/px",
+    "omission_tilt_ratio_max": "Макс. наклон к линии пропуска, доля",
+    "inscribed_rect_width_px": "Ширина вписываемого прямоугольника, px",
+    "inscribed_rect_height_px": "Высота вписываемого прямоугольника, px",
+    "y_filter_ratio": "Допуск фильтра по Y, доля",
+    "level_deviation_ratio": "Допуск отклонения уровня, доля",
     "area_absolute_min": "Мин. площадь, px²",
     "allowed_thickness_px": "Допустимая толщина, px",
-    "excess_component_min_px": "Мин. компонент излишка, px",
-    "top_line_max_residual_px": "Макс. остаток верхней линии, px",
-    "edge_distance_deviation_ratio": "Допуск отклонения края",
-    "side_rect_width_px": "Боковая область: ширина, px",
-    "side_rect_height_px": "Боковая область: высота, px",
-    "edge_rect_width_px": "Краевая область: ширина, px",
-    "edge_rect_height_px": "Краевая область: высота, px",
-    "contact_inner_ratio": "Доля внутренней зоны контакта",
-    "margin_px": "Запас области, px",
-    "expand_x_ratio": "Расширение по X",
-    "expand_y_ratio": "Расширение по Y",
+    "excess_component_min_px": "Мин. число пикселей в компоненте, px",
+    "top_line_max_residual_px": "Макс. остаточное отклонение линии, px",
+    "edge_distance_deviation_ratio": "Допуск разброса до края, доля",
+    "side_rect_width_px": "Эталон L/R: ширина, px",
+    "side_rect_height_px": "Эталон L/R: высота, px",
+    "edge_rect_width_px": "Эталон T/B: ширина, px",
+    "edge_rect_height_px": "Эталон T/B: высота, px",
+    "contact_inner_ratio": "Положение опорной точки контакта (0…1)",
+    "margin_px": "Внешний отступ, px",
+    "expand_x_ratio": "Масштаб по X",
+    "expand_y_ratio": "Масштаб по Y",
 }
+
 
 # (rule_id, подпись в UI, префиксы имён параметров). Более специфичные
 # префиксы идут раньше общих: TOP.top_platform_overlap_* не должен попадать
@@ -634,15 +972,15 @@ SUFFIX_LABELS = {
 RULE_GROUPS = (
     ("input_part_presence",   "НАЛИЧИЕ ДЕТАЛИ",         ("input_part_presence_",)),
     ("input_window_geometry", "ГЕОМЕТРИЯ ВХОДНОГО ОКНА", ("input_window_geometry_",)),
-    ("input_window_sinks",    "ЗАПЛАВЫ ВХОДНОГО ОКНА",  ("input_window_sinks_",)),
+    ("input_window_sinks",    "РАКОВИНЫ В ОКНАХ",        ("input_window_sinks_",)),
     ("spider_contacts_long",  "КОНТАКТЫ · ДЛИННЫЕ",     ("spider_contacts_long_",)),
-    ("spider_long_omission",  "ПРОПУСК · ДЛИННЫЕ",      ("spider_long_omission_",)),
+    ("spider_long_omission",  "ПОЛОСА ПРОПУСКА · ДЛИННАЯ", ("spider_long_omission_",)),
     ("spider_contacts_short", "КОНТАКТЫ · КОРОТКИЕ",    ("spider_contacts_short_",)),
-    ("spider_short_omission", "ПРОПУСК · КОРОТКИЕ",     ("spider_short_omission_",)),
+    ("spider_short_omission", "ПОЛОСА ПРОПУСКА · КОРОТКАЯ", ("spider_short_omission_",)),
     ("top_contacts",          "КОНТАКТЫ СВЕРХУ",        ("top_contacts_",)),
     ("top_platform_overlap",  "ЗАПЛЫВ ПЛАТФОРМЫ",       ("top_platform_overlap_",)),
     ("top_platform",          "ПЛАТФОРМА СВЕРХУ",       ("top_platform_",)),
-    ("top_sinks",             "ЗАПЛАВЫ СВЕРХУ",         ("top_sinks_",)),
+    ("top_sinks",             "РАКОВИНЫ КОРПУСА",        ("top_sinks_",)),
     ("top_glass",             "СТЕКЛО СВЕРХУ",          ("top_glass_",)),
 )
 
@@ -652,10 +990,100 @@ _RULE_GROUPS_SORTED = tuple(
         key=lambda group: -max(len(p) for p in group[2]),
     )
 )
+# _RULE_GROUPS_SORTED нужен только чтобы общий top_platform_* не поглотил
+# top_platform_overlap_*. В интерфейсе карточки возвращаем в естественном
+# порядке выполнения правил, заданном в RULE_GROUPS.
+_RULE_GROUP_DISPLAY_INDEX = {
+    rule_id: index for index, (rule_id, _label, _prefixes) in enumerate(RULE_GROUPS)
+}
+
+# Эти два значения описывают фиксированную конструкцию детали, а не
+# калибруемый допуск. Показываем их в интерфейсе для прозрачности, но не
+# даём оператору сохранить значение, которое правило не умеет обработать.
+FIXED_VALUE_PARAMETERS = {
+    "spider_contacts_short_expected_count": 2,
+    "top_contacts_expected_count": 14,
+}
+
+# Порядок строк в карточке — порядок настройки правила, а не алфавитный
+# порядок технических ключей. Так min всегда стоит перед max, а оператор
+# сначала видит отбор модели/количество, затем геометрию и фильтры.
+PARAMETER_DISPLAY_ORDER = (
+    "input_part_presence_false_positive_max_count",
+    "input_window_geometry_min_confidence",
+    "input_window_geometry_expected_count",
+    "input_window_geometry_top_px_min",
+    "input_window_geometry_top_px_max",
+    "input_window_geometry_bottom_px_min",
+    "input_window_geometry_bottom_px_max",
+    "input_window_geometry_center_zone_ratio",
+    "input_window_sinks_min_confidence",
+    "input_window_sinks_window_min_confidence",
+    "input_window_sinks_overlap_min_px",
+    "spider_contacts_long_min_confidence",
+    "spider_contacts_long_expected_count",
+    "spider_contacts_long_line_deviation_ratio",
+    "spider_contacts_long_max_level_slope",
+    "spider_contacts_long_omission_tilt_ratio_max",
+    "spider_contacts_long_inscribed_rect_width_px",
+    "spider_contacts_long_inscribed_rect_height_px",
+    "spider_contacts_long_y_filter_ratio",
+    "spider_long_omission_min_confidence",
+    "spider_long_omission_allowed_thickness_px",
+    "spider_long_omission_excess_component_min_px",
+    "spider_long_omission_top_line_max_residual_px",
+    "spider_contacts_short_min_confidence",
+    "spider_contacts_short_expected_count",
+    "spider_contacts_short_level_deviation_ratio",
+    "spider_contacts_short_omission_tilt_ratio_max",
+    "spider_contacts_short_inscribed_rect_width_px",
+    "spider_contacts_short_inscribed_rect_height_px",
+    "spider_contacts_short_area_absolute_min",
+    "spider_contacts_short_y_filter_ratio",
+    "spider_short_omission_min_confidence",
+    "spider_short_omission_allowed_thickness_px",
+    "spider_short_omission_excess_component_min_px",
+    "spider_short_omission_top_line_max_residual_px",
+    "top_contacts_min_confidence",
+    "top_contacts_expected_count",
+    "top_contacts_platform_min_confidence",
+    "top_contacts_edge_distance_deviation_ratio",
+    "top_contacts_side_rect_width_px",
+    "top_contacts_side_rect_height_px",
+    "top_contacts_edge_rect_width_px",
+    "top_contacts_edge_rect_height_px",
+    "top_platform_overlap_platform_min_confidence",
+    "top_platform_overlap_excess_component_min_px",
+    "top_platform_overlap_contact_min_confidence",
+    "top_platform_overlap_contact_inner_ratio",
+    "top_platform_overlap_margin_px",
+    "top_platform_overlap_expand_x_ratio",
+    "top_platform_overlap_expand_y_ratio",
+    "top_platform_min_confidence",
+    "top_platform_inscribed_rect_width_px",
+    "top_platform_inscribed_rect_height_px",
+    "top_sinks_min_confidence",
+    "top_sinks_platform_min_confidence",
+    "top_sinks_case_central_min_confidence",
+    "top_glass_min_confidence",
+    "top_glass_platform_min_confidence",
+    "top_glass_case_min_confidence",
+    "top_glass_case_central_min_confidence",
+    "top_glass_pin_min_confidence",
+)
+_PARAMETER_DISPLAY_INDEX = {
+    key: index for index, key in enumerate(PARAMETER_DISPLAY_ORDER)
+}
 
 
 def _param_meta(key: str, value) -> dict:
-    """Метаданные одного параметра для редактора: подпись и границы ввода."""
+    """Метаданные одного параметра для редактора.
+
+    Границы ввода следуют реальной валидации :class:`ThresholdLoader`, а
+    не произвольному «безопасному» диапазону. Для строго положительных
+    значений UI использует наименьший практический шаг редактора вместо 0;
+    верхний предел не задаётся, если его нет в правилах.
+    """
     # Точный перевод по имени параметра; для незнакомых (добавленных вручную)
     # порогов — запасной перевод по суффиксу, иначе техническое имя.
     label = PARAM_LABELS.get(key)
@@ -670,31 +1098,70 @@ def _param_meta(key: str, value) -> dict:
             ),
             key,
         )
-    meta = {"key": key, "label": label, "value": value}
-    if key.endswith("_expected_count") or key.endswith("_false_positive_max_count"):
-        meta.update({"step": 1, "min": 0, "max": 1000})
+    description = PARAM_DESCRIPTIONS.get(
+        key,
+        "Дополнительный числовой порог. Технический ключ: " + key,
+    )
+    meta = {
+        "key": key,
+        "label": label,
+        "description": description,
+        "value": value,
+    }
+    fixed_value = FIXED_VALUE_PARAMETERS.get(key)
+    if fixed_value is not None:
+        meta.update({
+            "step": 1,
+            "min": fixed_value,
+            "max": fixed_value,
+            "readonly": True,
+        })
+        return meta
+
+    # Целые счётчики.
+    if key.endswith("spider_contacts_long_expected_count"):
+        meta.update({"step": 1, "min": 2})
+    elif key.endswith("_expected_count"):
+        meta.update({"step": 1, "min": 1})
+    elif key.endswith("_false_positive_max_count"):
+        meta.update({"step": 1, "min": 0})
     elif key.endswith("_excess_component_min_px"):
-        meta.update({"step": 1, "min": 1, "max": 1000})
+        meta.update({"step": 1, "min": 1})
+    elif key.endswith("_overlap_min_px"):
+        # Перекрытие — число raster-пикселей. Ноль сделал бы дефектом даже
+        # пару masks без общих пикселей, поэтому рабочий минимум — один.
+        meta.update({"step": 1, "min": 1})
     elif key.endswith("_area_absolute_min"):
-        meta.update({"step": 1, "min": 0, "max": 1000000})
+        meta.update({"step": 1, "min": 0})
+
+    # Нормированные пороги.
     elif key.endswith("_min_confidence"):
         meta.update({"step": 0.01, "min": 0, "max": 1})
-    elif key.endswith("_y_filter_ratio"):
-        meta.update({"step": 0.1, "min": 0, "max": 100})
-    elif key.endswith("_center_zone_ratio") or key.endswith("_inner_ratio"):
+    elif key.endswith("_center_zone_ratio"):
+        meta.update({"step": 0.01, "min": 0.01, "max": 1})
+    elif key.endswith("_inner_ratio"):
         meta.update({"step": 0.01, "min": 0, "max": 1})
     elif key.endswith("_expand_x_ratio") or key.endswith("_expand_y_ratio"):
-        meta.update({"step": 0.05, "min": 0, "max": 10})
-    elif key.endswith("_margin_px"):
-        meta.update({"step": 1, "min": -500, "max": 500})
+        meta.update({"step": 0.05, "min": 0.01})
+    elif key.endswith("_y_filter_ratio"):
+        meta.update({"step": 0.1, "min": 0})
     elif (
         key.endswith("_ratio")
         or key.endswith("_tilt_ratio_max")
         or key.endswith("_slope")
     ):
-        meta.update({"step": 0.01, "min": 0, "max": 1})
+        # В схеме нет верхней границы: коэффициент/наклон больше единицы
+        # допустим, если его действительно нужно настроить под изделие.
+        meta.update({"step": 0.01, "min": 0})
+
+    # Геометрические величины. margin — единственный штатный отрицательный
+    # параметр (сжимает область), остальные пиксельные значения неотрицательны.
+    elif key.endswith("_margin_px"):
+        meta.update({"step": 0.1})
+    elif "inscribed_rect_" in key:
+        meta.update({"step": 0.1, "min": 0.1})
     else:
-        meta.update({"step": 0.1, "min": 0, "max": 5000})
+        meta.update({"step": 0.1, "min": 0})
     return meta
 
 
@@ -704,8 +1171,9 @@ def describe_role_parameters(role: str, thresholds: dict) -> list:
     Возвращает список групп::
 
         [{"rule": "top_contacts", "label": "КОНТАКТЫ СВЕРХУ",
-          "params": [{"key": ..., "label": ..., "value": ...,
-                      "step": ..., "min": ..., "max": ...}]}, ...]
+          "params": [{"key": ..., "label": ..., "description": ...,
+                      "value": ..., "step": ..., "min": ..., "max": ...,
+                      "readonly": ...}]}, ...]
     """
     prefix = f"{role}."
     params = [
@@ -727,7 +1195,12 @@ def describe_role_parameters(role: str, thresholds: dict) -> list:
         ]
         if not group_params:
             continue
-        group_params.sort()
+        group_params.sort(
+            key=lambda item: (
+                _PARAMETER_DISPLAY_INDEX.get(item[0], len(PARAMETER_DISPLAY_ORDER)),
+                item[0],
+            ),
+        )
         groups.append({
             "rule": rule_id,
             "label": label,
@@ -738,6 +1211,11 @@ def describe_role_parameters(role: str, thresholds: dict) -> list:
         })
         matched.update(name for name, _ in group_params)
 
+    groups.sort(
+        key=lambda group: _RULE_GROUP_DISPLAY_INDEX.get(
+            group["rule"], len(_RULE_GROUP_DISPLAY_INDEX),
+        ),
+    )
     leftovers = [(name, value) for name, value in params if name not in matched]
     if leftovers:
         leftovers.sort()

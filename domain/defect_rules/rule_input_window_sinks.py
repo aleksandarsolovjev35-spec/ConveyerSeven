@@ -33,6 +33,11 @@ class InputWindowSinksRule(BaseRule):
             overlap_min_px = self._get(
                 "input_window_sinks_overlap_min_px", 5, role=role,
             )
+            if type(overlap_min_px) is not int or overlap_min_px < 1:
+                raise ValueError(
+                    f"{role}.input_window_sinks_overlap_min_px "
+                    "должен быть целым числом >= 1"
+                )
             expected_count = self._get(
                 "input_window_geometry_expected_count", 7, role=role,
             )
@@ -58,7 +63,7 @@ class InputWindowSinksRule(BaseRule):
                 sinks=sinks,
                 windows=windows,
                 expected_count=int(expected_count),
-                overlap_min_px=int(overlap_min_px),
+                overlap_min_px=overlap_min_px,
                 drawings=drawings,
             )
             details_per_role[role] = role_result

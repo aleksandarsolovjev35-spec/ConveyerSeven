@@ -55,8 +55,8 @@ function thresholdsPayload(role, revision, values) {
       {
         rule: 'input_window_geometry', label: 'ГЕОМЕТРИЯ ОКНА',
         params: [
-          {key: 'min_confidence', label: 'Мин. уверенность', value: values.min_confidence, step: 0.01, min: 0, max: 1},
-          {key: 'expected_count', label: 'Ожидаемое число', value: values.expected_count, step: 1, min: 0, max: 1000},
+          {key: 'min_confidence', label: 'Мин. уверенность', description: 'Минимальная уверенность модели для отбора объектов.', value: values.min_confidence, step: 0.01, min: 0, max: 1},
+          {key: 'expected_count', label: 'Ожидаемое число', value: values.expected_count, step: 1, min: 1, max: 7, readonly: true},
         ],
       },
       {
@@ -223,18 +223,18 @@ async function main() {
           {name: 'rule_bad', triggered: true, skipped: false, detail: 'Сработало',
             consensus: {runs: 3, required_votes: 2, states: [true, false, true]},
             threshold_breaches: [
-              {role: 'TOP', label: 'Мин. размер лишнего фрагмента, px',
+              {role: 'TOP', label: 'Мин. число пикселей в компоненте избытка, px',
                 key: 'min_extra_fragment_px', value: '4 px', threshold: '3 px'},
             ],
             run_cards: [
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '12 px', limit: '3 px', ok: false, value_raw: 12, limit_raw: 3, key: 'min_extra_fragment_px'},
+                {label: 'Мин. число пикселей в компоненте избытка, px', value: '12 px', limit: '3 px', ok: false, value_raw: 12, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '4 px', limit: '3 px', ok: false, value_raw: 4, limit_raw: 3, key: 'min_extra_fragment_px'},
+                {label: 'Мин. число пикселей в компоненте избытка, px', value: '4 px', limit: '3 px', ok: false, value_raw: 4, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
               [{role: 'TOP', metrics: [
-                {label: 'Мин. размер лишнего фрагмента, px', value: '30 px', limit: '3 px', ok: false, value_raw: 30, limit_raw: 3, key: 'min_extra_fragment_px'},
+                {label: 'Мин. число пикселей в компоненте избытка, px', value: '30 px', limit: '3 px', ok: false, value_raw: 30, limit_raw: 3, key: 'min_extra_fragment_px'},
               ]}],
             ]},
         ],
@@ -250,7 +250,7 @@ async function main() {
         models: currentStatus.diagnostics.models,
         rules: currentStatus.diagnostics.rules,
         picture_run: 2,
-        picture_reason: 'rule_bad: Мин. размер лишнего фрагмента, px 4 px (порог 3 px) — брак, ближе всего к порогу',
+        picture_reason: 'rule_bad: Мин. число пикселей в компоненте избытка, px 4 px (порог 3 px) — брак, ближе всего к порогу',
         updated_at: currentStatus.diagnostics.updated_at,
       };
       return jsonResponse({ok: true});
@@ -856,7 +856,7 @@ async function main() {
     thresholds.some(t => (
       t.classList.contains('is-decisive')
       && t.querySelector('.fa-threshold-name')?.textContent
-        .includes('Мин. размер лишнего фрагмента')
+        .includes('Мин. число пикселей в компоненте избытка')
     )),
     'решающий порог выделен',
   );
@@ -1278,6 +1278,33 @@ async function main() {
   );
   const thresholdInputs = thresholdsBody.querySelectorAll('input.thresholds-input');
   assert(thresholdInputs.length === 3, 'у каждого порога есть числовое поле');
+  const thresholdLabel = thresholdsBody.querySelector('.thresholds-item-label');
+  assert(
+    thresholdLabel.title.includes('Минимальная уверенность модели'),
+    'подпись порога показывает русское пояснение в подсказке',
+  );
+  assert(
+    thresholdInputs[0].title.includes('Технический ключ: min_confidence'),
+    'числовое поле связано с пояснением и техническим ключом',
+  );
+  assert(
+    [...thresholdInputs].find(input => input.dataset.key === 'expected_count').disabled,
+    'фиксированный параметр отображается, но не редактируется',
+  );
+  // При реальном движении JOG поле не остаётся «псевдодоступным»: ввод
+  // отключён, пока backend также запрещает сохранение.
+  currentStatus.jog = {...currentStatus.jog, busy: true};
+  api.updateLineStatus(currentStatus);
+  assert(
+    thresholdInputs[0].disabled,
+    'порог заблокирован во время движения JOG',
+  );
+  currentStatus.jog = {...currentStatus.jog, busy: false};
+  api.updateLineStatus(currentStatus);
+  assert(
+    !thresholdInputs[0].disabled,
+    'порог снова доступен после остановки JOG',
+  );
   assert(
     thresholdsBody.querySelectorAll('.thresholds-item input[type="range"]').length === 0,
     'внутри строк порогов нет ползунков значений',
