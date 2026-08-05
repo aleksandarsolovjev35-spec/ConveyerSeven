@@ -348,6 +348,21 @@ function faBuildRuleCard(rule, pictureRun, isActive) {
 
 // Основной рендер панели анализа кадра — табы + карточки
 let faActiveIndex = 0;
+let faPrevRender = null; // кэш предыдущего рендера для защиты от мигания
+let faDrag = null; // состояние перетаскивания ползунка скролла (глобально для faSyncScroll)
+
+function faRenderChanged(all, pictureRun) {
+    if (!faPrevRender) return true;
+    if (faPrevRender.length !== all.length) return true;
+    for (let i = 0; i < all.length; i++) {
+        if (faPrevRender[i].name !== all[i].name) return true;
+        if (faPrevRender[i].triggered !== all[i].triggered) return true;
+        if (faPrevRender[i].skipped !== all[i].skipped) return true;
+        if (faPrevRender[i].status_label !== all[i].status_label) return true;
+    }
+    if (faPrevRender.pictureRun !== pictureRun) return true;
+    return false;
+}
 
 function renderFrameAnalysisPanel(rules, pictureRun) {
     // Совместимость: старые id тоже обновляем если есть
@@ -381,11 +396,44 @@ function renderFrameAnalysisPanel(rules, pictureRun) {
         cardsEl.innerHTML = '';
         const empty = faEl('div', 'fa-empty', 'Ожидание результатов правил');
         cardsEl.appendChild(empty);
+        faPrevRender = null;
         return;
     }
 
     // Защита индекса
     if (faActiveIndex < 0 || faActiveIndex >= all.length) faActiveIndex = 0;
+
+    // Защита от мигания: перерисовываем только если данные изменились
+    const prev = faPrevRender;
+    const changed = !prev || faRenderChanged(all, pictureRun);
+    if (!changed) {
+        // Индекс вкладки мог измениться без изменения данных — обновим активную вкладку
+        const activeTab = tabsEl.querySelector('.fa-tab.is-active');
+        if (activeTab && Number(activeTab.dataset.index) !== faActiveIndex) {
+            tabsEl.querySelectorAll('.fa-tab').forEach(t => {
+                const idx = Number(t.dataset.index);
+                const isActive = idx === faActiveIndex;
+                t.classList.toggle('is-active', isActive);
+                t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            });
+            cardsEl.innerHTML = '';
+            const activeRule = all[faActiveIndex];
+            if (activeRule) {
+                const card = faBuildRuleCard(activeRule, pictureRun, true);
+                cardsEl.appendChild(card);
+            }
+            if (typeof faSyncScroll === 'function') requestAnimationFrame(() => faSyncScroll());
+        }
+        return;
+    }
+
+    faPrevRender = all.map(r => ({
+        name: r.name,
+        triggered: r.triggered,
+        skipped: r.skipped,
+        status_label: r.status_label,
+    }));
+    faPrevRender.pictureRun = pictureRun;
 
     // Рендер вкладок
     tabsEl.innerHTML = '';
@@ -481,10 +529,12 @@ function faSyncScroll() {
     if (maxScroll <= 0) {
         track.classList.add('is-idle');
         thumb.style.top = '0px';
+        thumb.style.height = '';
         rows.scrollTop = 0;
         return;
     }
     track.classList.remove('is-idle');
+    if (faDrag) return; // не перебивать позицию во время перетаскивания
     const trackH = track.clientHeight || 56;
     const ratio = rows.clientHeight / Math.max(1, rows.scrollHeight);
     const thumbH = Math.max(22, Math.min(Math.round(trackH * 0.6), Math.round(trackH * ratio)));
@@ -504,6 +554,8 @@ function faSyncCardScroll(rows, track, thumb) {
         return;
     }
     track.classList.remove('is-idle');
+    // Не перебивать позицию thumb при скролле из wheel — scroll-обработчик уже обновил
+    if (faDrag) return;
     const trackH = track.clientHeight || 56;
     const ratio = rows.clientHeight / Math.max(1, rows.scrollHeight);
     const thumbH = Math.max(22, Math.min(Math.round(trackH * 0.6), Math.round(trackH * ratio)));
@@ -522,12 +574,11 @@ function faSyncCardScroll(rows, track, thumb) {
         if (!track) return;
         const thumb = track.querySelector('.fa-scroll-thumb');
         if (!thumb) return;
-        let drag = null;
         const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 
         function onMove(e) {
-            if (!drag) return;
-            const {rows, track, thumb, startY, startTop, maxScroll, maxThumbTop} = drag;
+            if (!faDrag) return;
+            const {rows, track, thumb, startY, startTop, maxScroll, maxThumbTop} = faDrag;
             const dy = e.clientY - startY;
             const newTop = clamp(startTop + dy, 0, maxThumbTop);
             thumb.style.top = newTop + 'px';
@@ -536,9 +587,11 @@ function faSyncCardScroll(rows, track, thumb) {
             }
         }
         function onUp() {
-            if (!drag) return;
-            drag.track.classList.remove('is-dragging');
-            drag = null;
+            if (!faDrag) return;
+            const {thumb} = faDrag;
+            faDrag.track.classList.remove('is-dragging');
+            faDrag = null;
+            if (thumb) thumb.style.transition = '';
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
         }
@@ -550,7 +603,7 @@ function faSyncCardScroll(rows, track, thumb) {
                 const activeRows = body.querySelector('.fa-card.is-active .fa-rows');
                 const t = document.getElementById('frame-analysis-scroll-track');
                 const th = t ? t.querySelector('.fa-scroll-thumb') : null;
-                if (activeRows && t && th) faSyncCardScroll(activeRows, t, th);
+                if (activeRows && t && th && !faDrag) faSyncCardScroll(activeRows, t, th);
             });
         }
 
@@ -567,8 +620,10 @@ function faSyncCardScroll(rows, track, thumb) {
             const maxThumbTop = Math.max(0, trackH - thumbH);
             const clickY = e.clientY - trackRect.top;
             const desired = clamp(clickY - thumbH / 2, 0, maxThumbTop);
+            thumb.style.transition = 'none';
             thumb.style.top = desired + 'px';
             activeRows.scrollTop = maxThumbTop > 0 ? (desired / maxThumbTop) * maxScroll : 0;
+            requestAnimationFrame(() => { thumb.style.transition = ''; });
         });
 
         thumb.addEventListener('mousedown', (e) => {
@@ -582,14 +637,16 @@ function faSyncCardScroll(rows, track, thumb) {
             const maxScroll = Math.max(0, activeRows.scrollHeight - activeRows.clientHeight);
             const maxThumbTop = Math.max(0, trackH - thumbH);
             const currentTop = parseFloat(thumb.style.top) || 0;
-            drag = {rows: activeRows, track, thumb, startY: e.clientY, startTop: currentTop, maxScroll, maxThumbTop};
+            faDrag = {rows: activeRows, track, thumb, startY: e.clientY, startTop: currentTop, maxScroll, maxThumbTop};
             track.classList.add('is-dragging');
+            thumb.style.transition = 'none';
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
         });
 
         track.addEventListener('wheel', (e) => {
             if (track.classList.contains('is-idle')) return;
+            if (faDrag) return;
             const activeRows = body.querySelector('.fa-card.is-active .fa-rows');
             if (!activeRows) return;
             e.preventDefault();
