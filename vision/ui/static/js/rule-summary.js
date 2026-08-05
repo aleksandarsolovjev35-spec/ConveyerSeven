@@ -90,10 +90,16 @@ function buildThresholdBlock(roleLabel, metric, pictureRun, isDecisive) {
     name.title = metric.key || baseName;
     head.appendChild(name);
 
+    // Значение порога — только для просмотра. В отличие от панели
+    // «Пороги правил» здесь намеренно нет input: анализ не должен менять
+    // конфигурацию, а поле должно лишь сопоставить замер с лимитом.
     const limit = el('span', 'fa-threshold-limit');
     const limitText = formatThresholdValue(metric);
     limit.textContent = limitText;
     limit.title = `Порог: ${limitText}`;
+    limit.setAttribute('role', 'textbox');
+    limit.setAttribute('aria-readonly', 'true');
+    limit.setAttribute('aria-label', `Порог: ${limitText}`);
     head.appendChild(limit);
     block.appendChild(head);
 
@@ -109,6 +115,8 @@ function buildThresholdBlock(roleLabel, metric, pictureRun, isDecisive) {
         chip.tabIndex = 0;
         chip.title = `Прогон ${index + 1} — показать кадр`;
 
+        const runLabel = el('span', 'fa-mv-run', `П${index + 1}`);
+        chip.appendChild(runLabel);
         const valueSpan = el('span', 'fa-mv-value', formatRunValue(run));
         chip.appendChild(valueSpan);
 
