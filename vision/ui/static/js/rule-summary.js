@@ -596,7 +596,18 @@ function faBuildModelPerformance(models) {
 // ===== ЭКСПОРТ =====
 if (typeof window !== 'undefined') {
     window.renderFrameAnalysisPanel = renderFrameAnalysisPanel;
-    window.renderFrameAnalysisRules = renderFrameAnalysisPanel;
+    // renderFrameAnalysisRules вызывается кликом по замеру (setMainCameraRun)
+    // и сменой прогона; применяем активный фильтр, чтобы панель не
+    // «перескакивала» на показ всех правил вопреки выбранному фильтру.
+    window.renderFrameAnalysisRules = (rules, pictureRun) => {
+        const all = Array.isArray(rules) ? rules : [];
+        renderFrameAnalysisPanel(
+            visibleFrameAnalysisRules(all),
+            pictureRun,
+            state.frameAnalysisModelsCache,
+            { totalRules: all.length },
+        );
+    };
     window.renderRuleMeasurements = (rule, pr) => { const wrap = faEl('div'); wrap.appendChild(faBuildRuleRow(rule, pr)); return wrap; };
     window.buildFrameAnalysisRuleGroup = (rule, pr) => faBuildRuleRow(rule, pr);
     window.faSyncScroll = faSyncScroll;

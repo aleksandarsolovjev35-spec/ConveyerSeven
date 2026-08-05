@@ -12,6 +12,7 @@
 .frame-analysis-panel { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; min-height: 220px; max-height: 420px; overflow: hidden; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 7px; }
 .fa-head { display: flex; flex: 0 0 auto; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
 .fa-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.8px; color: var(--text); white-space: nowrap; }
+.fa-context { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font: 700 7px var(--font-mono); letter-spacing: 0.3px; }
 .fa-verdict { flex: 1 1 auto; text-align: right; min-width: 0; overflow: hidden; color: var(--accent); font: 700 8px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .fa-toolbar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
 .fa-rules-title { margin: 0; min-width: 0; overflow: hidden; color: var(--text-muted); font-size: 8px; letter-spacing: 1px; text-transform: uppercase; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
