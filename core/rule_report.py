@@ -1108,9 +1108,35 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
     
     rules_meta = consensus.get("rules", {})
     rule_meta = rules_meta.get(rule_name) if isinstance(rules_meta, dict) else None
+
+    # part_presence uses its own vocabulary (empty/present), so it does not
+    # have the ``rules[rule_name]`` entry used by defect rules.  Dropping the
+    # vote here made the UI show a blank/green badge for an empty tray.
+    if rule_name == PART_PRESENCE_RULE and (
+        "empty_votes" in consensus or "present_votes" in consensus
+    ):
+        empty_votes = int(consensus.get("empty_votes") or 0)
+        present_votes = int(consensus.get("present_votes") or 0)
+        decision = consensus.get("decision")
+        return {
+            "triggered_votes": empty_votes,
+            "normal_votes": present_votes,
+            "empty_votes": empty_votes,
+            "present_votes": present_votes,
+            "decision": decision,
+            "states": list(consensus.get("states") or []),
+            "source_run": consensus.get("source_run"),
+            "evidence_run": consensus.get("evidence_run"),
+            "agreement_scores": consensus.get("agreement_scores") or [],
+            "picture_run": consensus.get("picture_run"),
+            "picture_reason": consensus.get("picture_reason"),
+            "total_runs": int(consensus.get("runs") or 3),
+            "required_votes": int(consensus.get("required_votes") or 2),
+        }
+
     if not isinstance(rule_meta, dict):
         return None
-    
+
     # Базовые голоса
     triggered_votes = int(rule_meta.get("triggered_votes") or 0)
     normal_votes = int(rule_meta.get("normal_votes") or 0)
@@ -1118,14 +1144,14 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
     states = rule_meta.get("states") or []
     source_run = rule_meta.get("source_run")
     evidence_run = rule_meta.get("evidence_run")
-    
+
     # Agreement scores - согласованность прогонов
     agreement_scores = consensus.get("agreement_scores") or []
-    
+
     # Picture run из consensus
     picture_run = consensus.get("picture_run")
     picture_reason = consensus.get("picture_reason")
-    
+
     return {
         "triggered_votes": triggered_votes,
         "normal_votes": normal_votes,

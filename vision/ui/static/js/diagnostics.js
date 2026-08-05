@@ -261,7 +261,9 @@ function setFrameAnalysisRulesFilter(next) {
         updateFrameAnalysisRulesTitle(state.frameAnalysisRulesCache);
         if (typeof renderFrameAnalysisPanel === 'function') {
             const vis = visibleFrameAnalysisRules(state.frameAnalysisRulesCache);
-            renderFrameAnalysisPanel(vis, state.viewRun, state.frameAnalysisModelsCache);
+            renderFrameAnalysisPanel(vis, state.viewRun, state.frameAnalysisModelsCache, {
+                totalRules: state.frameAnalysisRulesCache.length,
+            });
         } else if (typeof renderFrameAnalysisRules === 'function') {
             renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
         }
@@ -295,7 +297,7 @@ function setupFrameAnalysisRunClicks() {
     if (!root || root.dataset.runClicksBound === '1') return;
     root.dataset.runClicksBound = '1';
     const activate = (event) => {
-        const chip = event.target.closest('.fa-thr-value[data-run], .fa-measurement-value[data-run], .fa-threshold-runs [data-run]');
+        const chip = event.target.closest('.fa-thr-value[data-run], .fa-measurement-value[data-run], .fa-metric-chip[data-run], .fa-threshold-runs [data-run]');
         if (!chip) return;
         // не перехватывать клик по вкладкам
         if (tabs && tabs.contains(chip)) return;
@@ -310,7 +312,7 @@ function setupFrameAnalysisRunClicks() {
     root.addEventListener('click', activate);
     root.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        const chip = event.target.closest('.fa-thr-value[data-run]');
+        const chip = event.target.closest('.fa-thr-value[data-run], .fa-measurement-value[data-run], .fa-metric-chip[data-run]');
         if (!chip) return;
         activate(event);
     });
@@ -424,7 +426,11 @@ function updateFrameAnalysisStatus(ls) {
         // данные те же — но фильтр мог смениться, перерисуем с фильтром
         const vis = visibleFrameAnalysisRules(rules);
         if (typeof renderFrameAnalysisPanel === 'function') {
-            renderFrameAnalysisPanel(vis, state.viewRun, report.models);
+            renderFrameAnalysisPanel(vis, state.viewRun, report.models, {
+                totalRules: rules.length,
+                status: report.status,
+                message: report.message,
+            });
         }
         return;
     }
@@ -442,7 +448,11 @@ function updateFrameAnalysisStatus(ls) {
 
     const visible = visibleFrameAnalysisRules(rules);
     if (typeof renderFrameAnalysisPanel === 'function') {
-        renderFrameAnalysisPanel(visible, state.viewRun, report.models);
+        renderFrameAnalysisPanel(visible, state.viewRun, report.models, {
+            totalRules: rules.length,
+            status: report.status,
+            message: report.message,
+        });
     } else if (typeof renderFrameAnalysisRules === 'function') {
         renderFrameAnalysisRules(visible, state.viewRun);
     }
