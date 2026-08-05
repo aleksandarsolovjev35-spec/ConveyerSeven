@@ -408,8 +408,8 @@
 .line-token.cell-cleanup::after { content: "🧹"; color: var(--warn); }
 
 /* === Human-readable defect cause (simple & bold) === */
-.frame-analysis-item.has-human-cause .frame-analysis-human-cause {
-    grid-column: 1 / -1;
+.frame-analysis-item.has-human-cause .frame-analysis-human-cause,
+.fa-group.has-human-cause .frame-analysis-human-cause {
     display: block;
     min-width: 0;
     margin-top: 3px;
@@ -424,7 +424,8 @@
     border-left: 3px solid #ff6b6b;
 }
 
-.frame-analysis-item.triggered {
+.frame-analysis-item.triggered,
+.fa-group.triggered {
     border-color: var(--bad);
 }
 

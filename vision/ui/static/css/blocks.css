@@ -198,8 +198,9 @@
     flex: 1 1 auto;
 }
 .frame-analysis-rules-scroll {
+    flex: 0 0 auto;
     min-height: 0;
-    max-height: min(42vh, 360px);
+    max-height: min(42vh, 340px);
     overflow-x: hidden;
     overflow-y: auto;
     padding-right: 2px;
@@ -235,6 +236,56 @@
     padding-top: 5px;
     border-top: 1px solid var(--border);
 }
+
+/* ─── Анализ кадра: правило → секция в стиле «Порогов правил» ────
+   Каждое правило — группа-карточка: заголовок (название + статус),
+   под ним read-only пороги с тремя замерами. Вердикт — в шапке панели,
+   единственный акцент. */
+.fa-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-1);
+}
+.fa-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+.fa-group-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text);
+    font: 700 10px var(--font-ui);
+    letter-spacing: 0.3px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fa-group-status {
+    flex: 0 0 auto;
+    color: var(--text-dim);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+.fa-group.ok { border-left: 2px solid var(--ok); }
+.fa-group.triggered { border-left: 2px solid var(--bad); }
+.fa-group.skipped { border-left: 2px solid var(--warn); }
+.fa-group.part-absent {
+    border-left: 2px solid var(--warn);
+    background: var(--warn-bg);
+}
+.fa-group.ok .fa-group-status { color: var(--ok); }
+.fa-group.triggered .fa-group-status { color: var(--bad); }
+.fa-group.skipped .fa-group-status { color: var(--warn); }
+.fa-group.part-absent .fa-group-status { color: var(--warn); }
 .fa-threshold {
     display: flex;
     flex-direction: column;

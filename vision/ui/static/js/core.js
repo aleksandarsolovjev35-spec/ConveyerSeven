@@ -185,17 +185,13 @@ const els = {
 
     frameAnalysisPanel:   $('frame-analysis-panel'),
     frameAnalysisTitle:   $('frame-analysis-title'),
-    frameAnalysisContext: $('frame-analysis-context'),
-    frameAnalysisMessage: $('frame-analysis-message'),
+    frameAnalysisVerdict: $('frame-analysis-verdict'),
     frameAnalysisPicture: $('frame-analysis-picture'),
-    frameAnalysisModelsTitle: $('frame-analysis-models-title'),
     frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
-    frameAnalysisModels:  $('frame-analysis-models'),
     frameAnalysisRules:   $('frame-analysis-rules'),
     frameAnalysisRulesScroll: $('frame-analysis-rules-scroll'),
     frameAnalysisFilterTriggered: $('frame-analysis-filter-triggered'),
     frameAnalysisFilterAll: $('frame-analysis-filter-all'),
-    frameAnalysisModelsToggle: $('frame-analysis-models-toggle'),
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),
     statsService:         $('stats-service'),
@@ -382,8 +378,8 @@ function setIfChanged(el, value) {
         el.classList.contains('stats-value')
         || el.classList.contains('axis-state')
         || el.classList.contains('state-label')
-        || el.classList.contains('frame-analysis-message')
-        || el.id === 'frame-analysis-context'
+        || el.classList.contains('frame-analysis-verdict')
+        || el.id === 'frame-analysis-verdict'
     ) {
         animateUiElement(el);
     }

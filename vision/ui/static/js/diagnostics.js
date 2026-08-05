@@ -166,30 +166,12 @@ function updateFrameAnalysisStatus(ls) {
         return;
     }
 
-    const models = Array.isArray(report.models) ? report.models : [];
     const rules = Array.isArray(report.rules) ? report.rules : [];
-    // Контекст панели: этап линии, выбранная оператором камера и корпус.
-    // Этап не дублируется, если уже прозвучал в названии камеры
-    // (например, «ВХОД» + «ВХОД · СЛЕВА» → «ВХОД · СЛЕВА»).
-    const contextBits = [];
-    const stageText = report.stage ? String(report.stage) : '';
-    const roleText = report.role ? cameraRoleLabel(report.role) : '';
-    const stageFirst = String(stageText.split(' ')[0] || '');
-    const roleFirst = String(roleText.split(' ')[0] || '');
-    if (stageText && roleFirst !== stageFirst) contextBits.push(stageText);
-    if (roleText) contextBits.push(roleText);
-    if (report.part_id) contextBits.push(`КОРПУС #${report.part_id}`);
-    const context = contextBits.length
-        ? contextBits.join(' · ')
-        : 'ТЕКУЩИЙ ЦИКЛ';
+    // В шапке — только итоговый вердикт: решение по корпусу на этапе.
+    // Для ручного анализа (SELECTED) вердикта нет — показываем сообщение.
+    const verdict = frameAnalysisVerdict(report, ls) || report.message || '—';
     setIfChanged(els.frameAnalysisTitle, report.title || 'АНАЛИЗ КАДРА');
-    setIfChanged(els.frameAnalysisContext, context);
-    setIfChanged(
-        els.frameAnalysisMessage,
-        frameAnalysisVerdict(report, ls)
-            || report.message
-            || 'Ожидание результатов анализа',
-    );
+    setIfChanged(els.frameAnalysisVerdict, verdict);
     // Почему выбран именно этот прогон для картинки (ближе всего к порогу).
     if (report.picture_reason && els.frameAnalysisPicture) {
         els.frameAnalysisPicture.classList.remove('is-hidden');
@@ -201,7 +183,6 @@ function updateFrameAnalysisStatus(ls) {
         els.frameAnalysisPicture.classList.add('is-hidden');
         setIfChanged(els.frameAnalysisPicture, '');
     }
-    setIfChanged(els.frameAnalysisModelsTitle, `МОДЕЛИ · ${models.length}`);
     updateFrameAnalysisFilterButtons();
     updateFrameAnalysisRulesTitle(rules);
 
@@ -210,7 +191,6 @@ function updateFrameAnalysisStatus(ls) {
         role: report.role,
         part: report.part_id,
         updated: report.updated_at,
-        models,
         rules,
     });
     if (state.lastFrameAnalysisRenderKey === renderKey) {
@@ -231,45 +211,8 @@ function updateFrameAnalysisStatus(ls) {
         && state.frameAnalysisRulesFilter !== 'triggered') {
         state.frameAnalysisRulesFilter = 'triggered';
     }
-    renderFrameAnalysisModels(models);
     renderFrameAnalysisRules(rules, state.viewRun);
-    animateUiElement(els.frameAnalysisModels, 'ui-content-change');
     animateUiElement(els.frameAnalysisRules, 'ui-content-change');
-}
-
-function renderFrameAnalysisModels(models) {
-    els.frameAnalysisModels.replaceChildren();
-    if (!models.length) {
-        appendFrameAnalysisEmpty(
-            els.frameAnalysisModels,
-            'Ожидание результатов моделей',
-        );
-        return;
-    }
-    for (const model of models) {
-        const item = document.createElement('div');
-        item.className = `frame-analysis-item ${model.ok ? 'ok' : 'error'}`;
-        const name = document.createElement('span');
-        const result = document.createElement('b');
-        const fileName = String(model.model || '').split('/').pop();
-        const runCount = Number(model.runs || 0);
-        const runLabel = runCount > 1 ? `${runCount} ПРОГОНА · ` : '';
-        name.textContent = `${runLabel}${cameraRoleLabel(model.role)} · ${fileName}`;
-        const detectionsByRun = Array.isArray(model.detections_by_run)
-            ? model.detections_by_run.join('/')
-            : String(model.detections || 0);
-        const latencyLabel = runCount > 1
-            ? `${Number(model.elapsed_ms || 0).toFixed(0)} мс ср.`
-            : `${Number(model.elapsed_ms || 0).toFixed(0)} мс`;
-        // Показываем обнаружения по всем трём прогонам (2/2/1), а не один
-        // выбранный результат, чтобы оператор видел разброс по кадрам.
-        result.textContent = model.ok
-            ? `${latencyLabel} · объекты ${detectionsByRun}`
-            : 'ОШИБКА';
-        if (model.error) item.title = String(model.error);
-        item.append(name, result);
-        els.frameAnalysisModels.appendChild(item);
-    }
 }
 
 function frameAnalysisVerdict(report, ls) {
@@ -405,62 +348,76 @@ function renderFrameAnalysisRules(rules, pictureRun) {
         return;
     }
     for (const rule of visibleRules) {
-        const item = document.createElement('div');
-        const stateClass = rule.neutral
-            ? ''
-            : (rule.skipped
-                ? 'skipped'
-                : (rule.triggered ? 'triggered' : 'ok'));
-        item.className = `frame-analysis-item ${stateClass}`.trim();
-        if (rule.part_absent) item.classList.add('part-absent');
-
-        const name = document.createElement('span');
-        const result = document.createElement('b');
-        name.textContent = rule.name || 'Без названия';
-        result.textContent = rule.status_label || (
-            rule.skipped
-                ? 'НЕ ВЫПОЛНЕНО'
-                : (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА')
+        els.frameAnalysisRules.appendChild(
+            buildFrameAnalysisRuleGroup(rule, pictureRun)
         );
-        item.append(name, result);
+    }
+}
 
-        if (rule.part_absent) {
-            const absent = document.createElement('div');
-            absent.className = 'frame-analysis-human-cause';
-            absent.textContent = 'КОРПУС НЕ ОБНАРУЖЕН';
-            item.appendChild(absent);
-            item.classList.add('has-human-cause');
-        } else if (rule.triggered && rule.human_cause) {
-            const cause = document.createElement('div');
-            cause.className = 'frame-analysis-human-cause';
-            cause.textContent = rule.human_cause;
-            item.appendChild(cause);
-            item.classList.add('has-human-cause');
-        }
+// Правило → секция в стиле «Порогов правил»: заголовок (название +
+// статус), затем пороги с тремя замерами. Каждый порог — read-only поле
+// (предел) и под ним три замера с прогонов голосования 2 из 3.
+function buildFrameAnalysisRuleGroup(rule, pictureRun) {
+    const stateClass = rule.neutral
+        ? ''
+        : (rule.skipped
+            ? 'skipped'
+            : (rule.triggered ? 'triggered' : 'ok'));
+    const group = document.createElement('section');
+    group.className = `fa-group ${stateClass}`.trim();
+    if (rule.part_absent) group.classList.add('part-absent');
 
-        // Пороги + три замера; решающий порог выделен в rule-summary.js.
-        const measurements = renderRuleMeasurements(rule, pictureRun);
-        if (measurements.children.length) {
-            item.classList.add('has-detail');
-            item.appendChild(measurements);
-        } else {
-            const summary = ruleSummaryLines(rule);
-            const showSummary = (
-                rule.triggered || rule.skipped || rule.show_detail || rule.part_absent
-            );
-            if (summary.length && showSummary) {
-                item.classList.add('has-detail');
-                for (const line of summary) {
-                    const reason = document.createElement('small');
-                    reason.className = 'frame-analysis-reason';
-                    reason.textContent = line;
-                    item.appendChild(reason);
-                }
+    const head = document.createElement('div');
+    head.className = 'fa-group-head';
+    const name = document.createElement('span');
+    name.className = 'fa-group-name';
+    name.textContent = rule.name || 'Без названия';
+    head.appendChild(name);
+    const result = document.createElement('b');
+    result.className = 'fa-group-status';
+    result.textContent = rule.status_label || (
+        rule.skipped
+            ? 'НЕ ВЫПОЛНЕНО'
+            : (rule.triggered ? 'СРАБОТАЛО' : 'НОРМА')
+    );
+    head.appendChild(result);
+    group.appendChild(head);
+
+    if (rule.part_absent) {
+        const absent = document.createElement('div');
+        absent.className = 'frame-analysis-human-cause';
+        absent.textContent = 'КОРПУС НЕ ОБНАРУЖЕН';
+        group.appendChild(absent);
+        group.classList.add('has-human-cause');
+    } else if (rule.triggered && rule.human_cause) {
+        const cause = document.createElement('div');
+        cause.className = 'frame-analysis-human-cause';
+        cause.textContent = rule.human_cause;
+        group.appendChild(cause);
+        group.classList.add('has-human-cause');
+    }
+
+    // Пороги + три замера; решающий порог выделен в rule-summary.js.
+    const measurements = renderRuleMeasurements(rule, pictureRun);
+    if (measurements.children.length) {
+        group.classList.add('has-detail');
+        group.appendChild(measurements);
+    } else {
+        const summary = ruleSummaryLines(rule);
+        const showSummary = (
+            rule.triggered || rule.skipped || rule.show_detail || rule.part_absent
+        );
+        if (summary.length && showSummary) {
+            group.classList.add('has-detail');
+            for (const line of summary) {
+                const reason = document.createElement('small');
+                reason.className = 'frame-analysis-reason';
+                reason.textContent = line;
+                group.appendChild(reason);
             }
         }
-
-        els.frameAnalysisRules.appendChild(item);
     }
+    return group;
 }
 
 function appendFrameAnalysisEmpty(container, text) {
@@ -468,18 +425,6 @@ function appendFrameAnalysisEmpty(container, text) {
     item.className = 'frame-analysis-empty';
     item.textContent = text;
     container.appendChild(item);
-}
-
-// Блок «какие модели сработали» свёрнут по умолчанию; по клику на заголовок
-// его можно развернуть и уточнить детали.
-function setupFrameAnalysisModelsCollapse() {
-    const toggle = els.frameAnalysisModelsToggle;
-    const list = els.frameAnalysisModels;
-    if (!toggle || !list) return;
-    toggle.addEventListener('click', () => {
-        const collapsed = list.classList.toggle('frame-analysis-list-collapsed');
-        toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    });
 }
 
 // Клик по замеру → тот же прогон на главной камере.
@@ -530,18 +475,13 @@ function showPendingSelectedFrameAnalysis() {
     }
     if (els.statsService) els.statsService.classList.add('is-collapsed');
     setIfChanged(els.frameAnalysisTitle, 'АНАЛИЗ КАДРА');
-    setIfChanged(els.frameAnalysisContext, cameraRoleLabel(state.currentCamera));
-    setIfChanged(els.frameAnalysisMessage, 'Подготовка моделей и правил');
-    setIfChanged(els.frameAnalysisModelsTitle, 'МОДЕЛИ');
+    setIfChanged(els.frameAnalysisVerdict, 'Подготовка моделей и правил');
     setIfChanged(els.frameAnalysisRulesTitle, 'ПРАВИЛА');
-    els.frameAnalysisModels.replaceChildren();
     els.frameAnalysisRules.replaceChildren();
-    appendFrameAnalysisEmpty(els.frameAnalysisModels, 'Запуск моделей');
     appendFrameAnalysisEmpty(els.frameAnalysisRules, 'Ожидание результатов');
 }
 
 function setupSelectedFrameAnalysis() {
-    setupFrameAnalysisModelsCollapse();
     setupFrameAnalysisRunClicks();
     setupFrameAnalysisFilter();
     if (!els.analyzeSelectedFrame) return;
