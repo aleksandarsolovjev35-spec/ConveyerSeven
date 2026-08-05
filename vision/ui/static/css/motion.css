@@ -33,7 +33,7 @@
 #distributor-diagnostics.ui-collapse { max-height: 290px; }
 #jog-panel.ui-collapse { max-height: 190px; }
 #stats-service.ui-collapse { max-height: 48px; }
-#frame-analysis-panel.ui-collapse { max-height: 1600px; }
+#frame-analysis-panel.ui-collapse { max-height: 420px; }
 
 #view-mode-toggle,
 .mode-badge {

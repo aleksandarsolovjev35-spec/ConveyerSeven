@@ -316,10 +316,15 @@ function renderFrameAnalysisPanel(rules, pictureRun, models, meta = {}) {
             verdictEl.textContent = message || 'ОШИБКА АНАЛИЗА';
             verdictEl.className = 'fa-verdict bad';
         } else if (!all.length) {
-            verdictEl.textContent = status === 'RUNNING'
-                ? 'ПОДГОТОВКА МОДЕЛЕЙ И ПРАВИЛ'
-                : (message || 'НЕТ РЕЗУЛЬТАТОВ');
-            verdictEl.className = 'fa-verdict warn';
+            // totalRules > 0 и не RUNNING/ERROR — значит фильтр «СРАБОТАВШИЕ»
+            // скрыл все правила (все в норме), а не «нет результатов».
+            const allNormal = totalRules > 0 && status !== 'RUNNING';
+            verdictEl.textContent = allNormal
+                ? 'ВСЕ ПРАВИЛА В НОРМЕ'
+                : (status === 'RUNNING'
+                    ? 'ПОДГОТОВКА МОДЕЛЕЙ И ПРАВИЛ'
+                    : (message || 'НЕТ РЕЗУЛЬТАТОВ'));
+            verdictEl.className = allNormal ? 'fa-verdict ok' : 'fa-verdict warn';
         } else if (absent) {
             verdictEl.textContent = 'КОРПУС НЕ ОБНАРУЖЕН';
             verdictEl.className = 'fa-verdict warn';
@@ -345,13 +350,23 @@ function renderFrameAnalysisPanel(rules, pictureRun, models, meta = {}) {
     });
     cardsEl.innerHTML = '';
     if (!all.length) {
-        cardsEl.appendChild(faEl(
-            'div',
-            status === 'ERROR' ? 'fa-empty fa-empty-error' : 'fa-empty',
-            status === 'ERROR'
-                ? (message || 'Анализ завершился с ошибкой')
-                : (message || 'Ожидание результатов'),
-        ));
+        // totalRules > 0 и не RUNNING/ERROR — фильтр «СРАБОТАВШИЕ» скрыл все
+        // правила (все в норме). Показываем осмысленное состояние вместо
+        // заглушки «Ожидание результатов».
+        const allNormal = totalRules > 0 && status !== 'RUNNING';
+        if (allNormal) {
+            cardsEl.appendChild(faEl(
+                'div', 'fa-empty fa-empty-ok', 'ВСЕ ПРАВИЛА В НОРМЕ',
+            ));
+        } else {
+            cardsEl.appendChild(faEl(
+                'div',
+                status === 'ERROR' ? 'fa-empty fa-empty-error' : 'fa-empty',
+                status === 'ERROR'
+                    ? (message || 'Анализ завершился с ошибкой')
+                    : (message || 'Ожидание результатов'),
+            ));
+        }
     }
     // Секция 1: сработавшие + отсутствующий корпус.
     const badRules = sorted.filter(rule => rule.part_absent || rule.triggered);
