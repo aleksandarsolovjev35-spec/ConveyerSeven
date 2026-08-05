@@ -52,6 +52,7 @@ function setMainCameraRun(runNumber) {
             && state.frameAnalysisRulesCache
         ) {
             renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+            state.lastFaRun = state.viewRun;
         }
         return true;
     }
@@ -76,6 +77,7 @@ function setMainCameraRun(runNumber) {
         && state.frameAnalysisRulesCache
     ) {
         renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+        state.lastFaRun = state.viewRun;
     }
     return true;
 }

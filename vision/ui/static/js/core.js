@@ -105,6 +105,11 @@ const state = {
     selectedAnalysisActive: false,
     selectedAnalysisRole: null,
     lastFrameAnalysisRenderKey: null,
+    // Guard от избыточной пересборки панели: последние фильтр и прогон,
+    // которые реально отрисованы. Когда данные не менялись и эти два поля
+    // не менялись, повторный рендер (и сброс раскрытых замеров/скролла) не нужен.
+    lastFaFilter: null,
+    lastFaRun: null,
     liveFps:              0.0,
     liveStreaming:        false,
     liveStatic:           false,

@@ -267,6 +267,9 @@ function setFrameAnalysisRulesFilter(next) {
         } else if (typeof renderFrameAnalysisRules === 'function') {
             renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
         }
+        // Пометить как отрисованное, чтобы следующий опрос не перерисовывал.
+        state.lastFaFilter = state.frameAnalysisRulesFilter;
+        state.lastFaRun = state.viewRun;
     }
 }
 
@@ -384,6 +387,8 @@ function updateFrameAnalysisStatus(ls) {
 
     if (!available) {
         state.lastFrameAnalysisRenderKey = null;
+        state.lastFaFilter = null;
+        state.lastFaRun = null;
         state.frameAnalysisRulesCache = null;
         state.viewRun = 0;
         return;
@@ -423,7 +428,16 @@ function updateFrameAnalysisStatus(ls) {
         picture_run: report.picture_run,
     });
     if (state.lastFrameAnalysisRenderKey === renderKey) {
-        // данные те же — но фильтр мог смениться, перерисуем с фильтром
+        // Данные не менялись. Перерисовываем только если поменялся фильтр
+        // или прогон с прошлого реального рендера; иначе пропускаем, чтобы
+        // не перестраивать DOM (это сбрасывает раскрытые «▸ Ещё N замеров»
+        // и позицию прокрутки) на каждом опросе статуса.
+        if (state.lastFaFilter === state.frameAnalysisRulesFilter
+            && state.lastFaRun === state.viewRun) {
+            return;
+        }
+        state.lastFaFilter = state.frameAnalysisRulesFilter;
+        state.lastFaRun = state.viewRun;
         const vis = visibleFrameAnalysisRules(rules);
         if (typeof renderFrameAnalysisPanel === 'function') {
             renderFrameAnalysisPanel(vis, state.viewRun, report.models, {
@@ -435,6 +449,8 @@ function updateFrameAnalysisStatus(ls) {
         return;
     }
     state.lastFrameAnalysisRenderKey = renderKey;
+    state.lastFaFilter = state.frameAnalysisRulesFilter;
+    state.lastFaRun = state.viewRun;
 
     const pictureRun = Number(report.picture_run) || 0;
     state.frameAnalysisRulesCache = rules;
