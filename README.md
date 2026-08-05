@@ -294,7 +294,7 @@ short_omission → собственные area/profile проверки omission
 
 `contacts_short` на `SPIDER_IN/SPIDER_OUT` сначала применяет минимальную площадь `400 px²` ко всем detections, включая случай исходного количества ровно два. Затем выбирается лучшая пара valid segmentation masks; лишние detections показываются серым пунктиром. BBox fallback запрещён.
 
-Для пары проверяются `Δtop`, `Δbottom` и `Δheight`. Допуск равен `median_contact_height × level_deviation_ratio`: для `SPIDER_IN` установлен коэффициент `0.45`, для `SPIDER_OUT` — `0.35`. В каждую mask вписывается rectangle `25.2×9.6 px`; размер задаётся непосредственно в пикселях порогами `spider_contacts_short_inscribed_rect_width_px` / `spider_contacts_short_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
+Для пары проверяются `Δtop`, `Δbottom` и `Δheight`. Допуск равен `median_contact_height × level_deviation_ratio`: для `SPIDER_IN` установлен коэффициент `0.45`, для `SPIDER_OUT` — `0.40`. В каждую mask вписывается rectangle `30×18 px`; размер задаётся непосредственно в пикселях порогами `spider_contacts_short_inscribed_rect_width_px` / `spider_contacts_short_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
 
 Renderer показывает без чисел и текстовых пояснений: два contact contours, два rectangles, верхнюю и нижнюю соединяющие линии с коридорами допуска, два вертикальных height-сегмента, линию `omission-short` и два перпендикуляра. Sample points, чёрные подложки и подписи расстояний удалены. Невозможное построение использует единые короткие сообщения `CONTACTS N/2`, `NO CONTACT MASK`, `NO OMISSION`.
 
@@ -314,14 +314,14 @@ tilt_ratio = abs(distance_A - distance_B) / median_contact_height
 tilt_ratio > spider_contacts_short_omission_tilt_ratio_max
 ```
 
-Стартовый предел отдельно для `SPIDER_IN` и `SPIDER_OUT` равен `0.20`:
+Текущий предел отдельно для `SPIDER_IN` и `SPIDER_OUT` равен `0.30`:
 
 ```json
 "SPIDER_IN": {
-    "spider_contacts_short_omission_tilt_ratio_max": 0.20
+    "spider_contacts_short_omission_tilt_ratio_max": 0.30
 },
 "SPIDER_OUT": {
-    "spider_contacts_short_omission_tilt_ratio_max": 0.20
+    "spider_contacts_short_omission_tilt_ratio_max": 0.30
 }
 ```
 
@@ -331,7 +331,7 @@ tilt_ratio > spider_contacts_short_omission_tilt_ratio_max
 
 `contacts_long` на `SPIDER_LEFT/SPIDER_RIGHT` выбирает наиболее ровный ряд из пяти `contacts-long`; лишние detections показываются серым пунктиром и не участвуют в решении. Для всех пяти обязательны valid segmentation masks. Неверное количество или отсутствующая mask вызывают fail closed без bbox fallback.
 
-По верхним и нижним границам пяти mask строятся две линии. Допустимое отклонение каждой границы равно `median_contact_height × 0.35`. В каждую mask вписывается прямоугольник `11.5×8.6 px` алгоритмом «центр → ближайшее допустимое положение»; размер задаётся непосредственно в пикселях порогами `spider_contacts_long_inscribed_rect_width_px` / `spider_contacts_long_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
+По верхним и нижним границам пяти mask строятся две линии. Допустимое отклонение каждой границы равно `median_contact_height × 0.35`. В каждую mask вписывается прямоугольник `38×18 px` алгоритмом «центр → ближайшее допустимое положение»; размер задаётся непосредственно в пикселях порогами `spider_contacts_long_inscribed_rect_width_px` / `spider_contacts_long_inscribed_rect_height_px`, физический масштаб больше не вычисляется.
 
 Renderer не содержит заливок, индексов, чисел и текстовых сообщений. Он показывает контуры пяти mask, пять эталонных прямоугольников, верхнюю и нижнюю линии с коридорами допуска, линию `omission-long` и пять перпендикуляров. Верхняя и нижняя линии имеют разные цвета; violated geometry становится красной. Отсутствующая omission reference показывается красным крестом через диапазон ряда.
 
@@ -377,12 +377,12 @@ long_tilt_ratio = abs(predicted_distance_right - predicted_distance_left)
 
 ```json
 "SPIDER_LEFT": {
-    "spider_long_omission_allowed_thickness_px": 20.0,
+    "spider_long_omission_allowed_thickness_px": 20.5,
     "spider_long_omission_excess_component_min_px": 3,
     "spider_long_omission_top_line_max_residual_px": 3.0
 },
 "SPIDER_IN": {
-    "spider_short_omission_allowed_thickness_px": 20.0,
+    "spider_short_omission_allowed_thickness_px": 25,
     "spider_short_omission_excess_component_min_px": 3,
     "spider_short_omission_top_line_max_residual_px": 3.0
 }
@@ -401,11 +401,11 @@ long_tilt_ratio = abs(predicted_distance_right - predicted_distance_left)
 Алгоритм поиска положения сохранён: сначала прямоугольник проверяется по центру mask, затем ищется ближайшее к центру допустимое положение.
 
 ```text
-SPIDER_LEFT/RIGHT contacts-long: width=11.5 px, height=8.6 px
-SPIDER_IN/OUT flatness_short:    width=25.2 px, height=9.6 px
+SPIDER_LEFT/RIGHT contacts-long: width=38 px, height=18 px
+SPIDER_IN/OUT flatness_short:    width=30 px, height=18 px
 TOP contacts L/R:                width=28 px, height=35 px
 TOP contacts T/B:                width=30 px, height=28 px
-TOP platform, внутренний:        width=260 px, height=120 px
+TOP platform, внутренний:        width=270 px, height=130 px
 TOP platform, область заплыва:   строится по контактам (без фиксированного размера)
 ```
 
@@ -417,11 +417,11 @@ TOP platform, область заплыва:   строится по конта�
     "top_contacts_side_rect_height_px": 35,
     "top_contacts_edge_rect_width_px": 30,
     "top_contacts_edge_rect_height_px": 28,
-    "top_platform_inscribed_rect_width_px": 260,
-    "top_platform_inscribed_rect_height_px": 120,
+    "top_platform_inscribed_rect_width_px": 270,
+    "top_platform_inscribed_rect_height_px": 130,
     "top_platform_overlap_excess_component_min_px": 3,
     "top_platform_overlap_contact_min_confidence": 0.3,
-    "top_platform_overlap_contact_inner_ratio": 0.5,
+    "top_platform_overlap_contact_inner_ratio": 0.1,
     "top_platform_overlap_margin_px": 0,
     "top_platform_overlap_expand_x_ratio": 1.0,
     "top_platform_overlap_expand_y_ratio": 1.0
@@ -434,7 +434,7 @@ TOP platform, область заплыва:   строится по конта�
 
 Renderer показывает platform bbox, четыре reference-линии, четырнадцать перпендикуляров, contours и rectangles без заливок, индексов и чисел. Нарушенный distance или rectangle становится красным. Невозможные построения используют короткие сообщения `CONTACTS N/14`, `NO CONTACT MASK`, `NO PLATFORM`, `NO PLATFORM BBOX`, `LAYOUT ...`. Справа выводятся четыре group summary и distance/deviation/rectangle для каждого из четырнадцати контактов.
 
-Для `TOP platform` контакты не требуются. Используется только самая большая valid platform mask; дополнительные detections остаются исключительно в `RAW`. По ориентации `minAreaRect` строится rectangle `260×120 px`: сначала по центру bbox mask, затем в ближайшем положении, где каждый пиксель rectangle находится внутри segmentation mask. Если допустимого положения нет — `БРАК`.
+Для `TOP platform` контакты не требуются. Используется только самая большая valid platform mask; дополнительные detections остаются исключительно в `RAW`. По ориентации `minAreaRect` строится rectangle `270×130 px`: сначала по центру bbox mask, затем в ближайшем положении, где каждый пиксель rectangle находится внутри segmentation mask. Если допустимого положения нет — `БРАК`.
 
 Renderer показывает нейтральный contour platform, rectangle, исходный центр bbox и фактический центр rectangle. При смещении центры соединяются линией; при невписываемости красным становится rectangle, а не вся mask. Невозможность построить reference обозначается `NO PLATFORM` или `NO ORIENTATION`. Справа остаются только размер, angle, centered/shifted/not fitted и shift distance; coordinates centers и extras не публикуются.
 
@@ -442,9 +442,9 @@ Renderer показывает нейтральный contour platform, rectangle
 
 Теперь правило строит прямоугольную область **по контактам**. Контакты TOP с confidence не ниже `top_platform_overlap_contact_min_confidence` группируются по сторонам платформы `L/R/T/B` в системе координат, повёрнутой на угол platform mask.
 
-Платформа всегда считается стоящей вертикально. `minAreaRect` возвращает угол *длинной* оси mask, поэтому у вертикально стоящей детали он равен ~90°, и рабочая система координат легла бы набок: стороны `L/R` и `T/B` поменялись бы местами, а `expand_x/y_ratio` растягивали бы область поперёк ожидаемого направления. Угол нормализуется в диапазон `[-45°, 45°]`, так что ось X рабочей системы всегда совпадает с горизонталью детали (стороны `L/R`), ось Y — с вертикалью (`T/B`). Реальный физический наклон детали при этом сохраняется. Для каждого контакта берётся опорная координата по `top_platform_overlap_contact_inner_ratio`: `0.5` — центр контакта (значение по умолчанию), `0` — кромка, обращённая к платформе, `1` — внешняя кромка. Медиана опорных координат внутри каждой группы задаёт одну сторону прямоугольника; полученная область дополнительно расширяется наружу на `top_platform_overlap_margin_px` и масштабируется коэффициентами `top_platform_overlap_expand_x_ratio` / `expand_y_ratio`. Затем прямоугольник возвращается в исходную систему координат с тем же углом, что и платформа.
+Платформа всегда считается стоящей вертикально. `minAreaRect` возвращает угол *длинной* оси mask, поэтому у вертикально стоящей детали он равен ~90°, и рабочая система координат легла бы набок: стороны `L/R` и `T/B` поменялись бы местами, а `expand_x/y_ratio` растягивали бы область поперёк ожидаемого направления. Угол нормализуется в диапазон `[-45°, 45°]`, так что ось X рабочей системы всегда совпадает с горизонталью детали (стороны `L/R`), ось Y — с вертикалью (`T/B`). Реальный физический наклон детали при этом сохраняется. Для каждого контакта берётся опорная координата по `top_platform_overlap_contact_inner_ratio`. Текущее значение `0.1` располагает её у внутренней кромки; `0` — кромка, обращённая к платформе, `0.5` — центр, `1` — внешняя кромка. Медиана опорных координат внутри каждой группы задаёт одну сторону прямоугольника; полученная область дополнительно расширяется наружу на `top_platform_overlap_margin_px` и масштабируется коэффициентами `top_platform_overlap_expand_x_ratio` / `expand_y_ratio`. Затем прямоугольник возвращается в исходную систему координат с тем же углом, что и платформа.
 
-Область строится только по контактам — концентрический fallback вокруг вписанного прямоугольника `260×120 px` удалён вместе с параметрами `top_platform_overlap_boundary_width/height_px`. Если контактов не хватает хотя бы по одному на каждую из сторон `L/R/T/B`, построение невозможно: правило бракует деталь с reason `contact_boundary_not_built` и сообщением `NO CONTACT RECT`.
+Область строится только по контактам — концентрический fallback вокруг вписанного прямоугольника `270×130 px` удалён вместе с параметрами `top_platform_overlap_boundary_width/height_px`. Если контактов не хватает хотя бы по одному на каждую из сторон `L/R/T/B`, построение невозможно: правило бракует деталь с reason `contact_boundary_not_built` и сообщением `NO CONTACT RECT`.
 
 Если платформа пересекает границы построенного прямоугольника, срабатывает правило пересечения. Пиксели platform mask снаружи границы разбиваются на 8-связные компоненты: компоненты из 1–2 пикселей считаются шумом, связный выход от `top_platform_overlap_excess_component_min_px = 3 px` бракует деталь как заплыв платформы.
 
@@ -499,7 +499,7 @@ BAD renderer показывает все selected contact contours, янтарн
 
 ### Понятные названия порогов для оператора
 
-Каждый порог в панели «ПОРОГИ ПРАВИЛ» имеет встроенный перевод на русский, максимально близкий к смыслу проверки (например, `top_contacts_min_confidence` → «Мин. уверенность контактов», `top_platform_inscribed_rect_width_px` → «Ширина эталона платформы, px»). Названия чисто для отображения, на логику правил они не влияют. Переопределить название можно только вручную в `thresholds.json` — ключом `"_label.<parameter>": "Название"` внутри секции камеры:
+Каждый порог в панели «ПОРОГИ ПРАВИЛ» имеет встроенный перевод на русский, максимально близкий к смыслу проверки (например, `top_contacts_min_confidence` → «Мин. уверенность контактов сверху», `top_platform_inscribed_rect_width_px` → «Вписываемый эталон платформы: ширина, px»). Названия чисто для отображения, на логику правил они не влияют. Переопределить название можно только вручную в `thresholds.json` — ключом `"_label.<parameter>": "Название"` внутри секции камеры:
 
 ```json
 "TOP": {
@@ -511,6 +511,9 @@ BAD renderer показывает все selected contact contours, янтарн
 Переопределённые названия подхватываются при запуске и при автоперечитывании файла; удаляются пустой строкой.
 
 Аудит текущей конфигурации: отсутствующих обязательных параметров нет. Ранее неявные `top_glass_case_*` и `top_glass_pin_min_confidence` теперь явно записаны в секции `TOP`; неиспользуемый общий `min_confidence` удалён.
+
+Полная сверка значений, связей правил, русских подписей и ограничений полей
+доступна в [`docs/thresholds_audit_ru.md`](docs/thresholds_audit_ru.md).
 
 ## Запуск только UI
 
@@ -716,7 +719,7 @@ run_distributor_calibration.bat
 
 Кнопки ручного позиционирования DIST1/DIST2 доступны и раскрыты только в `IDLE/STOPPED`. С момента ПУСК они плавно сворачиваются и не появляются до состояния полной остановки `STOPPED`; координаты, шкалы и текущие положения распределителей при этом остаются видимыми.
 
-Панель «ПОРОГИ ПРАВИЛ» (видна в `IDLE/STOPPED` при выбранной камере) разбита на блоки-карточки — по одной на каждое правило, в том же стиле, что карточки распределителя. Значение каждого порога задаётся только числовым полем; вертикальный ползунок справа прокручивает список блоков, когда он не помещается (дорожка и бегунок ползунка повторяют стиль распределителя). Список карточек ограничен по высоте, поэтому пороги не занимают место кнопок ручного управления лентой ниже. JOG-режим, который в `IDLE/STOPPED` включается автоматически, редактированию не мешает: пороги блокируются только на время реального движения ленты. Кнопка «СОХРАНИТЬ» отправляет изменённые значения на `POST /api/thresholds`; ответ backend применяется, и статус показывает «Сохранено».
+Панель «ПОРОГИ ПРАВИЛ» (видна в `IDLE/STOPPED` при выбранной камере) разбита на блоки-карточки — по одной на каждое правило, в том же стиле, что карточки распределителя. Каждый настраиваемый порог задаётся только числовым полем; при наведении на название показаны его смысл и единицы. Фиксированные конструктивные количества (пара коротких контактов и раскладка TOP `5L+5R+2T+2B`) видны для проверки, но не редактируются. Вертикальный ползунок справа прокручивает список блоков, когда он не помещается (дорожка и бегунок ползунка повторяют стиль распределителя). Список карточек ограничен по высоте, поэтому пороги не занимают место кнопок ручного управления лентой ниже. JOG-режим, который в `IDLE/STOPPED` включается автоматически, редактированию не мешает: пороги блокируются только на время реального движения ленты. Кнопка «СОХРАНИТЬ» отправляет изменённые значения на `POST /api/thresholds`; ответ backend применяется, и статус показывает «Сохранено».
 
 ## LIVE и анализ выбранного кадра
 

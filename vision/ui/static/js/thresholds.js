@@ -124,6 +124,7 @@ function renderThresholdsPanel() {
         thresholdsBodyKey = key;
         renderThresholdsBody();
     }
+    setThresholdInputsEditable(editable);
     updateThresholdsActions();
 }
 
@@ -137,7 +138,13 @@ function buildThresholdItem(param) {
     const span = document.createElement('span');
     span.className = 'thresholds-item-label';
     span.textContent = param.label || param.key;
-    span.title = param.key;
+    // Пояснение и технический ключ доступны без перегрузки карточки.
+    const description = String(param.description || '').trim();
+    const tooltip = description
+        ? `${description}\n\nТехнический ключ: ${param.key}`
+        : param.key;
+    span.title = tooltip;
+    span.setAttribute('aria-label', `${param.label || param.key}. ${tooltip}`);
     item.appendChild(span);
 
     // Значение задаётся только числовым полем.
@@ -148,9 +155,21 @@ function buildThresholdItem(param) {
     input.step = param.step || 'any';
     if (typeof param.min === 'number') input.min = param.min;
     if (typeof param.max === 'number') input.max = param.max;
+    // Инварианты топологии показаны, но не редактируются.
+    input.dataset.readonly = param.readonly === true ? 'true' : 'false';
+    if (param.readonly === true) input.disabled = true;
+    input.title = tooltip;
+    input.setAttribute('aria-label', param.label || param.key);
     input.value = param.value;
     item.appendChild(input);
     return item;
+}
+
+function setThresholdInputsEditable(editable) {
+    if (!els.thresholdsBody) return;
+    els.thresholdsBody.querySelectorAll('input.thresholds-input').forEach(input => {
+        input.disabled = !editable || input.dataset.readonly === 'true';
+    });
 }
 
 function renderThresholdsBody() {

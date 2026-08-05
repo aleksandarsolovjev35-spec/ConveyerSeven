@@ -489,7 +489,9 @@ class RuleSummaryCardTests(unittest.TestCase):
             for metric in card["metrics"]
         }
         # Название порога из «Порогов правил» вместо внутреннего «избыток».
-        self.assertIn("Мин. размер лишнего фрагмента, px", labels)
+        self.assertIn(
+            "Мин. число пикселей в компоненте избытка, px", labels,
+        )
 
     def test_run_status_passes_through_report_row(self):
         """Статус прогонов («ОБЛАСТЬ НЕ ПОСТРОЕНА») доходит до отчёта."""

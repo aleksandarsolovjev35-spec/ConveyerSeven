@@ -5,7 +5,7 @@
 «Анализ кадра» это выглядит как карточки порогов правил:
 
   Геометрия входного окна
-    Низ зоны окон: макс. px [40]
+    B после перекладины: макс., px [40]
       [32] [31] [32]
     Окно #1: верх, px — [25]
       [25] [26] [25]
@@ -233,7 +233,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 "Высота эталона, px", role_details.get("rect_height_px"),
                 unit=" px", key="rect_height_px",
             ))
-        # Наклон к omission
+        # Наклон к линии пропуска
         tilt = role_details.get("omission_tilt_check") or {}
         ratio = tilt.get("distance_trend_ratio")
         if ratio is None:
@@ -241,7 +241,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         ratio_max = role_details.get("omission_tilt_ratio_max")
         if ratio is not None:
             add(_metric(
-                "Наклон к omission", ratio, ratio_max,
+                "Наклон к линии пропуска", ratio, ratio_max,
                 ok=_within(ratio, ratio_max),
                 key="omission_tilt_ratio_max",
             ))
@@ -274,7 +274,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 ))
             if omission is not None:
                 add(_metric(
-                    f"Контакт #{idx}: дист. до omission, px", omission,
+                    f"Контакт #{idx}: расстояние до линии пропуска, px", omission,
                     unit=" px", key=f"contact_{idx}_omission_dist_px",
                 ))
 
@@ -328,7 +328,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
         ratio_max = role_details.get("omission_tilt_ratio_max")
         if ratio is not None:
             add(_metric(
-                "Наклон к omission", ratio, ratio_max,
+                "Наклон к линии пропуска", ratio, ratio_max,
                 ok=_within(ratio, ratio_max),
                 key="omission_tilt_ratio_max",
             ))
@@ -365,7 +365,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 ))
             if omission is not None:
                 add(_metric(
-                    f"Контакт #{idx}: дист. до omission, px", omission,
+                    f"Контакт #{idx}: расстояние до линии пропуска, px", omission,
                     unit=" px", key=f"contact_{idx}_omission_dist_px",
                 ))
 
@@ -531,12 +531,12 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             min_top = min(top_nums)
             max_top = max(top_nums)
             add(_metric(
-                "Верх зоны окон: мин. px", min_top, top_limits[0],
+                "T до перекладины: мин., px", min_top, top_limits[0],
                 ok=min_top >= float(top_limits[0]), unit=" px",
                 key="top_px_min",
             ))
             add(_metric(
-                "Верх зоны окон: макс. px", max_top, top_limits[1],
+                "T до перекладины: макс., px", max_top, top_limits[1],
                 ok=max_top <= float(top_limits[1]), unit=" px",
                 key="top_px_max",
             ))
@@ -544,12 +544,12 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             min_bottom = min(bottom_nums)
             max_bottom = max(bottom_nums)
             add(_metric(
-                "Низ зоны окон: мин. px", min_bottom, bottom_limits[0],
+                "B после перекладины: мин., px", min_bottom, bottom_limits[0],
                 ok=min_bottom >= float(bottom_limits[0]), unit=" px",
                 key="bottom_px_min",
             ))
             add(_metric(
-                "Низ зоны окон: макс. px", max_bottom, bottom_limits[1],
+                "B после перекладины: макс., px", max_bottom, bottom_limits[1],
                 ok=max_bottom <= float(bottom_limits[1]), unit=" px",
                 key="bottom_px_max",
             ))
@@ -834,7 +834,7 @@ _REASON_TEXT = {
     "invalid_contact_layout": "нарушена раскладка контактов",
     "layout_groups_failed": "нарушена раскладка контактов",
     "missing_glass_mask": "нет маски стекла",
-    "missing_pin_mask": "нет маски пина",
+    "missing_pin_mask": "нет маски штифта",
     "empty_case_ring": "пустое кольцо корпуса",
     "case_central_not_inside_case": "смещён центр корпуса",
     "inner_platform_reference_not_fitted": "не построен эталон платформы",

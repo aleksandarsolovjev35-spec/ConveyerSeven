@@ -230,6 +230,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: help;
 }
 
 .thresholds-input {
@@ -260,8 +261,13 @@
     border-color: var(--accent);
 }
 
-.thresholds-panel.is-locked .thresholds-input {
+.thresholds-panel.is-locked .thresholds-input,
+.thresholds-input:disabled {
     opacity: 0.55;
+}
+
+.thresholds-input:disabled {
+    cursor: not-allowed;
 }
 
 /* ─── Ползунок прокрутки карточки ──────────────────────────────────

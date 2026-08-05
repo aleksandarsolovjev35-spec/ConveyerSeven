@@ -35,6 +35,13 @@ class SpiderContactsShortRule(BaseRule):
 
             min_conf = self._get("spider_contacts_short_min_confidence", 0.3, role=role)
             expected_count = self._get("spider_contacts_short_expected_count", 2, role=role)
+            # Алгоритм сравнивает строго пару p_a/p_b; другое количество
+            # нельзя трактовать как настраиваемый допуск.
+            if type(expected_count) is not int or expected_count != 2:
+                raise ValueError(
+                    f"{role}.spider_contacts_short_expected_count "
+                    "должен быть равен 2 (пара контактов)"
+                )
             level_dev_ratio = self._get("spider_contacts_short_level_deviation_ratio", 0.20, role=role)
             rect_width_px = self._get(
                 "spider_contacts_short_inscribed_rect_width_px", 25.2, role=role,
