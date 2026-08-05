@@ -261,7 +261,7 @@ function setFrameAnalysisRulesFilter(next) {
         updateFrameAnalysisRulesTitle(state.frameAnalysisRulesCache);
         if (typeof renderFrameAnalysisPanel === 'function') {
             const vis = visibleFrameAnalysisRules(state.frameAnalysisRulesCache);
-            renderFrameAnalysisPanel(vis, state.viewRun);
+            renderFrameAnalysisPanel(vis, state.viewRun, state.frameAnalysisModelsCache);
         } else if (typeof renderFrameAnalysisRules === 'function') {
             renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
         }
@@ -424,7 +424,7 @@ function updateFrameAnalysisStatus(ls) {
         // данные те же — но фильтр мог смениться, перерисуем с фильтром
         const vis = visibleFrameAnalysisRules(rules);
         if (typeof renderFrameAnalysisPanel === 'function') {
-            renderFrameAnalysisPanel(vis, state.viewRun);
+            renderFrameAnalysisPanel(vis, state.viewRun, report.models);
         }
         return;
     }
@@ -442,10 +442,13 @@ function updateFrameAnalysisStatus(ls) {
 
     const visible = visibleFrameAnalysisRules(rules);
     if (typeof renderFrameAnalysisPanel === 'function') {
-        renderFrameAnalysisPanel(visible, state.viewRun);
+        renderFrameAnalysisPanel(visible, state.viewRun, report.models);
     } else if (typeof renderFrameAnalysisRules === 'function') {
         renderFrameAnalysisRules(visible, state.viewRun);
     }
+
+    // Сохранить модели для использования при смене фильтра
+    state.frameAnalysisModelsCache = report.models;
 
     // анимация для новой карточки
     const cardsEl = els.frameAnalysisCards || document.getElementById('frame-analysis-cards');

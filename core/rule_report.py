@@ -34,16 +34,222 @@ METRIC_PARAM_LABELS = {
         "Макс. наклон к линии пропуска, доля высоты",
     ("contacts_short", "omission_tilt_ratio_max"):
         "Макс. наклон к линии пропуска, доля высоты",
+    # Дополнительные метрики контактов и omission для run_cards
+    ("long_omission", "max_excess_depth_px"):
+        "Макс. глубина избытка, px",
+    ("long_omission", "largest_component_px"):
+        "Крупнейший фрагмент, px",
+    ("short_omission", "max_excess_depth_px"):
+        "Макс. глубина избытка, px",
+    ("short_omission", "largest_component_px"):
+        "Крупнейший фрагмент, px",
+    ("contacts_long", "max_dev_top"):
+        "Макс. отклонение верх, px",
+    ("contacts_long", "max_dev_bottom"):
+        "Макс. отклонение низ, px",
+    ("contacts_long", "max_dev_height"):
+        "Макс. отклонение высота, px",
+    ("contacts_long", "max_level_slope"):
+        "Макс. наклон линии, доля",
+    ("contacts_short", "max_dev_top"):
+        "Макс. отклонение верх, px",
+    ("contacts_short", "max_dev_bottom"):
+        "Макс. отклонение низ, px",
+    ("contacts_short", "max_dev_height"):
+        "Макс. отклонение высота, px",
+    ("contacts_short", "max_level_slope"):
+        "Макс. наклон линии, доля",
+    ("contacts_long", "rect_width_px"):
+        "Ширина эталона контакта, px",
+    ("contacts_long", "rect_height_px"):
+        "Высота эталона контакта, px",
+    ("contacts_short", "rect_width_px"):
+        "Ширина эталона контакта, px",
+    ("contacts_short", "rect_height_px"):
+        "Высота эталона контакта, px",
     ("top_contacts", "edge_distance_deviation_ratio"):
         "Допуск разброса отступа до края, доля размера контакта",
+    # top_contacts групповой
+    ("top_contacts", "found"):
+        "Валидных контактов, шт",
+    ("top_contacts", "found_raw"):
+        "Найдено контактов (сырые), шт",
+    ("top_contacts", "group_L_median_px"):
+        "Группа L: медиана дистанции, px",
+    ("top_contacts", "group_R_median_px"):
+        "Группа R: медиана дистанции, px",
+    ("top_contacts", "group_T_median_px"):
+        "Группа T: медиана дистанции, px",
+    ("top_contacts", "group_B_median_px"):
+        "Группа B: медиана дистанции, px",
+    ("top_contacts", "group_L_deviation_px"):
+        "Группа L: макс. отклонение, px",
+    ("top_contacts", "group_R_deviation_px"):
+        "Группа R: макс. отклонение, px",
+    ("top_contacts", "group_T_deviation_px"):
+        "Группа T: макс. отклонение, px",
+    ("top_contacts", "group_B_deviation_px"):
+        "Группа B: макс. отклонение, px",
+    # top_contacts по контактам
+    ("top_contacts", "contact_1_distance_px"):
+        "Контакт #1: дистанция до края, px",
+    ("top_contacts", "contact_2_distance_px"):
+        "Контакт #2: дистанция до края, px",
+    ("top_contacts", "contact_3_distance_px"):
+        "Контакт #3: дистанция до края, px",
+    ("top_contacts", "contact_4_distance_px"):
+        "Контакт #4: дистанция до края, px",
+    ("top_contacts", "contact_5_distance_px"):
+        "Контакт #5: дистанция до края, px",
+    ("top_contacts", "contact_6_distance_px"):
+        "Контакт #6: дистанция до края, px",
+    ("top_contacts", "contact_7_distance_px"):
+        "Контакт #7: дистанция до края, px",
+    ("top_contacts", "contact_8_distance_px"):
+        "Контакт #8: дистанция до края, px",
+    ("top_contacts", "contact_9_distance_px"):
+        "Контакт #9: дистанция до края, px",
+    ("top_contacts", "contact_10_distance_px"):
+        "Контакт #10: дистанция до края, px",
+    ("top_contacts", "contact_11_distance_px"):
+        "Контакт #11: дистанция до края, px",
+    ("top_contacts", "contact_12_distance_px"):
+        "Контакт #12: дистанция до края, px",
+    ("top_contacts", "contact_13_distance_px"):
+        "Контакт #13: дистанция до края, px",
+    ("top_contacts", "contact_14_distance_px"):
+        "Контакт #14: дистанция до края, px",
+    ("top_contacts", "contact_1_deviation_px"):
+        "Контакт #1: отклонение, px",
+    ("top_contacts", "contact_2_deviation_px"):
+        "Контакт #2: отклонение, px",
+    ("top_contacts", "contact_3_deviation_px"):
+        "Контакт #3: отклонение, px",
+    ("top_contacts", "contact_4_deviation_px"):
+        "Контакт #4: отклонение, px",
+    ("top_contacts", "contact_5_deviation_px"):
+        "Контакт #5: отклонение, px",
+    ("top_contacts", "contact_6_deviation_px"):
+        "Контакт #6: отклонение, px",
+    ("top_contacts", "contact_7_deviation_px"):
+        "Контакт #7: отклонение, px",
+    ("top_contacts", "contact_8_deviation_px"):
+        "Контакт #8: отклонение, px",
+    ("top_contacts", "contact_9_deviation_px"):
+        "Контакт #9: отклонение, px",
+    ("top_contacts", "contact_10_deviation_px"):
+        "Контакт #10: отклонение, px",
+    ("top_contacts", "contact_11_deviation_px"):
+        "Контакт #11: отклонение, px",
+    ("top_contacts", "contact_12_deviation_px"):
+        "Контакт #12: отклонение, px",
+    ("top_contacts", "contact_13_deviation_px"):
+        "Контакт #13: отклонение, px",
+    ("top_contacts", "contact_14_deviation_px"):
+        "Контакт #14: отклонение, px",
+    ("top_contacts", "contact_1_rect_fits"):
+        "Контакт #1: прямоугольник",
+    ("top_contacts", "contact_2_rect_fits"):
+        "Контакт #2: прямоугольник",
+    ("top_contacts", "contact_3_rect_fits"):
+        "Контакт #3: прямоугольник",
+    ("top_contacts", "contact_4_rect_fits"):
+        "Контакт #4: прямоугольник",
+    ("top_contacts", "contact_5_rect_fits"):
+        "Контакт #5: прямоугольник",
+    ("top_contacts", "contact_6_rect_fits"):
+        "Контакт #6: прямоугольник",
+    ("top_contacts", "contact_7_rect_fits"):
+        "Контакт #7: прямоугольник",
+    ("top_contacts", "contact_8_rect_fits"):
+        "Контакт #8: прямоугольник",
+    ("top_contacts", "contact_9_rect_fits"):
+        "Контакт #9: прямоугольник",
+    ("top_contacts", "contact_10_rect_fits"):
+        "Контакт #10: прямоугольник",
+    ("top_contacts", "contact_11_rect_fits"):
+        "Контакт #11: прямоугольник",
+    ("top_contacts", "contact_12_rect_fits"):
+        "Контакт #12: прямоугольник",
+    ("top_contacts", "contact_13_rect_fits"):
+        "Контакт #13: прямоугольник",
+    ("top_contacts", "contact_14_rect_fits"):
+        "Контакт #14: прямоугольник",
+    # top_platform
+    ("top_platform", "placement"):
+        "Положение эталона",
+    ("top_platform", "shift_distance_px"):
+        "Смещение центра, px",
+    ("top_platform", "angle_deg"):
+        "Угол платформы, °",
+    ("top_platform", "rect_width_px"):
+        "Ширина эталона платформы, px",
+    ("top_platform", "rect_height_px"):
+        "Высота эталона платформы, px",
+    # platform_contacts_overlap
     ("platform_contacts_overlap", "excess_component_min_px"):
         "Мин. число пикселей в компоненте заплыва, px",
-    ("window_sinks", "overlap_min_px"):
-        "Мин. число общих пикселей раковины и окна, px",
-    ("part_presence", "false_positive_max_count"):
-        "Допустимое число ложных срабатываний, шт.",
-    # Геометрия входного окна: T — верх маски → перекладина,
-    # B — перекладина → низ маски.
+    ("platform_contacts_overlap", "largest_component_px"):
+        "Крупнейший компонент заплыва, px",
+    ("platform_contacts_overlap", "used_contacts"):
+        "Контактов в области, шт",
+    ("platform_contacts_overlap", "boundary_width_px"):
+        "Ширина границы области, px",
+    ("platform_contacts_overlap", "boundary_height_px"):
+        "Высота границы области, px",
+    # sinks (TOP)
+    ("sinks", "sinks_hits"):
+        "Пересечений раковин, шт",
+    ("sinks", "shell_1_forbidden_px"):
+        "Раковина #1: запрещ. пиксели, px",
+    ("sinks", "shell_2_forbidden_px"):
+        "Раковина #2: запрещ. пиксели, px",
+    ("sinks", "shell_1_central_px"):
+        "Раковина #1: центр. перехл., px",
+    ("sinks", "shell_2_central_px"):
+        "Раковина #2: центр. перехл., px",
+    ("sinks", "shell_1_platform_px"):
+        "Раковина #1: платформа, px",
+    ("sinks", "shell_2_platform_px"):
+        "Раковина #2: платформа, px",
+    ("sinks", "shell_1_contacts_px"):
+        "Раковина #1: контакты, px",
+    ("sinks", "shell_2_contacts_px"):
+        "Раковина #2: контакты, px",
+    # glass
+    ("glass", "glass_hits"):
+        "Совпадений стекла, шт",
+    ("glass", "glass_1_platform_px"):
+        "Стекло #1: платформа, px",
+    ("glass", "glass_2_platform_px"):
+        "Стекло #2: платформа, px",
+    ("glass", "glass_1_pin_px"):
+        "Стекло #1: пины, px",
+    ("glass", "glass_2_pin_px"):
+        "Стекло #2: пины, px",
+    ("glass", "glass_1_ring_px"):
+        "Стекло #1: кольцо, px",
+    ("glass", "glass_2_ring_px"):
+        "Стекло #2: кольцо, px",
+    ("glass", "glass_1_union_px"):
+        "Стекло #1: union, px",
+    ("glass", "glass_2_union_px"):
+        "Стекло #2: union, px",
+    # glass_on_contacts
+    ("glass_on_contacts", "glass_count"):
+        "Стекол, шт",
+    ("glass_on_contacts", "pins_found"):
+        "Пинов, шт",
+    ("glass_on_contacts", "glass_contact_pairs"):
+        "Пар стекло/контакт, шт",
+    ("glass_on_contacts", "glass_1_contact_1_overlap_px"):
+        "Стекло #1 → контакт #1: перехл., px",
+    ("glass_on_contacts", "glass_1_contact_2_overlap_px"):
+        "Стекло #1 → контакт #2: перехл., px",
+    ("glass_on_contacts", "glass_2_contact_1_overlap_px"):
+        "Стекло #2 → контакт #1: перехл., px",
+    ("glass_on_contacts", "glass_2_contact_2_overlap_px"):
+        "Стекло #2 → контакт #2: перехл., px",
     ("window_geometry", "top_px_min"): "T до перекладины: мин., px",
     ("window_geometry", "top_px_max"): "T до перекладины: макс., px",
     ("window_geometry", "bottom_px_min"): "B после перекладины: мин., px",
@@ -675,6 +881,17 @@ def _status_label(rule_name: str, triggered: bool, details: dict, consensus: dic
     ), False
 
 
+# === Расширенные данные голосования для анализа кадра ===
+VOTE_DETAIL_KEYS = (
+    "triggered_votes",
+    "normal_votes",
+    "decision",
+    "states",
+    "source_run",
+    "evidence_run",
+    "agreement_scores",
+)
+
 # === Упрощённые человеческие причины дефектов (для быстрого понимания оператором) ===
 HUMAN_CAUSE_MAP = {
     # INPUT
@@ -878,6 +1095,50 @@ def _threshold_conclusion(
     if breaches:
         return human_cause or "Значение вышло за заданный порог — правило сработало"
     return human_cause or "Правило сработало: проверьте причину и измерения"
+
+
+def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
+    """Извлечь детали голосования для правила из consensus.
+    
+    Возвращает структуру с явными голосами по прогонам, evidence run,
+    agreement scores для отображения в UI.
+    """
+    if not isinstance(consensus, dict):
+        return None
+    
+    rules_meta = consensus.get("rules", {})
+    rule_meta = rules_meta.get(rule_name) if isinstance(rules_meta, dict) else None
+    if not isinstance(rule_meta, dict):
+        return None
+    
+    # Базовые голоса
+    triggered_votes = int(rule_meta.get("triggered_votes") or 0)
+    normal_votes = int(rule_meta.get("normal_votes") or 0)
+    decision = rule_meta.get("decision")
+    states = rule_meta.get("states") or []
+    source_run = rule_meta.get("source_run")
+    evidence_run = rule_meta.get("evidence_run")
+    
+    # Agreement scores - согласованность прогонов
+    agreement_scores = consensus.get("agreement_scores") or []
+    
+    # Picture run из consensus
+    picture_run = consensus.get("picture_run")
+    picture_reason = consensus.get("picture_reason")
+    
+    return {
+        "triggered_votes": triggered_votes,
+        "normal_votes": normal_votes,
+        "decision": decision,
+        "states": states,
+        "source_run": source_run,
+        "evidence_run": evidence_run,
+        "agreement_scores": agreement_scores,
+        "picture_run": picture_run,
+        "picture_reason": picture_reason,
+        "total_runs": int(consensus.get("runs") or 3),
+        "required_votes": int(consensus.get("required_votes") or 2),
+    }
 
 
 def _fallback_run_status(run_cards: list) -> list:
@@ -1174,6 +1435,8 @@ def build_rule_report_row(result) -> dict:
         # Значения, не прошедшие проверку, их пороги и итог для HMI.
         "threshold_breaches": threshold_breaches,
         "threshold_conclusion": threshold_conclusion,
+        # Детали голосования для UI анализа кадра.
+        "vote_details": _extract_vote_details(consensus, rule_name),
         "part_absent": part_absent,
         "decisive": bool(part_absent or triggered or skipped),
         "consensus": dict(consensus),

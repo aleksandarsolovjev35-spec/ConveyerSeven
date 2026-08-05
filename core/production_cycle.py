@@ -1652,12 +1652,28 @@ class ProductionCycle:
             vision = getattr(self.inspector, "vision", None)
             rows = getattr(vision, "last_health", None) or []
         consensus = getattr(result, "consensus", None) or {}
+        
+        # Подготовить модели с детальной информацией по прогонам
+        model_details = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            model_details.append({
+                "role": item.get("role"),
+                "model": item.get("model"),
+                "ok": item.get("ok"),
+                "runs": item.get("runs"),
+                "elapsed_ms": item.get("elapsed_ms"),
+                "elapsed_total_ms": item.get("elapsed_total_ms"),
+                "detections": item.get("detections"),
+                "detections_by_run": item.get("detections_by_run", []),
+                "error": item.get("error"),
+            })
+        
         self._frame_analysis_groups[group] = {
             "part_id": part_id,
             "rule_results": list(result.rule_results),
-            "models": [
-                dict(item) for item in rows if isinstance(item, dict)
-            ],
+            "models": model_details,
             "picture_run": (
                 int(consensus.get("picture_run"))
                 if consensus.get("picture_run") else None
