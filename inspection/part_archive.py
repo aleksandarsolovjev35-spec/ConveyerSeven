@@ -96,6 +96,10 @@ class PartArchive:
         self._archived: list[dict] = []
         self._batch_parts: list[dict] = []
         self._batch_stats = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
+        # Сырые выходы моделей хранятся отдельно от debug-кадров: их можно
+        # просматривать и превращать в датасет, не обучаясь на красных
+        # обводках и прочей визуальной разметке.
+        self._vision_buffers: dict[int, dict[str, list]] = {}
 
         # Счётчик сохранённых деталей
         self._finalized_count = 0
@@ -249,6 +253,13 @@ class PartArchive:
 
         buf = self._buffers[part_id]
 
+        if run_vision_results:
+            stage_key = str(stage or "unknown").lower()
+            self._vision_buffers.setdefault(part_id, {})[stage_key] = [
+                self._json_safe(run_result)
+                for run_result in run_vision_results
+            ]
+
         for role, frame in raw_frames.items():
             if role not in buf:
                 buf[role] = {}
@@ -332,8 +343,9 @@ class PartArchive:
         os.makedirs(folder_path, exist_ok=True)
 
         roles_saved = []
-        # Keep the buffer until every image and meta.json is written.
-        # A disk/JPEG failure must not silently lose the part data.
+        annotation_files = []
+        # Keep the buffer until every image, model annotation and meta.json
+        # are written. A disk/JPEG failure must not silently lose the part data.
         buf = self._buffers.get(part_id, {})
 
         for role, frames in buf.items():
@@ -384,6 +396,7 @@ class PartArchive:
 
             roles_saved.append(role)
 
+        annotation_files = self._save_vision_annotations(part_id, folder_path)
         now = datetime.now()
         meta = {
             "schema_version": self.SCHEMA_VERSION,
@@ -400,6 +413,25 @@ class PartArchive:
             "defects": defects,
             "roles": roles_saved,
             "folder": folder_path.replace("\\", "/"),
+            "training": {
+                "raw_images": (
+                    [
+                        f"{role}.jpg"
+                        for role in roles_saved
+                        if os.path.exists(os.path.join(folder_path, f"{role}.jpg"))
+                    ]
+                    + [
+                        f"{role}_run{run}.jpg"
+                        for role in roles_saved
+                        for run in (1, 2, 3)
+                        if os.path.exists(
+                            os.path.join(folder_path, f"{role}_run{run}.jpg")
+                        )
+                    ]
+                ),
+                "pseudo_annotation_files": annotation_files,
+                "annotations_are_model_predictions": True,
+            },
         }
 
         if extra:
@@ -414,6 +446,7 @@ class PartArchive:
         os.replace(temp_meta_path, meta_path)
 
         self._buffers.pop(part_id, None)
+        self._vision_buffers.pop(part_id, None)
         relative_folder = os.path.relpath(
             folder_path, self.batch_folder,
         ).replace("\\", "/")
@@ -424,6 +457,7 @@ class PartArchive:
             "folder": folder_path.replace("\\", "/"),
             "relative_folder": relative_folder,
             "roles": roles_saved,
+            "annotation_files": annotation_files,
             "time": now.strftime("%H:%M:%S"),
         }
         self._archived.append(archived_item)
@@ -506,6 +540,71 @@ class PartArchive:
 
         return result
 
+    def _save_vision_annotations(self, part_id: int, folder_path: str) -> list[str]:
+        """Сохранить сырые выходы моделей рядом с кадрами для датасета.
+
+        Это именно pseudo-labels: модельные детекции не считаются
+        подтверждённой разметкой и должны быть проверены человеком перед
+        дообучением. JSON оставляет маски, bbox, confidence и model_path,
+        поэтому позже его можно конвертировать в YOLO/COCO без повторного
+        запуска камер.
+        """
+        records = self._vision_buffers.get(part_id, {})
+        saved = []
+        for stage, runs in records.items():
+            for run_index, run_results in enumerate(runs, start=1):
+                if not isinstance(run_results, dict):
+                    continue
+                for role, detections in run_results.items():
+                    safe_role = self._safe_name(role)
+                    filename = (
+                        f"{stage}_{safe_role}_run{run_index}_detections.json"
+                    )
+                    path = os.path.join(folder_path, filename)
+                    payload = {
+                        "schema_version": 1,
+                        "kind": "model_predictions",
+                        "part_id": part_id,
+                        "batch_id": self.batch_id,
+                        "stage": stage,
+                        "role": role,
+                        "run": run_index,
+                        "image": f"{role}_run{run_index}.jpg",
+                        "pseudo_labels": True,
+                        "detections": self._json_safe(detections or []),
+                    }
+                    temp_path = path + ".tmp"
+                    with open(temp_path, "w", encoding="utf-8") as stream:
+                        json.dump(payload, stream, indent=2, ensure_ascii=False)
+                        stream.write("\n")
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temp_path, path)
+                    saved.append(filename)
+        return saved
+
+    @staticmethod
+    def _json_safe(value):
+        """Преобразовать numpy/tuple-значения в стабильный JSON."""
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            return value if value == value and abs(value) != float("inf") else None
+        if isinstance(value, dict):
+            return {str(key): PartArchive._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [PartArchive._json_safe(item) for item in value]
+        tolist = getattr(value, "tolist", None)
+        if callable(tolist):
+            return PartArchive._json_safe(tolist())
+        item = getattr(value, "item", None)
+        if callable(item):
+            try:
+                return PartArchive._json_safe(item())
+            except Exception:
+                pass
+        return str(value)
+
     def _save_batch_manifest(self, status: str = "OPEN"):
         """Атомарно обновить постоянный индекс текущей партии."""
         if not self.enabled:
@@ -527,9 +626,15 @@ class PartArchive:
                     "decision": item["decision"],
                     "folder": item["relative_folder"],
                     "time": item["time"],
+                    "annotation_files": item.get("annotation_files", []),
                 }
                 for item in self._batch_parts
             ],
+            "training": {
+                "raw_images_are_training_inputs": True,
+                "annotations": "pseudo-labels from the production models; review before training",
+                "image_quality": self.jpeg_quality,
+            },
             "compression": {
                 "jpeg_quality": self.jpeg_quality,
                 "zip_compression": self.zip_compression,
