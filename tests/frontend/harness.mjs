@@ -69,6 +69,10 @@ export function makeEl(tag = 'div') {
 }
 
 // ─── Идентификаторы DOM, которые реально использует UI ────────
+// Список синхронизирован с vision/ui/templates/index.html: только те id,
+// которые есть в HTML. Id «полной» панели анализа (frame-analysis-cards,
+// frame-analysis-verdict и т.п.) в HTML отсутствуют — в production они
+// недостижимы, и в харнессе их быть не должно.
 
 const UI_IDS = [
     'splash', 'splash-message', 'splash-progress-fill', 'splash-error',
@@ -77,7 +81,9 @@ const UI_IDS = [
     'preview-strip', 'camera-label', 'mode-badge', 'main-camera',
     'camera-overlay', 'view-mode-toggle', 'analyze-selected-frame',
     'dist1-state', 'dist1-pos', 'dist1-max', 'dist1-blade', 'dist1-target',
+    'dist1-card',
     'dist2-state', 'dist2-pos', 'dist2-max', 'dist2-blade', 'dist2-target',
+    'dist2-card',
     'dist-action', 'dist-route', 'distributor-diagnostics', 'control-error',
     'stats-summary', 'stats-body', 'stats-service', 'history-cards',
     'stats-panel', 'stat-total', 'stat-good', 'stat-bad', 'stat-cleanup',
@@ -92,15 +98,8 @@ const UI_IDS = [
     'gallery-decision', 'gallery-time', 'gallery-batch',
     'gallery-defects-list', 'gallery-close', 'gallery-mode-debug',
     'gallery-mode-raw',
-    // Панель анализа кадра (diagnostics/rule-summary/frame-analysis)
-    'fa-new-verdict', 'fa-new-context', 'fa-new-tbody',
-    'frame-analysis-title', 'frame-analysis-verdict', 'frame-analysis-message',
-    'frame-analysis-context', 'frame-analysis-picture',
-    'frame-analysis-rules-title', 'frame-analysis-models',
-    'frame-analysis-models-toggle', 'frame-analysis-cards',
-    'frame-analysis-tabs', 'frame-analysis-filter-triggered',
-    'frame-analysis-filter-all', 'frame-analysis-scroll-track',
-    'frame-analysis-body',
+    // Компактная панель анализа кадра (frame-analysis.js)
+    'fa-new-body', 'fa-new-verdict', 'fa-new-context', 'fa-new-tbody',
 ];
 
 // ─── Песочница ────────────────────────────────────────────────

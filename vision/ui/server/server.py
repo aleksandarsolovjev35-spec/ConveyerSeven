@@ -191,6 +191,51 @@ class UIServer:
             for a, b in zip(left, right)
         )
 
+    @staticmethod
+    def _rules_equal(left, right) -> bool:
+        """Глубокое сравнение результатов правил, безопасное для numpy.
+
+        ``details``/``drawings`` правил могут нести numpy-массивы и
+        numpy-скаляры: обычное ``!=`` на них бросает ValueError («truth
+        value of an array is ambiguous») и ломает сравнение. Обход:
+        - тот же объект — без изменений;
+        - списки/словари/датаклассы — рекурсивно;
+        - остальное — ``bool(left == right)`` с фолбэком на
+          ``np.array_equal``.
+        """
+        if left is right:
+            return True
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, list):
+            if len(left) != len(right):
+                return False
+            return all(
+                UIServer._rules_equal(a, b)
+                for a, b in zip(left, right)
+            )
+        if isinstance(left, dict):
+            if left.keys() != right.keys():
+                return False
+            return all(
+                UIServer._rules_equal(left[key], right[key])
+                for key in left
+            )
+        fields = getattr(left, "__dataclass_fields__", None)
+        if fields is not None:
+            return all(
+                UIServer._rules_equal(getattr(left, name), getattr(right, name))
+                for name in fields
+            )
+        try:
+            return bool(left == right)
+        except Exception:
+            import numpy as np
+            try:
+                return bool(np.array_equal(left, right))
+            except Exception:
+                return False
+
     def update(
         self,
         frames=None,
@@ -236,15 +281,9 @@ class UIServer:
                     list(rows) if isinstance(rows, (list, tuple)) else []
                     for rows in run_rule_results
                 ]
-                try:
-                    run_rules_changed = (
-                        self.run_rule_results != incoming_run_rules
-                    )
-                except Exception:
-                    # Правила прогонов могут нести numpy-значения в details:
-                    # сравнение ненадёжно, консервативно считаем «изменилось».
-                    run_rules_changed = True
-                if run_rules_changed:
+                if not UIServer._rules_equal(
+                    self.run_rule_results, incoming_run_rules,
+                ):
                     self.run_rule_results = incoming_run_rules
                     should_invalidate = True
             if frames is not None:
@@ -264,13 +303,7 @@ class UIServer:
                     stream_overlay_changed = True
             if rule_results is not None:
                 new_rules = list(rule_results)
-                try:
-                    rules_changed = self.rule_results != new_rules
-                except Exception:
-                    # В details/drawings могут попасть массивы: сравнение
-                    # значений ненадёжно, консервативно считаем «изменилось».
-                    rules_changed = True
-                if rules_changed:
+                if not UIServer._rules_equal(self.rule_results, new_rules):
                     self.rule_results = new_rules
                     should_invalidate = True
                     stream_overlay_changed = True

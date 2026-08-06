@@ -10,6 +10,7 @@ import unittest
 
 import numpy as np
 
+from domain.defect_rules.base import RuleResult
 from vision.ui.server.server import UIServer
 
 
@@ -121,6 +122,77 @@ class UIServerAtomicPublishTest(unittest.TestCase):
         self.assertFalse(UIServer._same_run_frames([{"A": a}], [{"A": a}, {"B": a}]))
         self.assertTrue(UIServer._same_frames({"A": a}, {"A": a}))
         self.assertFalse(UIServer._same_frames({"A": a}, {"B": b}))
+
+    def test_review_publish_does_not_bump_with_numpy_rules(self):
+        """REVIEW/PUBLISH повторно публикуют те же объекты правил — версия
+        не должна расти. В details/drawings правил numpy-массивы: наивное
+        ``!=`` падало бы и давало ложный бамп (перевзвод гейта UI)."""
+        rule = RuleResult(
+            rule_name="window_geometry",
+            triggered=False,
+            details={"per_role": {
+                "INPUT_LEFT": {"valid": True, "threshold": np.float64(12.5)},
+            }},
+            drawings=[{"type": "window_geometry_item", "role": "INPUT_LEFT",
+                       "pts": np.array([[1, 2], [3, 4]])}],
+        )
+        frame = _frame()
+        vision = {"A": [{"class": "flatness"}]}
+        rules = [rule]
+
+        # Анализ — новая публикация
+        self.server.update(
+            frames={"A": frame},
+            vision_results=vision,
+            rule_results=rules,
+            run_frames=[{"A": frame}],
+            run_rule_results=[[rule]],
+        )
+        version = self.server._cache_version
+
+        # REVIEW/PUBLISH: те же объекты кадров/правил/vision
+        self.server.update(frames={"A": frame}, vision_results=vision,
+                           rule_results=rules)
+        self.server.update(frames={"A": frame}, vision_results=vision,
+                           rule_results=rules)
+        self.assertEqual(self.server._cache_version, version)
+
+        # Реальное изменение (другой объект с triggered=True) — бамп
+        changed = RuleResult(
+            rule_name="window_geometry",
+            triggered=True,
+            details={"per_role": {
+                "INPUT_LEFT": {"valid": True, "threshold": np.float64(18.0)},
+            }},
+            drawings=[{"type": "window_geometry_item", "role": "INPUT_LEFT",
+                       "pts": np.array([[1, 2], [3, 4]])}],
+        )
+        self.server.update(frames={"A": frame}, vision_results=vision,
+                           rule_results=[changed])
+        self.assertEqual(self.server._cache_version, version + 1)
+
+    def test_rules_equal_numpy_safe(self):
+        a = RuleResult(
+            "r", False,
+            details={"v": np.float64(1.5)},
+            drawings=[{"pts": np.array([[1, 2]])}],
+        )
+        b = RuleResult(
+            "r", False,
+            details={"v": np.float64(1.5)},
+            drawings=[{"pts": np.array([[1, 2]])}],
+        )
+        c = RuleResult(
+            "r", True,
+            details={"v": np.float64(1.5)},
+            drawings=[{"pts": np.array([[1, 2]])}],
+        )
+        self.assertTrue(UIServer._rules_equal(a, a))
+        self.assertTrue(UIServer._rules_equal(a, b))
+        self.assertFalse(UIServer._rules_equal(a, c))
+        self.assertTrue(UIServer._rules_equal(np.float64(1.5), np.float64(1.5)))
+        self.assertFalse(UIServer._rules_equal(np.array([1, 2]), np.array([1, 3])))
+        self.assertTrue(UIServer._rules_equal(np.array([1, 2]), np.array([1, 2])))
 
 
 if __name__ == "__main__":

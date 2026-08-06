@@ -205,14 +205,14 @@ function updateLineStatus(ls) {
     setIfChanged(els.statCleanup, ls.cleanup  || 0);
     setIfChanged(els.statEmpty,   ls.empty    || 0);
 
-    const inLine = ls.in_line || 0;
+    // Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), панели
+    // анализа и счётчик корпусов держат предыдущий результат — они
+    // переключатся вместе с цветом корпуса на линии в flushPendingAnalysis().
+    const pendingAnalysis = state.pendingAnalysisVersion !== null;
+    const inLine = pendingAnalysis ? _appliedInLine : (ls.in_line || 0);
     setIfChanged(els.statInline, `${inLine} / 8`);
 
     const process = ls.process || {};
-    // Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), панели
-    // анализа держат предыдущий результат — они переключатся вместе с
-    // цветом корпуса на линии в flushPendingAnalysis().
-    const pendingAnalysis = state.pendingAnalysisVersion !== null;
     _updateDistributorRoute(ls);
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
@@ -285,10 +285,11 @@ const _lineTokens = new Map(); // partId -> {el, position, category}
 let _lineSyncDone = false;
 
 // Последний применённый (показанный) снимок линии: [{id, position, category}].
-// Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), категории и
-// появление новых корпусов берутся из этого снимка: линия и камеры
-// обновляются одним кадром («сначала монитор, потом UI»).
+// Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), категории,
+// появление новых корпусов и счётчик корпусов берутся из этого снимка:
+// линия и камеры обновляются одним кадром («сначала монитор, потом UI»).
 let _appliedLineParts = [];
+let _appliedInLine = 0;
 
 // Длительность одного шага линии: по ней же движутся маркеры деталей,
 // поэтому сдвиг выглядит синхронным с реальным конвейером.
@@ -626,6 +627,7 @@ function updateLineCells(lineParts, process = {}) {
             ),
             category: (part.category || '').toUpperCase(),
         }));
+        _appliedInLine = _appliedLineParts.length;
     }
 
     _updateLineGates(lineParts, process);
@@ -662,9 +664,6 @@ function flushPendingAnalysis() {
         updateLineCells(ls.line_parts || [], ls.process || {});
         if (typeof updateNewFrameAnalysisStatus === 'function') {
             updateNewFrameAnalysisStatus(ls);
-        }
-        if (typeof updateFrameAnalysisStatus === 'function') {
-            updateFrameAnalysisStatus(ls);
         }
     }
     if (typeof refreshPreviewStrip === 'function') {
