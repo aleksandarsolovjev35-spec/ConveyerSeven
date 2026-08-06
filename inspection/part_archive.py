@@ -39,6 +39,10 @@ class PartArchive:
 
     JPEG_QUALITY = 92
 
+    # Накопительная статистика по корпусам (годные / брак / очистка):
+    # ведётся между запусками в <root>/stats.json.
+    STATS_FILE = "stats.json"
+
     def __init__(
         self,
         root_folder: str = "archive",
@@ -62,6 +66,10 @@ class PartArchive:
 
         # Счётчик сохранённых деталей
         self._finalized_count = 0
+
+        # Статистика по корпусам: восстанавливается из stats.json,
+        # обновляется при каждой финализации.
+        self.stats: dict = self._load_stats()
 
         if self.enabled:
             os.makedirs(self.root_folder, exist_ok=True)
@@ -272,6 +280,19 @@ class PartArchive:
 
         self._finalized_count += 1
 
+        # Статистика по корпусам: годные / брак / очистка.
+        self.stats["total"] = int(self.stats.get("total") or 0) + 1
+        category_key = {
+            "GOOD": "good",
+            "BAD": "bad",
+            "CLEANUP": "cleanup",
+        }.get(str(category).upper())
+        if category_key:
+            self.stats[category_key] = (
+                int(self.stats.get(category_key) or 0) + 1
+            )
+        self._save_stats()
+
         print(
             f"[ARCHIVE] Деталь #{part_id} -> {folder_path} "
             f"({len(roles_saved)} ролей)"
@@ -333,6 +354,46 @@ class PartArchive:
                 result[role] = entry
 
         return result
+
+    # Statistics
+
+    def get_stats(self) -> dict:
+        """Накопительная статистика по корпусам: total/good/bad/cleanup."""
+        return dict(self.stats)
+
+    def _load_stats(self) -> dict:
+        """Восстановить статистику корпусов из stats.json (если есть)."""
+        stats = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
+        if not self.enabled:
+            return stats
+        path = os.path.join(self.root_folder, self.STATS_FILE)
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return stats
+        if not isinstance(data, dict):
+            return stats
+        for key in stats:
+            value = data.get(key)
+            if isinstance(value, int) and value >= 0:
+                stats[key] = value
+        return stats
+
+    def _save_stats(self):
+        """Атомарно сохранить статистику корпусов в stats.json."""
+        if not self.enabled:
+            return
+        path = os.path.join(self.root_folder, self.STATS_FILE)
+        temp_path = path + ".tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self.stats, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
+        except OSError as exc:
+            print(f"[ARCHIVE] Не удалось сохранить статистику: {exc}")
 
     # Compression
 

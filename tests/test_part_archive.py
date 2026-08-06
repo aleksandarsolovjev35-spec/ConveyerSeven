@@ -118,6 +118,48 @@ class PartArchiveTest(unittest.TestCase):
         )
         self.assertIsNone(archive.get_part_info(1))
 
+    def test_stats_by_parts(self):
+        """Статистика по корпусам: годные / брак / очистка ведётся и
+        восстанавливается между запусками из stats.json."""
+        archive = PartArchive(root_folder=self.tmp, enabled=True)
+        self.assertEqual(
+            archive.get_stats(),
+            {"total": 0, "good": 0, "bad": 0, "cleanup": 0},
+        )
+        archive.finalize(1, "GOOD", "none", [], step=0)
+        archive.finalize(2, "BAD", "contacts_long", ["contacts_long"], step=1)
+        archive.finalize(3, "CLEANUP", "glass", ["glass"], step=2)
+        archive.finalize(4, "BAD", "window_geometry", ["window_geometry"], step=3)
+        self.assertEqual(
+            archive.get_stats(),
+            {"total": 4, "good": 1, "bad": 2, "cleanup": 1},
+        )
+
+        # Файл статистики записан
+        stats_path = os.path.join(self.tmp, PartArchive.STATS_FILE)
+        self.assertTrue(os.path.exists(stats_path))
+        with open(stats_path, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(
+            data, {"total": 4, "good": 1, "bad": 2, "cleanup": 1},
+        )
+
+        # Новый архив (новый запуск программы) восстанавливает статистику
+        reopened = PartArchive(root_folder=self.tmp, enabled=True)
+        self.assertEqual(
+            reopened.get_stats(),
+            {"total": 4, "good": 1, "bad": 2, "cleanup": 1},
+        )
+
+        # Повреждённый файл — безопасный сброс в ноль
+        with open(stats_path, "w", encoding="utf-8") as f:
+            f.write("{broken")
+        broken = PartArchive(root_folder=self.tmp, enabled=True)
+        self.assertEqual(
+            broken.get_stats(),
+            {"total": 0, "good": 0, "bad": 0, "cleanup": 0},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

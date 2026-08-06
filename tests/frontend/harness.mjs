@@ -100,6 +100,9 @@ const UI_IDS = [
     'gallery-mode-raw',
     // Компактная панель анализа кадра (frame-analysis.js)
     'fa-new-body', 'fa-new-verdict', 'fa-new-context', 'fa-new-tbody',
+    // Статистика корпусов в панели анализа кадра
+    'fa-new-stats', 'fa-new-stat-total', 'fa-new-stat-good',
+    'fa-new-stat-bad', 'fa-new-stat-cleanup',
 ];
 
 // ─── Песочница ────────────────────────────────────────────────

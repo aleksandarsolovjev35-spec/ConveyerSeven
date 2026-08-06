@@ -110,6 +110,147 @@ const body = `
     }
     assert(!threw, 'renderFrameAnalysisPanel no-crash with absent DOM');
 
+    // ── Структуризация: один объект — один блок со всеми его замерами ──
+    const text = (el) => el ? (el.textContent || '') : '';
+    const objReport = {
+        available: true, kind: 'CYCLE', stage: 'ВХОД', part_id: 7,
+        title: 'АНАЛИЗ ТЕКУЩЕГО КАДРА', message: 'x', picture_run: 1,
+        rules: [{
+            name: 'window_geometry', triggered: false, part_absent: false,
+            vote_details: { decision: 'normal', normal_votes: 1, total_runs: 1, required_votes: 1 },
+            run_cards: [[{ role: 'INPUT_LEFT', ok: true, metrics: [
+                { label: 'Найдено окон, шт', value: '7', limit: '7', ok: true,
+                  value_raw: 7, limit_raw: 7, key: 'found' },
+                { label: 'Окно #1: верх, px', value: '25', limit: '20…40 px', ok: true,
+                  value_raw: 25, key: 'window_1_top_px', object: 'Окно #1' },
+                { label: 'Окно #1: низ, px', value: '30', limit: '20…40 px', ok: true,
+                  value_raw: 30, key: 'window_1_bottom_px', object: 'Окно #1' },
+                { label: 'Окно #2: верх, px', value: '45', limit: '20…40 px', ok: false,
+                  value_raw: 45, key: 'window_2_top_px', object: 'Окно #2' },
+                { label: 'Окно #2: низ, px', value: '30', limit: '20…40 px', ok: true,
+                  value_raw: 30, key: 'window_2_bottom_px', object: 'Окно #2' },
+            ]}]],
+        }],
+        models: [],
+    };
+    const objLs = {
+        total: 12, good: 8, rejected: 3, cleanup: 1,
+        line_parts: [{ id: 7, position: 0, category: 'BAD' }],
+    };
+    renderNewFrameAnalysis(objReport, objLs);
+    const blocks = tbody.children.filter(c => c.className.includes('fa-new-obj-block'));
+    assert(blocks.length === 2, 'two object blocks: ' + blocks.length);
+    assert(text(blocks[0].children[0].children[0]) === 'Окно #1', 'block 1 name');
+    assert(text(blocks[1].children[0].children[0]) === 'Окно #2', 'block 2 name');
+    assert(blocks[0].children[0].children[1].classList._set.has('ok'), 'block 1 badge ok');
+    assert(blocks[1].children[0].children[1].classList._set.has('bad'), 'block 2 badge bad');
+    // В блоке окна все его замеры, подпись без префикса «Окно #N:»
+    const win1Rows = blocks[0].children.slice(1);
+    assert(win1Rows.length === 2, 'window #1 rows: ' + win1Rows.length);
+    assert(text(win1Rows[0].children[0]) === 'верх, px', 'stripped label: ' + text(win1Rows[0].children[0]));
+    // Общие замеры правила остаются вне блоков
+    const generalRows = tbody.children.filter(c => c.className === 'fa-new-thr-row');
+    assert(generalRows.length === 1, 'general rows: ' + generalRows.length);
+    assert(text(generalRows[0].children[0]) === 'Найдено окон, шт', 'general label');
+    // Вердикт по категории корпуса на линии (БРАК)
+    assert(text(verdict).includes('БРАК'), 'verdict from line category: ' + text(verdict));
+
+    // ── Статистика корпусов (всего / годные / брак / очистка) ──
+    assert(text(__els['fa-new-stat-total']) === '12', 'stat total');
+    assert(text(__els['fa-new-stat-good']) === '8', 'stat good');
+    assert(text(__els['fa-new-stat-bad']) === '3', 'stat bad');
+    assert(text(__els['fa-new-stat-cleanup']) === '1', 'stat cleanup');
+
+    // ── Анти-мигание: повторный рендер тех же данных не перестраивает DOM ──
+    const sameGeneral = generalRows[0];
+    renderNewFrameAnalysis(objReport, objLs);
+    assert(tbody.children.filter(c => c.className === 'fa-new-thr-row')[0] === sameGeneral,
+        'DOM not rebuilt on identical report');
+    assert(tbody.children.filter(c => c.className === 'fa-new-thr-row').length === 1,
+        'no duplicated rows');
+
+    // ── Очистка: категория CLEANUP → вердикт ОЧИСТКА ──
+    renderNewFrameAnalysis({ ...objReport, rules: [{
+        name: 'glass', triggered: true, part_absent: false,
+        vote_details: { decision: 'triggered', triggered_votes: 1, total_runs: 1, required_votes: 1 },
+        run_cards: [[{ role: 'TOP', ok: false, metrics: [
+            { label: 'Совпадений стекла, шт', value: '1', limit: '0', ok: false,
+              value_raw: 1, limit_raw: 0, key: 'glass_hits' },
+            { label: 'Стекло #1: платформа, px', value: '5', limit: '0', ok: false,
+              value_raw: 5, limit_raw: 0, key: 'glass_1_platform_px', object: 'Стекло #1' },
+        ]}]],
+    }] }, { ...objLs, line_parts: [{ id: 7, position: 4, category: 'CLEANUP' }] });
+    assert(text(verdict) === 'ОЧИСТКА', 'verdict CLEANUP: ' + text(verdict));
+    const glassBlock = tbody.children.filter(c => c.className.includes('fa-new-obj-block'))[0];
+    assert(glassBlock, 'glass block present');
+    assert(text(glassBlock.children[0].children[0]) === 'Стекло #1', 'glass block name');
+    assert(text(glassBlock.children[1].children[0]) === 'платформа, px', 'glass stripped label');
+
+    // ── Пустые правила между шагами: плейсхолдер, панель не схлопнута ──
+    renderNewFrameAnalysis({
+        available: true, kind: 'CYCLE', stage: 'ВХОД', part_id: 7,
+        title: 'x', message: 'x', rules: [], models: [],
+    }, objLs);
+    assert(!panel.classList._set.has('is-collapsed'), 'panel stays open on empty rules');
+    assert(tbody.children.length === 1 && tbody.children[0].className === 'fa-new-empty',
+        'placeholder row shown');
+
+    // ── Группировка по объектам делит одинаковые номера разных камер ──
+    const grouped = faNewCollectGroups([[
+        { role: 'SPIDER_LEFT', ok: true, metrics: [
+            { label: 'Контакт #1: откл. верх, px', value: '2', limit: '5', ok: true,
+              key: 'contact_1_dev_top_px', object: 'Контакт #1' },
+        ]},
+        { role: 'SPIDER_RIGHT', ok: true, metrics: [
+            { label: 'Контакт #1: откл. верх, px', value: '9', limit: '5', ok: false,
+              key: 'contact_1_dev_top_px', object: 'Контакт #1' },
+        ]},
+    ]]);
+    assert(grouped.objects.length === 2, 'objects split by camera role');
+    assert(grouped.objects[0].rows[0].value === '2' && grouped.objects[1].rows[0].value === '9',
+        'per-role values kept');
+
+    // ── Регрессия: статистика корпусов пропадала после «Анализ кадра» ──
+    // Клик «АНАЛИЗ КАДРА» схлопывает блоки правой колонки
+    // (showPendingSelectedFrameAnalysis); после «ВЕРНУТЬ ПОТОК» они должны
+    // вернуться — раньше это делал мёртвый updateFrameAnalysisStatus,
+    // и статистика/распределитель/пустые лотки оставались свёрнутыми.
+    const statsSummary = __els['stats-summary'];
+    const distributor = __els['distributor-diagnostics'];
+    const statsService = __els['stats-service'];
+    state.lineState = 'IDLE';
+    state.selectedAnalysisActive = false;
+    state.selectedAnalysisPending = false;
+    showPendingSelectedFrameAnalysis();
+    assert(statsSummary.classList._set.has('is-collapsed'),
+        'stats collapsed during analysis');
+    assert(distributor.classList._set.has('is-collapsed'),
+        'distributor collapsed during analysis');
+    assert(statsService.classList._set.has('is-collapsed'),
+        'service stats collapsed during analysis');
+    // Тик статуса после «ВЕРНУТЬ ПОТОК» (selected_analysis.active=false)
+    updateSelectedAnalysisStatus({
+        selected_analysis: { active: false, role: null },
+        live: { streaming: false, static: false },
+        controls: {},
+    });
+    assert(!statsSummary.classList._set.has('is-collapsed'),
+        'stats restored after analysis release');
+    assert(!distributor.classList._set.has('is-collapsed'),
+        'distributor restored after analysis release');
+    assert(!statsService.classList._set.has('is-collapsed'),
+        'service stats restored after analysis release');
+    // Во время активного анализа блоки снова схлопнуты
+    state.selectedAnalysisActive = true;
+    updateSelectedAnalysisStatus({
+        selected_analysis: { active: true, role: 'INPUT_LEFT' },
+        live: { streaming: false, static: false },
+        controls: { selected_model_release: true },
+    });
+    assert(statsSummary.classList._set.has('is-collapsed'),
+        'stats collapsed while analysis active');
+    state.selectedAnalysisActive = false;
+
     console.log('TEST SINGLE RUN UI OK');
 `;
 

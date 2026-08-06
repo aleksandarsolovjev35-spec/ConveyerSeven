@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <title>Роботехнический комплекс конвейерного типа 7</title>
     <link rel="stylesheet" href="/static/css/base.css?v=32">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=17">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=18">
     <link rel="stylesheet" href="/static/css/camera.css?v=33">
     <link rel="stylesheet" href="/static/css/axis.css?v=32">
     <link rel="stylesheet" href="/static/css/history-strip.css?v=32">
@@ -209,6 +209,14 @@
                     <div id="fa-new-body" class="fa-new-body">
                         <div id="fa-new-tbody" class="fa-new-tbody"></div>
                     </div>
+                    <!-- Статистика по корпусам: всего / годные / брак / очистка.
+                         Обновляется точечно и не перестраивает список замеров. -->
+                    <div id="fa-new-stats" class="fa-new-stats">
+                        <span class="fa-new-stats-cell"><b id="fa-new-stat-total">0</b>ВСЕГО</span>
+                        <span class="fa-new-stats-cell ok"><b id="fa-new-stat-good">0</b>ГОДНЫЕ</span>
+                        <span class="fa-new-stats-cell bad"><b id="fa-new-stat-bad">0</b>БРАК</span>
+                        <span class="fa-new-stats-cell warn"><b id="fa-new-stat-cleanup">0</b>ОЧИСТКА</span>
+                    </div>
                 </section>
 
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse" data-ui-block="jog">
@@ -283,12 +291,12 @@
 
     <script src="/static/js/core.js?v=39"></script>
     <script src="/static/js/boot.js?v=30"></script>
-    <script src="/static/js/diagnostics.js?v=45"></script>
+    <script src="/static/js/diagnostics.js?v=46"></script>
     <script src="/static/js/status.js?v=36"></script>
     <script src="/static/js/controls.js?v=34"></script>
     <script src="/static/js/thresholds.js?v=15"></script>
     <script src="/static/js/cameras.js?v=35"></script>
-    <script src="/static/js/frame-analysis.js?v=1"></script>
+    <script src="/static/js/frame-analysis.js?v=2"></script>
     <script src="/static/js/jog.js?v=34"></script>
     <script src="/static/js/history.js?v=31"></script>
     <script src="/static/js/bootstrap.js?v=34"></script>

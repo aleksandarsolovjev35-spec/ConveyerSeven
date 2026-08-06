@@ -84,6 +84,27 @@ function updateSelectedAnalysisStatus(ls) {
         && typeof updateThresholdsPanel === 'function') {
         updateThresholdsPanel();
     }
+
+    // Панель «Анализ кадра» схлопывает обычные блоки правой колонки
+    // (showPendingSelectedFrameAnalysis) и обязана вернуть их после
+    // завершения анализа. Раньше это делал updateFrameAnalysisStatus,
+    // который больше нигде не вызывается: из-за этого статистика
+    // корпусов, распределитель и «Пустые лотки» оставались свёрнутыми
+    // навсегда после «ВЕРНУТЬ ПОТОК». Восстановление выполняется здесь,
+    // на каждом тике статуса, идемпотентно.
+    const selectedActive = (
+        state.selectedAnalysisActive
+        && JOG_ALLOWED_STATES.includes(state.lineState)
+    );
+    if (els.statsSummary) {
+        els.statsSummary.classList.toggle('is-collapsed', selectedActive);
+    }
+    if (els.distributorDiagnostics) {
+        els.distributorDiagnostics.classList.toggle('is-collapsed', selectedActive);
+    }
+    if (els.statsService) {
+        els.statsService.classList.toggle('is-collapsed', selectedActive);
+    }
     const live = ls.live || {};
     state.liveFps = Number(live.fps || (ls.jog || {}).live_fps || 0);
     state.liveStreaming = live.streaming === true;
