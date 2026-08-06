@@ -18,10 +18,10 @@ def draw_omission_item(img, drawing):
     bbox = drawing.get("bbox") or [0, 0, 0, 0]
     if len(mask) >= 3:
         points = np.asarray(mask, dtype=np.int32)
-        cv2.polylines(img, [points], True, COLOR_MASK, LINE_THIN)
+        cv2.polylines(img, [points], True, COLOR_MASK, LINE_THIN, lineType=cv2.LINE_AA)
     else:
         x1, y1, x2, y2 = map(int, bbox)
-        cv2.rectangle(img, (x1, y1), (x2, y2), COLOR_FAIL, LINE_FAIL)
+        cv2.rectangle(img, (x1, y1), (x2, y2), COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     _draw_reference_line(img, drawing.get("top_line") or {}, COLOR_TOP)
     _draw_reference_line(img, drawing.get("limit_line") or {}, COLOR_LIMIT)
@@ -35,7 +35,7 @@ def draw_omission_item(img, drawing):
         if not raw_contour:
             continue
         contour = np.asarray(raw_contour, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL)
+        cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
 
 def _draw_reference_line(img, line, color):

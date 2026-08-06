@@ -141,7 +141,8 @@
 .fa-new-rule-badge.ok   { background: rgba(114,163,126,0.18); color: var(--ok); }
 .fa-new-rule-badge.warn { background: rgba(193,166,106,0.18); color: var(--warn); }
 
-/* Строка замера: без обводок, только разделитель и фон при наведении — не кликабельна */
+/* Строка замера: без обводок, только лёгкий разделитель между соседями
+   и фон при наведении — строка не кликабельна. */
 .fa-new-thr-row {
     display: grid;
     grid-template-columns: minmax(0, 1.25fr) 64px 68px;
@@ -154,6 +155,9 @@
     /* никаких бордеров по умолчанию */
     border: none;
     transition: background 120ms var(--ease);
+}
+.fa-new-thr-row + .fa-new-thr-row {
+    border-top: 1px solid rgba(48, 59, 68, 0.42);
 }
 .fa-new-thr-row:hover {
     background: rgba(255,255,255,0.02);
@@ -264,7 +268,7 @@
     background: transparent;
 }
 .fa-new-obj-block .fa-new-thr-row + .fa-new-thr-row {
-    border-top: 1px solid rgba(48,59,68,0.35);
+    border-top: 1px solid rgba(48, 59, 68, 0.42);
 }
 
 /* Ползунок — как в порогах правил, виден только при переполнении */

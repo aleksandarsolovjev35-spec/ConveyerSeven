@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "root_path": "archive",
+  "jpeg_quality": 92,
+  "zip_compression": "deflated",
+  "zip_level": 6,
+  "compress_on_shutdown": true,
+  "delete_original_after_zip": true
+}

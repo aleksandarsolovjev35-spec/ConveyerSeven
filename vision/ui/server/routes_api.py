@@ -79,6 +79,7 @@ def setup_api_routes(app, server):
                 "frame_versions": dict(server._latest_frames_ver),
                 "active_camera": server.active_camera_role,
                 "thresholds_revision": server.thresholds_revision,
+                "archive": server.archive_status_payload(),
                 # Число наборов кадров текущей стадии (0 или 1).
                 "frame_runs": server.get_frame_count(),
             })
@@ -174,9 +175,43 @@ def setup_api_routes(app, server):
             )
         return JSONResponse({"ok": True, "thresholds": result})
 
+    # Архив партий: путь и политика сжатия меняются только до начала партии.
+
+    @app.get("/api/archive/settings")
+    async def api_get_archive_settings():
+        return JSONResponse(
+            await asyncio.to_thread(server.build_archive_payload, True)
+        )
+
+    @app.post("/api/archive/settings")
+    async def api_set_archive_settings(payload: dict | None = None):
+        try:
+            result = await asyncio.to_thread(
+                server.apply_archive_settings, payload or {}
+            )
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except RuntimeError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
+        except OSError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        except Exception as exc:
+            print(f"[API] archive settings error: {exc}")
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        return JSONResponse({"ok": True, "archive": result})
+
     @app.post("/api/start")
     async def api_start():
         print("[API] /api/start called")
+        archive_ready, archive_error = server.archive_ready_for_start()
+        if not archive_ready:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "Архив недоступен: " + (archive_error or "проверьте папку"),
+                },
+                status_code=409,
+            )
         return await invoke("ПУСК", server.on_start)
 
     @app.post("/api/stop")

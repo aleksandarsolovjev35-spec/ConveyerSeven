@@ -141,6 +141,7 @@ class UIServer:
         self.on_thresholds_reload: callable | None = None
 
         self.archive = None
+        self.archive_config_path = "archive_config.json"
 
         # Кэш JPEG для pull-механики (/frame): ключ (role, mode, size)
         self._jpeg_cache: dict = {}
@@ -585,6 +586,72 @@ class UIServer:
                     self.threshold_labels[full_key] = str(name).strip()
             self.thresholds_revision += 1
         return self.build_thresholds_payload(role)
+
+    # ─── Архив партий ──────────────────────────────────────────
+
+    def archive_editable(self) -> bool:
+        """Настройки архива меняются только до начала текущей партии."""
+        if self.splash_active or self.archive is None:
+            return False
+        line_state = (self.line_status or {}).get("state")
+        return line_state in ("IDLE", "STOPPED") and self.archive.can_reconfigure()
+
+    def archive_status_payload(self) -> dict:
+        archive = self.archive
+        if archive is None:
+            return {"available": False, "editable": False}
+        settings = archive.get_settings(validate=False)
+        settings["available"] = True
+        settings["editable"] = self.archive_editable()
+        return settings
+
+    def build_archive_payload(self, validate: bool = True) -> dict:
+        archive = self.archive
+        if archive is None:
+            return {"available": False, "editable": False}
+        settings = archive.get_settings(validate=validate)
+        settings["available"] = True
+        settings["editable"] = self.archive_editable()
+        return settings
+
+    def archive_ready_for_start(self) -> tuple[bool, str | None]:
+        archive = self.archive
+        if archive is None or not archive.enabled:
+            return True, None
+        try:
+            archive.validate_root(archive.root_folder)
+        except ValueError as exc:
+            return False, str(exc)
+        return True, None
+
+    def apply_archive_settings(self, payload: dict) -> dict:
+        if self.archive is None:
+            raise RuntimeError("Архив ещё не инициализирован")
+        if not self.archive_editable():
+            raise RuntimeError(
+                "Настройки архива доступны только до начала партии "
+                "и после полной остановки"
+            )
+
+        from config.archive_config import normalise_archive_config, save_archive_config
+
+        current = self.archive.get_settings(validate=False)
+        incoming = dict(current)
+        incoming.update(payload or {})
+        config = normalise_archive_config(incoming)
+        settings = self.archive.reconfigure(
+            root_folder=config["root_path"],
+            enabled=config["enabled"],
+            jpeg_quality=config["jpeg_quality"],
+            zip_compression=config["zip_compression"],
+            zip_level=config["zip_level"],
+            compress_on_shutdown=config["compress_on_shutdown"],
+            delete_original_after_zip=config["delete_original_after_zip"],
+        )
+        save_archive_config(self.archive_config_path, config)
+        settings["available"] = True
+        settings["editable"] = self.archive_editable()
+        return settings
 
     def boot_step_start(self, key, message=None):
         with self.lock:

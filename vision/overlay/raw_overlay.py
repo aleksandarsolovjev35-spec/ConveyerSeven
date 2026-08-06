@@ -71,9 +71,9 @@ class RawOverlay:
             0, img,
         )
 
-        cv2.polylines(img, [pts], True, color, LINE_THIN)
+        cv2.polylines(img, [pts], True, color, LINE_THIN, lineType=cv2.LINE_AA)
 
     @staticmethod
     def _draw_bbox(img, bbox, color):
         x1, y1, x2, y2 = map(int, bbox)
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, LINE_THIN)
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, LINE_THIN, lineType=cv2.LINE_AA)

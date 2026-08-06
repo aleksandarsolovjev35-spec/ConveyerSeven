@@ -19,14 +19,17 @@ class TopGlassRenderer:
         if drawing.get("draw_platform_reference", True):
             cv2.polylines(img, [_points(
                 drawing.get("platform_mask"), drawing.get("platform_bbox"),
-            )], True, COLOR_SKIP, LINE_THIN)
+            )], True, COLOR_SKIP, LINE_THIN,
+            lineType=cv2.LINE_AA,)
         cv2.polylines(img, [_points(
             drawing.get("case_mask"), drawing.get("case_bbox"),
-        )], True, COLOR_CASE, LINE_THIN)
+        )], True, COLOR_CASE, LINE_THIN,
+        lineType=cv2.LINE_AA,)
         if drawing.get("draw_central_reference", True):
             cv2.polylines(img, [_points(
                 drawing.get("central_mask"), drawing.get("central_bbox"),
-            )], True, COLOR_CENTRAL, LINE_THIN)
+            )], True, COLOR_CENTRAL, LINE_THIN,
+            lineType=cv2.LINE_AA,)
         for mask, bbox in zip(
             drawing.get("pin_masks") or [],
             drawing.get("pin_bboxes") or [],
@@ -34,6 +37,7 @@ class TopGlassRenderer:
         ):
             cv2.polylines(
                 img, [_points(mask, bbox)], True, COLOR_SKIP, LINE_THIN,
+                lineType=cv2.LINE_AA,
             )
 
     @staticmethod
@@ -41,7 +45,7 @@ class TopGlassRenderer:
         glass = _points(
             drawing.get("glass_mask"), drawing.get("glass_bbox"),
         )
-        cv2.polylines(img, [glass], True, COLOR_GLASS, LINE_THIN)
+        cv2.polylines(img, [glass], True, COLOR_GLASS, LINE_THIN, lineType=cv2.LINE_AA)
         _draw_raster_region(
             img, drawing.get("cleanup_raster"), COLOR_GLASS, alpha=0.55,
         )
@@ -58,6 +62,7 @@ class TopGlassRenderer:
         ):
             cv2.polylines(
                 img, [_points(mask, bbox)], True, COLOR_SKIP, LINE_THIN,
+                lineType=cv2.LINE_AA,
             )
 
     @staticmethod
@@ -68,8 +73,8 @@ class TopGlassRenderer:
         contact = _points(
             drawing.get("contact_mask"), drawing.get("contact_bbox"),
         )
-        cv2.polylines(img, [glass], True, COLOR_GLASS, LINE_THIN)
-        cv2.polylines(img, [contact], True, COLOR_SKIP, LINE_THIN)
+        cv2.polylines(img, [glass], True, COLOR_GLASS, LINE_THIN, lineType=cv2.LINE_AA)
+        cv2.polylines(img, [contact], True, COLOR_SKIP, LINE_THIN, lineType=cv2.LINE_AA)
         _draw_raster_region(
             img, drawing.get("overlap_raster"), COLOR_FAIL, alpha=0.60,
         )
@@ -87,6 +92,7 @@ class TopGlassRenderer:
             True,
             COLOR_GLASS if valid else COLOR_FAIL,
             LINE_THIN if valid else LINE_FAIL,
+            lineType=cv2.LINE_AA,
         )
         if not valid:
             _draw_cross(img, points)
@@ -114,7 +120,7 @@ def _draw_contours(img, raw_contours, color):
         if not raw_contour:
             continue
         contour = np.asarray(raw_contour, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.drawContours(img, [contour], -1, color, LINE_FAIL)
+        cv2.drawContours(img, [contour], -1, color, LINE_FAIL, lineType=cv2.LINE_AA)
 
 
 def _points(mask, bbox):

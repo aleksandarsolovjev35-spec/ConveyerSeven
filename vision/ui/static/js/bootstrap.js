@@ -9,6 +9,12 @@ function setupHotkeys() {
         const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
 
         if (e.key === 'Escape') {
+            if (els.archiveSettingsModal && !els.archiveSettingsModal.classList.contains('is-hidden')) {
+                closeArchiveSettings();
+                e.preventDefault();
+                return;
+            }
+
             const fullscreen = document.querySelector('.gallery-fullscreen');
             if (fullscreen) {
                 fullscreen.remove();
@@ -129,6 +135,7 @@ function init() {
     setupButtons();
     setupHotkeys();
     setupGallery();
+    if (typeof setupArchiveSettings === 'function') setupArchiveSettings();
     setupCameraHover();
     setupViewModeControls();
     setupJogControls();
@@ -151,6 +158,7 @@ function setupForTest() {
     setupButtons();
     setupHotkeys();
     setupGallery();
+    if (typeof setupArchiveSettings === 'function') setupArchiveSettings();
     setupCameraHover();
     setupViewModeControls();
     setupJogControls();

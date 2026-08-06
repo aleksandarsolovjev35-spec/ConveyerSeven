@@ -24,8 +24,9 @@ class WindowSinksRenderer:
         if drawing.get("draw_window_reference", True):
             cv2.polylines(
                 img, [window_points], True, COLOR_SKIP, LINE_THIN,
+                lineType=cv2.LINE_AA,
             )
-        cv2.polylines(img, [sink_points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [sink_points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
         raster = drawing.get("overlap_raster")
         if raster is not None:
@@ -43,7 +44,7 @@ class WindowSinksRenderer:
             if not raw_contour:
                 continue
             contour = np.asarray(raw_contour, dtype=np.int32).reshape(-1, 1, 2)
-            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL)
+            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_invalid_reference(img, drawing):
@@ -51,7 +52,7 @@ class WindowSinksRenderer:
             drawing.get("mask"),
             drawing.get("bbox"),
         )
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
         flat = points.reshape(-1, 2)
         x1 = int(flat[:, 0].min())
         x2 = int(flat[:, 0].max())
@@ -66,7 +67,7 @@ class WindowSinksRenderer:
             drawing.get("mask"),
             drawing.get("bbox"),
         )
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def _points(mask, bbox):

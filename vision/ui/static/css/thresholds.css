@@ -222,6 +222,12 @@
     min-height: 24px;
 }
 
+/* Очень лёгкий разделитель между соседними строками: помогает читать
+   длинный список порогов, но не превращает его в набор отдельных карточек. */
+.thresholds-item + .thresholds-item {
+    border-top: 1px solid rgba(48, 59, 68, 0.42);
+}
+
 .thresholds-item-label {
     min-width: 0;
     font-family: var(--font-ui);

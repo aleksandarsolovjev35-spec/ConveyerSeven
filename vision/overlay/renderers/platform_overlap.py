@@ -29,6 +29,7 @@ class PlatformOverlapRenderer:
             True,
             COLOR_PLATFORM_CONTOUR if valid else COLOR_FAIL,
             LINE_THIN if valid else LINE_FAIL,
+            lineType=cv2.LINE_AA,
         )
         if not valid:
             PlatformOverlapRenderer._draw_cross(img, points)
@@ -78,7 +79,7 @@ class PlatformOverlapRenderer:
             if not raw_contour:
                 continue
             contour = np.asarray(raw_contour, dtype=np.int32).reshape(-1, 1, 2)
-            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL)
+            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def _points(mask, bbox):

@@ -21,7 +21,7 @@ class TopPlatformRenderer:
         valid = bool(drawing.get("valid", True))
         color = COLOR_PLATFORM_CONTOUR if valid else COLOR_FAIL
         width = LINE_THIN if valid else LINE_FAIL
-        cv2.polylines(img, [points], True, color, width)
+        cv2.polylines(img, [points], True, color, width, lineType=cv2.LINE_AA)
         if not valid:
             flat = points.reshape(-1, 2)
             x1 = int(flat[:, 0].min())
@@ -43,6 +43,7 @@ class TopPlatformRenderer:
             True,
             COLOR_REFERENCE_RECT if fits else COLOR_FAIL,
             LINE_THIN if fits else LINE_FAIL,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod

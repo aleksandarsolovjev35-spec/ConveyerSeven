@@ -25,7 +25,7 @@ class WindowGeometryRenderer:
         points = WindowGeometryRenderer._points(drawing)
         contour_color = COLOR_FAIL if triggered or not valid else COLOR_PASS
         contour_width = LINE_FAIL if triggered or not valid else LINE_THIN
-        cv2.polylines(img, [points], True, contour_color, contour_width)
+        cv2.polylines(img, [points], True, contour_color, contour_width, lineType=cv2.LINE_AA)
 
         if not valid:
             WindowGeometryRenderer._draw_cross(img, points)
@@ -77,7 +77,7 @@ class WindowGeometryRenderer:
     @staticmethod
     def draw_count_item(img, drawing):
         points = WindowGeometryRenderer._points(drawing)
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_ignored(img, drawing):

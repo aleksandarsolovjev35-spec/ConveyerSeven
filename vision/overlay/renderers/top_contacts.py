@@ -19,7 +19,7 @@ class TopContactsRenderer:
     @staticmethod
     def draw_platform_bbox(img, drawing):
         x1, y1, x2, y2 = map(int, drawing.get("bbox") or [0, 0, 0, 0])
-        cv2.rectangle(img, (x1, y1), (x2, y2), COLOR_SKIP, LINE_THIN)
+        cv2.rectangle(img, (x1, y1), (x2, y2), COLOR_SKIP, LINE_THIN, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_group_reference(img, drawing):
@@ -54,17 +54,18 @@ class TopContactsRenderer:
             True,
             COLOR_FAIL if failed else COLOR_PASS,
             LINE_FAIL if failed else LINE_THIN,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod
     def draw_count_item(img, drawing):
         points = TopContactsRenderer._points(drawing)
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_invalid_mask(img, drawing):
         points = TopContactsRenderer._points(drawing)
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
         flat = points.reshape(-1, 2)
         x1 = int(flat[:, 0].min())
         x2 = int(flat[:, 0].max())
@@ -100,6 +101,7 @@ class TopContactsRenderer:
             True,
             COLOR_REFERENCE_RECT if fits else COLOR_FAIL,
             LINE_THIN if fits else LINE_FAIL,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod
