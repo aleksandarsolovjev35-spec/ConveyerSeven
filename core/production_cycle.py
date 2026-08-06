@@ -1592,12 +1592,27 @@ class ProductionCycle:
             self.parts.remove(part)
 
     def _register_finished(self, part):
-        self.recent_parts.append({
+        record = {
             "id":       part.id,
             "decision": part.final_decision,
             "category": part.route_category,
-            "time":     time.time(),
-        })
+            "time":      time.time(),
+        }
+        # UI получает только лёгкую ссылку на архивную запись. Само
+        # изображение не копируется в recent-кэш и не исчезает из архива,
+        # когда деталь покидает последние десять.
+        if self.archive:
+            archive_info = self.archive.get_part_info(part.id)
+            if archive_info:
+                record["batch_id"] = self.archive.batch_id
+                record["archive_folder"] = archive_info.get("relative_folder")
+                record["annotation_files"] = list(
+                    archive_info.get("annotation_files") or []
+                )
+                record["sample_count"] = int(
+                    archive_info.get("sample_count") or 0
+                )
+        self.recent_parts.append(record)
 
     # Анализ кадра по группам камер (ВХОД / КОНТРОЛЬ +4)
 

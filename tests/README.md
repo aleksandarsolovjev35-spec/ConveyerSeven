@@ -61,7 +61,8 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - `test_decision_engine.py` — DecisionEngine: создание из thresholds.json,
   правила по ролям, пустые детекции.
 - `test_part_archive.py` — PartArchive: буферизация кадров, финализация,
-  meta.json, run1-изображения (run2/run3 не создаются при одиночном
+  разбиение GOOD/BAD/CLEANUP, meta.json, model-predictions JSON,
+  samples.jsonl, run1-изображения (run2/run3 не создаются при одиночном
   прогоне), zip-сжатие, отключённый архив.
 - `test_jog_controller.py` — dead-man hold: heartbeat, release, таймаут
   без heartbeat, валидация параметров, восстановление normal_steps.

@@ -100,6 +100,7 @@ class PartArchive:
         # просматривать и превращать в датасет, не обучаясь на красных
         # обводках и прочей визуальной разметке.
         self._vision_buffers: dict[int, dict[str, list]] = {}
+        self._frame_stage_buffers: dict[int, dict[str, str]] = {}
 
         # Счётчик сохранённых деталей
         self._finalized_count = 0
@@ -252,26 +253,30 @@ class PartArchive:
             self._buffers[part_id] = {}
 
         buf = self._buffers[part_id]
+        stage_key = str(stage or "unknown").lower()
+        stage_map = self._frame_stage_buffers.setdefault(part_id, {})
 
         if run_vision_results:
-            stage_key = str(stage or "unknown").lower()
             self._vision_buffers.setdefault(part_id, {})[stage_key] = [
                 self._json_safe(run_result)
                 for run_result in run_vision_results
             ]
 
         for role, frame in raw_frames.items():
+            stage_map[role] = stage_key
             if role not in buf:
                 buf[role] = {}
             buf[role]["raw"] = self._encode_image(frame)
 
         for role, frame in annotated_frames.items():
+            stage_map[role] = stage_key
             if role not in buf:
                 buf[role] = {}
             buf[role]["debug"] = self._encode_image(frame)
 
         if raw_overlay_frames:
             for role, frame in raw_overlay_frames.items():
+                stage_map[role] = stage_key
                 if role not in buf:
                     buf[role] = {}
                 buf[role]["raw_overlay"] = self._encode_image(frame)
@@ -284,6 +289,7 @@ class PartArchive:
                 r_vision = run_vision_results[idx] if (run_vision_results and idx < len(run_vision_results)) else {}
 
                 for role, frame in r_frames.items():
+                    stage_map[role] = stage_key
                     if role not in buf:
                         buf[role] = {}
 
@@ -397,6 +403,14 @@ class PartArchive:
             roles_saved.append(role)
 
         annotation_files = self._save_vision_annotations(part_id, folder_path)
+        sample_records = self._build_training_samples(
+            part_id=part_id,
+            folder_path=folder_path,
+            category=stored_category,
+            decision=decision,
+            annotation_files=annotation_files,
+        )
+        self._append_training_samples(sample_records)
         now = datetime.now()
         meta = {
             "schema_version": self.SCHEMA_VERSION,
@@ -431,6 +445,8 @@ class PartArchive:
                 ),
                 "pseudo_annotation_files": annotation_files,
                 "annotations_are_model_predictions": True,
+                "sample_count": len(sample_records),
+                "samples_index": "samples.jsonl",
             },
         }
 
@@ -447,6 +463,7 @@ class PartArchive:
 
         self._buffers.pop(part_id, None)
         self._vision_buffers.pop(part_id, None)
+        self._frame_stage_buffers.pop(part_id, None)
         relative_folder = os.path.relpath(
             folder_path, self.batch_folder,
         ).replace("\\", "/")
@@ -458,6 +475,7 @@ class PartArchive:
             "relative_folder": relative_folder,
             "roles": roles_saved,
             "annotation_files": annotation_files,
+            "sample_count": len(sample_records),
             "time": now.strftime("%H:%M:%S"),
         }
         self._archived.append(archived_item)
@@ -605,6 +623,106 @@ class PartArchive:
                 pass
         return str(value)
 
+    def _build_training_samples(
+        self,
+        *,
+        part_id: int,
+        folder_path: str,
+        category: str,
+        decision: str,
+        annotation_files: list[str],
+    ) -> list[dict]:
+        """Построить лёгкие ссылки на raw-кадры и их pseudo-labels."""
+        records = self._vision_buffers.get(part_id, {})
+        stage_map = self._frame_stage_buffers.get(part_id, {})
+        annotation_set = set(annotation_files)
+        samples = []
+        used_images = set()
+        used_roles = set()
+        part_folder = os.path.relpath(
+            folder_path, self.batch_folder,
+        ).replace("\\", "/")
+
+        for stage, runs in records.items():
+            for run_index, run_results in enumerate(runs, start=1):
+                if not isinstance(run_results, dict):
+                    continue
+                for role in run_results:
+                    safe_role = self._safe_name(role)
+                    annotation_name = (
+                        f"{stage}_{safe_role}_run{run_index}_detections.json"
+                    )
+                    image_name = f"{role}_run{run_index}.jpg"
+                    if not os.path.exists(os.path.join(folder_path, image_name)):
+                        image_name = f"{role}.jpg"
+                    image_path = os.path.join(folder_path, image_name)
+                    if not os.path.exists(image_path):
+                        continue
+                    if image_name in used_images:
+                        continue
+                    used_images.add(image_name)
+                    used_roles.add(role)
+                    samples.append({
+                        "schema_version": 1,
+                        "sample_id": f"{part_id}:{stage}:{role}:{run_index}",
+                        "part_id": part_id,
+                        "batch_id": self.batch_id,
+                        "category": category,
+                        "decision": decision,
+                        "stage": stage,
+                        "role": role,
+                        "run": run_index,
+                        "image": f"{part_folder}/{image_name}",
+                        "annotation": (
+                            f"{part_folder}/{annotation_name}"
+                            if annotation_name in annotation_set else None
+                        ),
+                        "labels": (
+                            "pseudo" if annotation_name in annotation_set
+                            else "unannotated"
+                        ),
+                        "verified": False,
+                    })
+
+        # Если для роли нет model_predictions, raw evidence всё равно остаётся
+        # полноценным кандидатом для ручной разметки.
+        for role in self._buffers.get(part_id, {}):
+            if role in used_roles:
+                continue
+            image_name = f"{role}.jpg"
+            image_path = os.path.join(folder_path, image_name)
+            if not os.path.exists(image_path) or image_name in used_images:
+                continue
+            used_images.add(image_name)
+            stage = stage_map.get(role, "unknown")
+            samples.append({
+                "schema_version": 1,
+                "sample_id": f"{part_id}:{stage}:{role}:evidence",
+                "part_id": part_id,
+                "batch_id": self.batch_id,
+                "category": category,
+                "decision": decision,
+                "stage": stage,
+                "role": role,
+                "run": None,
+                "image": f"{part_folder}/{image_name}",
+                "annotation": None,
+                "labels": "unannotated",
+                "verified": False,
+            })
+        return samples
+
+    def _append_training_samples(self, samples: list[dict]):
+        if not self.enabled or not samples:
+            return
+        path = os.path.join(self.batch_folder, "samples.jsonl")
+        with open(path, "a", encoding="utf-8") as stream:
+            for sample in samples:
+                json.dump(sample, stream, ensure_ascii=False, separators=(",", ":"))
+                stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+
     def _save_batch_manifest(self, status: str = "OPEN"):
         """Атомарно обновить постоянный индекс текущей партии."""
         if not self.enabled:
@@ -619,6 +737,7 @@ class PartArchive:
             "status": status,
             "root_path": self.root_folder,
             "counts": dict(self._batch_stats),
+            "samples_index": "samples.jsonl",
             "parts": [
                 {
                     "part_id": item["part_id"],
@@ -627,6 +746,7 @@ class PartArchive:
                     "folder": item["relative_folder"],
                     "time": item["time"],
                     "annotation_files": item.get("annotation_files", []),
+                    "sample_count": item.get("sample_count", 0),
                 }
                 for item in self._batch_parts
             ],

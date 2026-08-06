@@ -75,6 +75,8 @@ class PartArchiveTest(unittest.TestCase):
             os.path.join(folder, "INPUT_LEFT_run1_debug.jpg")))
         self.assertTrue(os.path.exists(
             os.path.join(folder, "input_INPUT_LEFT_run1_detections.json")))
+        self.assertTrue(os.path.exists(
+            os.path.join(os.path.dirname(os.path.dirname(folder)), "samples.jsonl")))
         self.assertFalse(os.path.exists(
             os.path.join(folder, "INPUT_LEFT_run2.jpg")))
         self.assertFalse(os.path.exists(
