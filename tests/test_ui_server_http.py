@@ -7,12 +7,18 @@
 import unittest
 
 import numpy as np
-from fastapi.testclient import TestClient
+
+try:
+    from fastapi.testclient import TestClient
+except Exception:  # pragma: no cover - зависит от окружения
+    TestClient = None
 
 from domain.defect_rules.base import RuleResult
 from vision.ui.server.server import UIServer
 
 
+@unittest.skipIf(TestClient is None, "fastapi.testclient не доступен "
+                                      "(нужен httpx2 или совместимый starlette)")
 class UIServerHttpTest(unittest.TestCase):
     def setUp(self):
         self.server = UIServer()
