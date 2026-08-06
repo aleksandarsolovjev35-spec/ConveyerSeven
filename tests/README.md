@@ -28,6 +28,12 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - `test_production_cycle_single_capture.py` — `_stage_capture` снимает один
   раз; `_stage_analysis` публикует единый снимок (кадры + run_frames +
   run_rule_results одним вызовом); слияние INPUT+SPIDER.
+- `test_ui_server_http.py` — интеграционный HTTP-тест UIServer через
+  FastAPI TestClient: /api/status, /frame (RAW/RULES/run/preview),
+  /api/mode, /api/active_camera, /api/cameras, обработка edge cases.
+- `test_conveyor.py` — параметры конвейера (speed, accel,
+  steps_per_division) сохраняются в атрибуты: UI-анимация линии учитывает
+  реальную скорость из calibration.json.
 
 ## Frontend (Node)
 
