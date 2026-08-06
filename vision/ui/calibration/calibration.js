@@ -23,9 +23,11 @@
         reviewActions: document.getElementById('review-actions'),
         errorActions: document.getElementById('error-actions'),
         savedActions: document.getElementById('saved-actions'),
+        autoAssign: document.getElementById('auto-assign'),
         assignCamera: document.getElementById('assign-camera'),
         backStep: document.getElementById('back-step'),
         reviewBack: document.getElementById('review-back'),
+        reviewMessage: document.getElementById('review-message'),
         saveMapping: document.getElementById('save-mapping'),
         fatalError: document.getElementById('fatal-error'),
         closeError: document.getElementById('close-error'),
@@ -147,6 +149,9 @@
         } else if (status === 'REVIEW') {
             elements.currentRole.textContent = 'ПРОВЕРКА НАЗНАЧЕНИЙ';
             elements.stepCounter.textContent = '7 / 7';
+            elements.reviewMessage.textContent = state.auto_assigned
+                ? 'Камеры назначены автоматически в порядке Camera ID. Проверьте таблицу; при необходимости нажмите ИЗМЕНИТЬ НАЗНАЧЕНИЕ и переставьте камеры вручную.'
+                : 'Все роли назначены. Проверьте соответствие Camera ID перед сохранением.';
             setPreviewPlaceholder(
                 'ВСЕ РОЛИ НАЗНАЧЕНЫ',
                 'Проверьте таблицу справа и сохраните конфигурацию',
@@ -249,6 +254,9 @@
     });
     elements.nextCamera.addEventListener('click', () => {
         void runAction(() => api().next_camera());
+    });
+    elements.autoAssign.addEventListener('click', () => {
+        void runAction(() => api().auto_assign());
     });
     elements.assignCamera.addEventListener('click', () => {
         void runAction(() => api().assign_current());

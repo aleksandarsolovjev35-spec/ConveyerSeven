@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import inspect
 import json
 import os
 import subprocess
@@ -70,31 +71,64 @@ ROLE_LABELS = {
 }
 
 
-def _open_capture(camera_id: int):
-    """Открыть камеру, перебирая backend-ы в том же порядке, что и runtime.
+def _open_capture(camera_id: int, backend=None):
+    """Открыть камеру конкретным backend-ом (None — системный по умолчанию).
 
-    Мастер обязан находить ровно те камеры, которые потом откроет
-    CameraManager. Если здесь остаётся только DirectShow, а рабочая
-    камера отвечает лишь под Media Foundation, оператор соберёт mapping,
-    который упадёт на первом же запуске линии.
+    Перебор backend-ов выполняется в ``_probe_camera``: мастер пробует
+    каждый backend до первого валидного кадра, ровно как production.
+    Здесь один backend — один ``cv2.VideoCapture``.
     """
-    last = None
-    for backend in _camera_backends():
-        capture = None
-        try:
-            capture = (
-                cv2.VideoCapture(camera_id)
-                if backend is None
-                else cv2.VideoCapture(camera_id, backend)
-            )
-        except Exception as exc:
-            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
-            continue
-        if capture is not None and capture.isOpened():
-            return capture
-        _safe_release(capture)
-        last = capture
-    return last
+    try:
+        if backend is None:
+            return cv2.VideoCapture(camera_id)
+        return cv2.VideoCapture(camera_id, backend)
+    except Exception as exc:
+        print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
+        return None
+
+
+def _backend_label(backend) -> str:
+    if backend is None:
+        return "default"
+    for name in (
+        "CAP_DSHOW",
+        "CAP_MSMF",
+        "CAP_V4L2",
+        "CAP_AVFOUNDATION",
+        "CAP_GSTREAMER",
+        "CAP_ANY",
+    ):
+        if getattr(cv2, name, None) == backend:
+            return name.replace("CAP_", "")
+    return str(backend)
+
+
+def _factory_supports_backend(factory) -> bool:
+    """Понять, принимает ли фабрика backend вторым аргументом.
+
+    Тесты передают простую ``lambda camera_id``; ломать их сигнатуру
+    перебором backend-ов нельзя. Та же проверка, что в CameraManager.
+    """
+    try:
+        signature = inspect.signature(factory)
+    except (TypeError, ValueError):
+        return False
+    parameters = list(signature.parameters.values())
+    if any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL
+        for parameter in parameters
+    ):
+        return True
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    return len(positional) >= 2
 
 
 def _configure_capture(capture):
@@ -152,7 +186,14 @@ def _safe_release(capture) -> None:
 
 
 def _probe_camera(camera_id: int, factory, *, keep: bool = False):
-    """Проверить камеру с повторными открытиями.
+    """Проверить камеру с повторными открытиями и перебором backend-ов.
+
+    Порядок backend-ов тот же, что в runtime (CameraManager): мастер
+    обязан находить ровно те камеры, которые потом откроет линия.
+    Открытие само по себе ни о чём не говорит — известна пара DirectShow
+    против Media Foundation, когда устройство открывается под одним API
+    и молчит под другим. Поэтому перебор идёт до первого *валидного
+    кадра*, а не до первого ``isOpened()``.
 
     Каждая попытка — это полное пересоздание VideoCapture: разовая
     неудача резервирования изохронной полосы на USB контроллере лечится
@@ -165,43 +206,55 @@ def _probe_camera(camera_id: int, factory, *, keep: bool = False):
     предпросмотра), иначе освобождается здесь же.
     """
 
+    factory_takes_backend = _factory_supports_backend(factory)
+    backends = _camera_backends() if factory_takes_backend else (None,)
+    if not backends:
+        backends = (None,)
     last_error = "устройство не открылось"
-    for attempt in range(1, SCAN_OPEN_ATTEMPTS + 1):
-        capture = None
-        engaged_driver = False
-        try:
-            capture = factory(camera_id)
-            if capture is None or not capture.isOpened():
-                last_error = "устройство не открылось"
-            else:
-                engaged_driver = True
-                _configure_capture(capture)
-                _frame, error = _probe_capture(capture)
-                if error is None:
-                    if attempt > 1:
-                        print(
-                            f"[CAMERA CALIBRATION] Camera {camera_id}: OK "
-                            f"с попытки {attempt}"
-                        )
-                    if keep:
-                        opened, capture = capture, None
-                        return opened, None
-                    return None, None
-                last_error = error
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-        finally:
-            _safe_release(capture)
-        if (
-            engaged_driver
-            and attempt < SCAN_OPEN_ATTEMPTS
-            and SCAN_RETRY_DELAY
-        ):
-            # Драйверу нужно время отпустить устройство перед повтором.
-            time.sleep(SCAN_RETRY_DELAY)
+    attempts_total = 0
+    for backend in backends:
+        for attempt in range(1, SCAN_OPEN_ATTEMPTS + 1):
+            attempts_total += 1
+            capture = None
+            engaged_driver = False
+            try:
+                capture = (
+                    factory(camera_id, backend)
+                    if factory_takes_backend
+                    else factory(camera_id)
+                )
+                if capture is None or not capture.isOpened():
+                    last_error = "устройство не открылось"
+                else:
+                    engaged_driver = True
+                    _configure_capture(capture)
+                    _frame, error = _probe_capture(capture)
+                    if error is None:
+                        if attempts_total > 1:
+                            print(
+                                f"[CAMERA CALIBRATION] Camera {camera_id}: OK "
+                                f"с попытки {attempts_total} "
+                                f"[{_backend_label(backend)}]"
+                            )
+                        if keep:
+                            opened, capture = capture, None
+                            return opened, None
+                        return None, None
+                    last_error = error
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                _safe_release(capture)
+            if (
+                engaged_driver
+                and attempt < SCAN_OPEN_ATTEMPTS
+                and SCAN_RETRY_DELAY
+            ):
+                # Драйверу нужно время отпустить устройство перед повтором.
+                time.sleep(SCAN_RETRY_DELAY)
     print(
         f"[CAMERA CALIBRATION] Camera {camera_id}: не отвечает "
-        f"за {SCAN_OPEN_ATTEMPTS} поп. ({last_error})"
+        f"за {len(backends) * SCAN_OPEN_ATTEMPTS} поп. ({last_error})"
     )
     return None, last_error
 
@@ -215,15 +268,35 @@ def _scan_working_cameras(max_tested, factory):
     Результат детерминирован: список ID, которые отвечают в production-
     формате, будучи предоставленными сами себе. Это ответ на вопрос
     "сколько камер исправны вообще", а не "кто успел первым".
+
+    Возвращает ``(working, failures)``: список исправных ID и словарь
+    ``{camera_id: причина}`` для неисправных — оператору показывается
+    поимённый список того, что именно чинить.
     """
 
     working = []
+    failures = {}
     for camera_id in range(int(max_tested)):
         _capture, error = _probe_camera(camera_id, factory)
         if error is None:
             working.append(camera_id)
             print(f"[CAMERA CALIBRATION] Camera {camera_id}: OK")
-    return working
+        else:
+            failures[camera_id] = error
+    return working, failures
+
+
+def _format_scan_failures(failures: dict, limit: int = 8) -> str:
+    """Короткая построчная сводка причин отказа для оператора."""
+    if not failures:
+        return ""
+    lines = []
+    for camera_id, error in sorted(failures.items()):
+        if len(lines) >= limit:
+            lines.append(f"… и ещё {len(failures) - limit} камер")
+            break
+        lines.append(f"Camera ID {camera_id}: {error}")
+    return "\n".join(lines)
 
 
 def _open_preview_pool(working, required_count, factory):
@@ -302,6 +375,7 @@ class CameraCalibrationApi:
         self.assignments: dict[str, int] = {}
         self.role_index = 0
         self.candidate_index = 0
+        self.auto_assigned = False
         self.saved = False
         self.closed = False
         self._captures: dict[int, object] = {}
@@ -322,11 +396,13 @@ class CameraCalibrationApi:
             self.assignments = {}
             self.role_index = 0
             self.candidate_index = 0
+            self.auto_assigned = False
             self._release_all_captures_locked()
 
         pool = {}
         lost = {}
         working = []
+        failures = {}
         scan_error = None
         try:
             factory = self.capture_factory
@@ -334,7 +410,7 @@ class CameraCalibrationApi:
                 f"[CAMERA CALIBRATION] Фаза 1: изолированная проверка "
                 f"Camera ID 0..{self.scan_limit - 1}"
             )
-            working = _scan_working_cameras(self.scan_limit, factory)
+            working, failures = _scan_working_cameras(self.scan_limit, factory)
             print(
                 f"[CAMERA CALIBRATION] Фаза 1: исправны {len(working)}/"
                 f"{len(ROLE_ORDER)}: {working}"
@@ -369,6 +445,7 @@ class CameraCalibrationApi:
                 # Камера не отвечает даже наедине с шиной: проблема в
                 # подключении/питании/драйвере, а не в конкуренции за USB.
                 found = len(working)
+                details = _format_scan_failures(failures)
                 self.status = "ERROR"
                 self.error = (
                     f"Найдено исправных камер: {found}/{len(ROLE_ORDER)} "
@@ -376,12 +453,14 @@ class CameraCalibrationApi:
                     "даже без конкуренции за USB: проверьте подключение, "
                     "питание, свободна ли она от других программ и режим "
                     "1280x720 MJPG. Исправьте и нажмите ПОВТОРИТЬ ПОИСК."
+                    + (f"\n\n{details}" if details else "")
                 )
                 self._release_all_captures_locked(keep_available=True)
             elif lost:
                 # Поодиночке исправны, вместе не влезли: классическая
                 # нехватка пропускной способности одного USB-контроллера.
                 found = len(pool)
+                details = _format_scan_failures(lost)
                 self.status = "ERROR"
                 self.error = (
                     f"Одновременно открылось {found}/{len(ROLE_ORDER)}. "
@@ -390,11 +469,16 @@ class CameraCalibrationApi:
                     "USB-контроллера. Разведите камеры по разным корневым "
                     "хабам/контроллерам, убедитесь что все работают в MJPG "
                     "(а не YUY2), затем нажмите ПОВТОРИТЬ ПОИСК."
+                    + (f"\n\n{details}" if details else "")
                 )
                 self._release_all_captures_locked(keep_available=True)
             else:
+                # Полный комплект открыт: роли назначаются автоматически
+                # в порядке Camera ID, оператору остаётся проверить
+                # комплект и нажать СОХРАНИТЬ И ПРОДОЛЖИТЬ.
                 self.status = "READY"
                 self.error = None
+                return self.auto_assign()
             return self._state_locked()
 
     def rescan(self):
@@ -426,6 +510,38 @@ class CameraCalibrationApi:
 
     def get_state(self):
         with self.lock:
+            return self._state_locked()
+
+    def auto_assign(self):
+        """Быстрая настройка: назначить свободные камеры ролям по порядку ID.
+
+        Заполняет незанятые роли от ``INPUT_LEFT`` к ``TOP`` камерами из
+        свободного пула по возрастанию Camera ID. Уже назначенные вручную
+        роли не затираются — автоназначение только дополняет. Когда все
+        семь ролей закрыты, мастер переходит в REVIEW: оператору остаётся
+        проверить комплект и нажать СОХРАНИТЬ И ПРОДОЛЖИТЬ. Если камер
+        не хватает, мастер остаётся в READY, и оставшиеся роли оператор
+        назначает вручную через предпросмотр.
+        """
+        with self.lock:
+            self._require_status("READY")
+            free = sorted(self._free_cameras_locked())
+            if not free:
+                raise RuntimeError("Нет свободной камеры для назначения")
+            for role in ROLE_ORDER:
+                if role in self.assignments:
+                    continue
+                if not free:
+                    break
+                self.assignments[role] = int(free.pop(0))
+            self.auto_assigned = True
+            self._clear_active_camera_locked()
+            self.role_index = sum(
+                1 for role in ROLE_ORDER if role in self.assignments
+            )
+            self.candidate_index = 0
+            if self.role_index == len(ROLE_ORDER):
+                self.status = "REVIEW"
             return self._state_locked()
 
     def next_camera(self):
@@ -460,6 +576,7 @@ class CameraCalibrationApi:
                 )
             self.assignments[role] = int(camera_id)
             self._clear_active_camera_locked()
+            self.auto_assigned = False
             self.role_index += 1
             self.candidate_index = 0
             self.status = (
@@ -471,13 +588,24 @@ class CameraCalibrationApi:
         with self.lock:
             if self.status not in ("READY", "REVIEW"):
                 return self._state_locked()
+            self._clear_active_camera_locked()
+            if self.status == "REVIEW":
+                # Возврат из проверки — полный сброс в ручной режим.
+                # Пересобрать комплект заново проще одной кнопкой
+                # БЫСТРАЯ НАСТРОЙКА, чем пошаговым откатом по ролям.
+                self.assignments = {}
+                self.role_index = 0
+                self.candidate_index = 0
+                self.status = "READY"
+                self.auto_assigned = False
+                return self._state_locked()
             if self.role_index <= 0:
                 return self._state_locked()
-            self._clear_active_camera_locked()
             self.role_index -= 1
             role = ROLE_ORDER[self.role_index]
             previous_camera = self.assignments.pop(role, None)
             self.status = "READY"
+            self.auto_assigned = False
             free = self._free_cameras_locked()
             self.candidate_index = (
                 free.index(previous_camera)
@@ -631,6 +759,7 @@ class CameraCalibrationApi:
             "assignments": dict(self.assignments),
             "roles": roles,
             "saved": self.saved,
+            "auto_assigned": bool(self.auto_assigned),
             "config_path": str(self.config_path),
         }
 
@@ -699,6 +828,48 @@ def calibrate_cameras(
     return bool(api.saved and Path(config_path).is_file())
 
 
+def auto_calibrate(
+    config_path=CAMERA_MAPPING_FILE,
+    *,
+    scan_limit=CAMERA_SCAN_LIMIT,
+    capture_factory=None,
+) -> bool:
+    """Неинтерактивная калибровка: поиск → автоназначение → сохранение.
+
+    Консольный режим ``--auto``: без окон и вопросов. Камеры назначаются
+    ролям в порядке Camera ID (как кнопка БЫСТРАЯ НАСТРОЙКА в мастере),
+    полный комплект 7/7 валидируется и сохраняется атомарно. Успех —
+    только при полном mapping: частичный JSON не пишется.
+    """
+    api = CameraCalibrationApi(
+        config_path,
+        scan_limit=scan_limit,
+        capture_factory=capture_factory,
+    )
+    try:
+        state = api.scan()
+        if state["status"] != "REVIEW":
+            print(
+                "[CAMERA CALIBRATION] Автонастройка не удалась: "
+                + (state.get("error") or "недостаточно исправных камер")
+            )
+            return False
+        state = api.save()
+        if state["status"] != "SAVED":
+            print(
+                "[CAMERA CALIBRATION] Не удалось сохранить: "
+                + (state.get("error") or "неизвестная ошибка")
+            )
+            return False
+        print(
+            f"[CAMERA CALIBRATION] Сохранено ролей: "
+            f"{len(ROLE_ORDER)}/{len(ROLE_ORDER)} -> {config_path}"
+        )
+        return True
+    finally:
+        api.shutdown()
+
+
 def launch_camera_calibrator(
     config_path=CAMERA_MAPPING_FILE,
     *,
@@ -753,11 +924,25 @@ def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Калибратор семи камер")
     parser.add_argument("--config", default=CAMERA_MAPPING_FILE)
     parser.add_argument("--scan-limit", type=int, default=CAMERA_SCAN_LIMIT)
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help=(
+            "автонастройка без окна: поиск камер, назначение ролям в "
+            "порядке Camera ID и сохранение полного mapping 7/7"
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    if args.auto:
+        success = auto_calibrate(
+            args.config,
+            scan_limit=args.scan_limit,
+        )
+        return 0 if success else 1
     success = calibrate_cameras(
         args.config,
         scan_limit=args.scan_limit,
