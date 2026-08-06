@@ -39,6 +39,13 @@ python -m unittest discover -s tests -p "test_*.py" -v
   на входе, на +4 проверяется spider, на +7 уходит (BAD -> сброс); пустые
   лотки считаются; каждый шаг публикует единый снимок (кадры + правила +
   статус линии).
+- `test_camera_mapping.py` — загрузка и валидация camera_mapping.json.
+- `test_state_machine.py` — переходы StateMachine (START/STOP/PAUSE/FAULT),
+  колбэки, exit/force-exit.
+- `test_step_stages.py` — строгий порядок фаз StepSequencer (нарушение
+  порядка -> StageSequenceError), передача камер инспекции, reset.
+- `test_live_preview_gate.py` — LiveCaptureGate: пауза блокирует live-чтения,
+  вложенные паузы, ожидание активного чтения, reset.
 
 ## Frontend (Node)
 
