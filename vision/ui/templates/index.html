@@ -9,12 +9,12 @@
     <link rel="stylesheet" href="/static/css/blocks.css?v=22">
     <link rel="stylesheet" href="/static/css/camera.css?v=34">
     <link rel="stylesheet" href="/static/css/axis.css?v=33">
-    <link rel="stylesheet" href="/static/css/history-strip.css?v=34">
+    <link rel="stylesheet" href="/static/css/history-strip.css?v=36">
     <link rel="stylesheet" href="/static/css/stats.css?v=43">
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
     <link rel="stylesheet" href="/static/css/controls.css?v=31">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
-    <link rel="stylesheet" href="/static/css/process.css?v=38">
+    <link rel="stylesheet" href="/static/css/process.css?v=39">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=18">
 </head>
@@ -96,13 +96,18 @@
                         <span>7</span>
                         <span class="stage-position">8 · СОРТИРОВКА</span>
                     </div>
-                    <div id="process-phase-label" class="process-phase-label"></div>
                     </div>
                 </section>
-                <div class="history" data-ui-block="history-strip">
-                    <div class="history-title">ПОСЛЕДНИЕ КОРПУСА</div>
-                    <div id="history-cards" class="history-cards">
-                        <span class="history-empty">Корпусов пока нет</span>
+                <div class="bottom-strip-row">
+                    <div class="history" data-ui-block="history-strip">
+                        <div class="history-title">ПОСЛЕДНИЕ КОРПУСА</div>
+                        <div id="history-cards" class="history-cards">
+                            <span class="history-empty">Корпусов пока нет</span>
+                        </div>
+                    </div>
+                    <div class="process-phase-panel" data-ui-block="process-phase">
+                        <div class="process-phase-title">СОСТОЯНИЕ ЛЕНТЫ</div>
+                        <div id="process-phase-label" class="process-phase-label">ОЖИДАНИЕ ПУСКА</div>
                     </div>
                 </div>
             </section>
@@ -297,7 +302,7 @@
     <script src="/static/js/core.js?v=42"></script>
     <script src="/static/js/boot.js?v=31"></script>
     <script src="/static/js/diagnostics.js?v=47"></script>
-    <script src="/static/js/status.js?v=38"></script>
+    <script src="/static/js/status.js?v=39"></script>
     <script src="/static/js/controls.js?v=35"></script>
     <script src="/static/js/thresholds.js?v=16"></script>
     <script src="/static/js/cameras.js?v=36"></script>

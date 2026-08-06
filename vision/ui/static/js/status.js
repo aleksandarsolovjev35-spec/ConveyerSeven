@@ -326,8 +326,17 @@ function updateLineCells(lineParts, process = {}) {
 
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (phaseEl) {
-        phaseEl.textContent = process.phase ? (process.label || process.phase).slice(0, 64).toUpperCase() : '';
-        phaseEl.style.opacity = process.phase ? (isConveyorMoving ? '0.9' : '0.6') : '0';
+        const activeText = process.phase ? (process.label || process.phase).slice(0, 64).toUpperCase() : '';
+        if (activeText) {
+            setIfChanged(phaseEl, activeText);
+            phaseEl.style.opacity = isConveyorMoving ? '1' : '0.85';
+            phaseEl.style.color = isConveyorMoving ? 'var(--ok)' : 'var(--accent)';
+        } else {
+            const defaultLabel = state.lineState === 'RUNNING' ? 'РАБОТА' : 'ОЖИДАНИЕ ПУСКА';
+            setIfChanged(phaseEl, defaultLabel);
+            phaseEl.style.opacity = '0.65';
+            phaseEl.style.color = 'var(--text-dim)';
+        }
     }
 
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');

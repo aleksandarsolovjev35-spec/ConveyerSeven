@@ -1,6 +1,14 @@
 /* history-strip.css — Line Monitor UI module */
 
-/* ─── History ─────────────────────────────────────────────────────── */
+/* ─── Bottom strip row (History + Conveyor Phase) ───────────────── */
+
+.bottom-strip-row {
+    display: flex;
+    gap: var(--gap);
+    align-items: stretch;
+    min-width: 0;
+    width: 100%;
+}
 
 .history {
     background: var(--panel);
@@ -11,18 +19,20 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    flex-shrink: 0;
-    flex-grow: 0;
-    overflow: visible;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .history-title {
     color: var(--text-dim);
     font-size: 9px;
     font-weight: 700;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.6px;
     text-transform: uppercase;
-    flex: 0 0 112px;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .history-cards {
@@ -114,12 +124,63 @@
     font-family: var(--font-mono);
 }
 
+/* ─── Process Phase Block (Right side under Путь корпусов) ──────── */
+
+.process-phase-panel {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    height: 54px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    flex: 0 0 280px;
+    min-width: 200px;
+    max-width: 320px;
+    overflow: hidden;
+}
+
+.process-phase-title {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.process-phase-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
 @media (max-height: 600px) {
-    .history { height: 48px; }
+    .history,
+    .process-phase-panel { height: 48px; }
 }
 
 @media (max-height: 500px) {
-    .history { height: 42px; }
-    .history-title { flex-basis: 96px; font-size: 8px; }
+    .history,
+    .process-phase-panel { height: 42px; }
+    .history-title,
+    .process-phase-title { font-size: 8px; }
+    .process-phase-label { font-size: 9.5px; }
 }
 
+@media (max-width: 1100px) {
+    .process-phase-panel {
+        flex-basis: 220px;
+        min-width: 170px;
+    }
+}
