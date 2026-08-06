@@ -210,6 +210,47 @@ const body = `
     assert(grouped.objects[0].rows[0].value === '2' && grouped.objects[1].rows[0].value === '9',
         'per-role values kept');
 
+    // ── Регрессия: статистика корпусов пропадала после «Анализ кадра» ──
+    // Клик «АНАЛИЗ КАДРА» схлопывает блоки правой колонки
+    // (showPendingSelectedFrameAnalysis); после «ВЕРНУТЬ ПОТОК» они должны
+    // вернуться — раньше это делал мёртвый updateFrameAnalysisStatus,
+    // и статистика/распределитель/пустые лотки оставались свёрнутыми.
+    const statsSummary = __els['stats-summary'];
+    const distributor = __els['distributor-diagnostics'];
+    const statsService = __els['stats-service'];
+    state.lineState = 'IDLE';
+    state.selectedAnalysisActive = false;
+    state.selectedAnalysisPending = false;
+    showPendingSelectedFrameAnalysis();
+    assert(statsSummary.classList._set.has('is-collapsed'),
+        'stats collapsed during analysis');
+    assert(distributor.classList._set.has('is-collapsed'),
+        'distributor collapsed during analysis');
+    assert(statsService.classList._set.has('is-collapsed'),
+        'service stats collapsed during analysis');
+    // Тик статуса после «ВЕРНУТЬ ПОТОК» (selected_analysis.active=false)
+    updateSelectedAnalysisStatus({
+        selected_analysis: { active: false, role: null },
+        live: { streaming: false, static: false },
+        controls: {},
+    });
+    assert(!statsSummary.classList._set.has('is-collapsed'),
+        'stats restored after analysis release');
+    assert(!distributor.classList._set.has('is-collapsed'),
+        'distributor restored after analysis release');
+    assert(!statsService.classList._set.has('is-collapsed'),
+        'service stats restored after analysis release');
+    // Во время активного анализа блоки снова схлопнуты
+    state.selectedAnalysisActive = true;
+    updateSelectedAnalysisStatus({
+        selected_analysis: { active: true, role: 'INPUT_LEFT' },
+        live: { streaming: false, static: false },
+        controls: { selected_model_release: true },
+    });
+    assert(statsSummary.classList._set.has('is-collapsed'),
+        'stats collapsed while analysis active');
+    state.selectedAnalysisActive = false;
+
     console.log('TEST SINGLE RUN UI OK');
 `;
 
