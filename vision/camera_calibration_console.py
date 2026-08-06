@@ -36,17 +36,20 @@ PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
 NEAR_BLACK_P99_MAX = 12.0
 PROBE_READ_INTERVAL = 0.03
-# Сканирование должно давать камере столько же времени на старт, сколько
-# даёт production-preflight, иначе мастер объявит исправную камеру
-# отсутствующей и не соберёт комплект 7/7.
-SCAN_PROBE_ATTEMPTS = _env_int("CAMERA_SCAN_PROBE_ATTEMPTS", 60, minimum=1)
+# Бюджет на старт камеры при сканировании: 30 × 0.03 ≈ 0.9 c на попытку.
+# Этого хватает, чтобы UVC-драйвер построил граф и отдал первый кадр;
+# на очень медленном железе бюджет поднимается через
+# CAMERA_SCAN_PROBE_ATTEMPTS. Меньший бюджет — быстрее отбраковка
+# камер, которые открылись, но не отдают кадр.
+SCAN_PROBE_ATTEMPTS = _env_int("CAMERA_SCAN_PROBE_ATTEMPTS", 30, minimum=1)
 PREVIEW_PROBE_ATTEMPTS = 10
 # Разовый отказ резервирования полосы на USB-хабе лечится пересозданием
 # VideoCapture, а не увеличением таймаута чтения. Без повторных попыток
 # исправная камера случайно выпадала из сканирования, и мастер находил
-# то 5, то 6 камер из семи на одном и том же железе.
-SCAN_OPEN_ATTEMPTS = _env_int("CAMERA_SCAN_OPEN_ATTEMPTS", 3, minimum=1)
-SCAN_RETRY_DELAY = _env_float("CAMERA_SCAN_RETRY_DELAY", 0.4, minimum=0.0)
+# то 5, то 6 камер из семи на одном и том же железе. Двух попыток
+# достаточно: третья на мёртвой камере лишь растягивает поиск.
+SCAN_OPEN_ATTEMPTS = _env_int("CAMERA_SCAN_OPEN_ATTEMPTS", 2, minimum=1)
+SCAN_RETRY_DELAY = _env_float("CAMERA_SCAN_RETRY_DELAY", 0.25, minimum=0.0)
 
 ROLE_ORDER = (
     "INPUT_LEFT",
@@ -308,20 +311,51 @@ def _open_preview_pool(working, required_count, factory):
     недоступна и линии — об этом сообщается отдельно, потому что это
     симптом нехватки пропускной способности USB-контроллера, а не
     поломки устройства.
+
+    Открытие идёт волнами по три камеры, как в production-префлайте
+    (CAMERA_OPEN_CONCURRENCY=3): семь одновременно стартующих устройств
+    наперегонки запрашивают изохронную полосу, и часть из них зря
+    выпадала из набора. Волнами набор собирается быстрее, чем по одной,
+    и без повторной гонки за USB.
     """
 
     pool = {}
     lost = {}
-    for camera_id in list(working)[: int(required_count)]:
+    candidates = list(working)[: int(required_count)]
+    wave_size = max(1, min(3, len(candidates) or 1))
+    results_lock = threading.Lock()
+
+    def _open_one(camera_id):
         capture, error = _probe_camera(camera_id, factory, keep=True)
-        if capture is not None:
-            pool[camera_id] = capture
-        else:
-            lost[camera_id] = error
-            print(
-                f"[CAMERA CALIBRATION] Camera {camera_id}: потеряна при "
-                f"одновременном открытии набора ({error})"
+        with results_lock:
+            results[camera_id] = (capture, error)
+
+    for start in range(0, len(candidates), wave_size):
+        wave = candidates[start : start + wave_size]
+        results = {}
+        threads = [
+            threading.Thread(
+                target=_open_one,
+                args=(camera_id,),
+                daemon=True,
+                name=f"calibration-open-{camera_id}",
             )
+            for camera_id in wave
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for camera_id in wave:
+            capture, error = results[camera_id]
+            if capture is not None:
+                pool[camera_id] = capture
+            else:
+                lost[camera_id] = error
+                print(
+                    f"[CAMERA CALIBRATION] Camera {camera_id}: потеряна при "
+                    f"одновременном открытии набора ({error})"
+                )
     return pool, lost
 
 
@@ -375,7 +409,6 @@ class CameraCalibrationApi:
         self.assignments: dict[str, int] = {}
         self.role_index = 0
         self.candidate_index = 0
-        self.auto_assigned = False
         self.saved = False
         self.closed = False
         self._captures: dict[int, object] = {}
@@ -396,7 +429,6 @@ class CameraCalibrationApi:
             self.assignments = {}
             self.role_index = 0
             self.candidate_index = 0
-            self.auto_assigned = False
             self._release_all_captures_locked()
 
         pool = {}
@@ -473,12 +505,8 @@ class CameraCalibrationApi:
                 )
                 self._release_all_captures_locked(keep_available=True)
             else:
-                # Полный комплект открыт: роли назначаются автоматически
-                # в порядке Camera ID, оператору остаётся проверить
-                # комплект и нажать СОХРАНИТЬ И ПРОДОЛЖИТЬ.
                 self.status = "READY"
                 self.error = None
-                return self.auto_assign()
             return self._state_locked()
 
     def rescan(self):
@@ -510,38 +538,6 @@ class CameraCalibrationApi:
 
     def get_state(self):
         with self.lock:
-            return self._state_locked()
-
-    def auto_assign(self):
-        """Быстрая настройка: назначить свободные камеры ролям по порядку ID.
-
-        Заполняет незанятые роли от ``INPUT_LEFT`` к ``TOP`` камерами из
-        свободного пула по возрастанию Camera ID. Уже назначенные вручную
-        роли не затираются — автоназначение только дополняет. Когда все
-        семь ролей закрыты, мастер переходит в REVIEW: оператору остаётся
-        проверить комплект и нажать СОХРАНИТЬ И ПРОДОЛЖИТЬ. Если камер
-        не хватает, мастер остаётся в READY, и оставшиеся роли оператор
-        назначает вручную через предпросмотр.
-        """
-        with self.lock:
-            self._require_status("READY")
-            free = sorted(self._free_cameras_locked())
-            if not free:
-                raise RuntimeError("Нет свободной камеры для назначения")
-            for role in ROLE_ORDER:
-                if role in self.assignments:
-                    continue
-                if not free:
-                    break
-                self.assignments[role] = int(free.pop(0))
-            self.auto_assigned = True
-            self._clear_active_camera_locked()
-            self.role_index = sum(
-                1 for role in ROLE_ORDER if role in self.assignments
-            )
-            self.candidate_index = 0
-            if self.role_index == len(ROLE_ORDER):
-                self.status = "REVIEW"
             return self._state_locked()
 
     def next_camera(self):
@@ -576,7 +572,6 @@ class CameraCalibrationApi:
                 )
             self.assignments[role] = int(camera_id)
             self._clear_active_camera_locked()
-            self.auto_assigned = False
             self.role_index += 1
             self.candidate_index = 0
             self.status = (
@@ -588,24 +583,13 @@ class CameraCalibrationApi:
         with self.lock:
             if self.status not in ("READY", "REVIEW"):
                 return self._state_locked()
-            self._clear_active_camera_locked()
-            if self.status == "REVIEW":
-                # Возврат из проверки — полный сброс в ручной режим.
-                # Пересобрать комплект заново проще одной кнопкой
-                # БЫСТРАЯ НАСТРОЙКА, чем пошаговым откатом по ролям.
-                self.assignments = {}
-                self.role_index = 0
-                self.candidate_index = 0
-                self.status = "READY"
-                self.auto_assigned = False
-                return self._state_locked()
             if self.role_index <= 0:
                 return self._state_locked()
+            self._clear_active_camera_locked()
             self.role_index -= 1
             role = ROLE_ORDER[self.role_index]
             previous_camera = self.assignments.pop(role, None)
             self.status = "READY"
-            self.auto_assigned = False
             free = self._free_cameras_locked()
             self.candidate_index = (
                 free.index(previous_camera)
@@ -759,7 +743,6 @@ class CameraCalibrationApi:
             "assignments": dict(self.assignments),
             "roles": roles,
             "saved": self.saved,
-            "auto_assigned": bool(self.auto_assigned),
             "config_path": str(self.config_path),
         }
 
@@ -828,48 +811,6 @@ def calibrate_cameras(
     return bool(api.saved and Path(config_path).is_file())
 
 
-def auto_calibrate(
-    config_path=CAMERA_MAPPING_FILE,
-    *,
-    scan_limit=CAMERA_SCAN_LIMIT,
-    capture_factory=None,
-) -> bool:
-    """Неинтерактивная калибровка: поиск → автоназначение → сохранение.
-
-    Консольный режим ``--auto``: без окон и вопросов. Камеры назначаются
-    ролям в порядке Camera ID (как кнопка БЫСТРАЯ НАСТРОЙКА в мастере),
-    полный комплект 7/7 валидируется и сохраняется атомарно. Успех —
-    только при полном mapping: частичный JSON не пишется.
-    """
-    api = CameraCalibrationApi(
-        config_path,
-        scan_limit=scan_limit,
-        capture_factory=capture_factory,
-    )
-    try:
-        state = api.scan()
-        if state["status"] != "REVIEW":
-            print(
-                "[CAMERA CALIBRATION] Автонастройка не удалась: "
-                + (state.get("error") or "недостаточно исправных камер")
-            )
-            return False
-        state = api.save()
-        if state["status"] != "SAVED":
-            print(
-                "[CAMERA CALIBRATION] Не удалось сохранить: "
-                + (state.get("error") or "неизвестная ошибка")
-            )
-            return False
-        print(
-            f"[CAMERA CALIBRATION] Сохранено ролей: "
-            f"{len(ROLE_ORDER)}/{len(ROLE_ORDER)} -> {config_path}"
-        )
-        return True
-    finally:
-        api.shutdown()
-
-
 def launch_camera_calibrator(
     config_path=CAMERA_MAPPING_FILE,
     *,
@@ -924,25 +865,11 @@ def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Калибратор семи камер")
     parser.add_argument("--config", default=CAMERA_MAPPING_FILE)
     parser.add_argument("--scan-limit", type=int, default=CAMERA_SCAN_LIMIT)
-    parser.add_argument(
-        "--auto",
-        action="store_true",
-        help=(
-            "автонастройка без окна: поиск камер, назначение ролям в "
-            "порядке Camera ID и сохранение полного mapping 7/7"
-        ),
-    )
     return parser.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
-    if args.auto:
-        success = auto_calibrate(
-            args.config,
-            scan_limit=args.scan_limit,
-        )
-        return 0 if success else 1
     success = calibrate_cameras(
         args.config,
         scan_limit=args.scan_limit,

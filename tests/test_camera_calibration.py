@@ -1,7 +1,6 @@
-"""Тесты калибратора камер: автоназначение, диагностика и backend-перебор."""
+"""Тесты калибратора камер: сканирование, диагностика и backend-перебор."""
 
 import importlib
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,8 +12,8 @@ from config.camera_mapping import REQUIRED_ROLES, load_camera_mapping
 from vision.camera_calibration_console import (
     ROLE_ORDER,
     CameraCalibrationApi,
+    _open_preview_pool,
     _probe_camera,
-    auto_calibrate,
 )
 
 MODULE = "vision.camera_calibration_console"
@@ -110,41 +109,27 @@ class CameraCalibrationTestBase(unittest.TestCase):
 
 class ScanFlowTest(CameraCalibrationTestBase):
 
-    def test_full_scan_auto_assigns_and_saves(self):
-        """Полный комплект 7/7 после сканирования сразу переходит в REVIEW."""
+    def test_full_scan_ready_with_seven_available(self):
+        """Полный комплект 7/7 после сканирования — READY, роли не заняты."""
         api = self._api(list(range(7)))
         try:
             state = api.scan()
-            self.assertEqual(state["status"], "REVIEW")
-            self.assertTrue(state["auto_assigned"])
-            self.assertEqual(
-                state["assignments"],
-                {
-                    "INPUT_LEFT": 0,
-                    "INPUT_RIGHT": 1,
-                    "SPIDER_LEFT": 2,
-                    "SPIDER_RIGHT": 3,
-                    "SPIDER_IN": 4,
-                    "SPIDER_OUT": 5,
-                    "TOP": 6,
-                },
-            )
-            state = api.save()
-            self.assertEqual(state["status"], "SAVED")
-            mapping = load_camera_mapping(api.config_path)
-            self.assertEqual(set(mapping), REQUIRED_ROLES)
-            self.assertEqual(mapping["TOP"], 6)
+            self.assertEqual(state["status"], "READY")
+            self.assertEqual(state["found"], 7)
+            self.assertEqual(state["available_camera_ids"], [0, 1, 2, 3, 4, 5, 6])
+            self.assertEqual(state["assignments"], {})
+            self.assertEqual(state["step"], 1)
         finally:
             api.shutdown()
 
-    def test_scan_with_extra_cameras_assigns_in_id_order(self):
-        """Лишние исправные камеры не мешают: берутся первые 7 по порядку."""
+    def test_scan_with_extra_cameras_keeps_seven_available(self):
+        """Лишние исправные камеры не мешают: доступны первые 7 по порядку."""
         api = self._api([0, 1, 2, 3, 4, 6, 7, 9])
         try:
             state = api.scan()
-            self.assertEqual(state["status"], "REVIEW")
+            self.assertEqual(state["status"], "READY")
             self.assertEqual(
-                sorted(state["assignments"].values()),
+                state["available_camera_ids"],
                 [0, 1, 2, 3, 4, 6, 7],
             )
         finally:
@@ -192,41 +177,83 @@ class ScanFlowTest(CameraCalibrationTestBase):
             api.shutdown()
 
 
-class AutoAssignTest(CameraCalibrationTestBase):
+class ManualAssignTest(CameraCalibrationTestBase):
 
-    def test_auto_assign_skips_manual_choices(self):
-        """БЫСТРАЯ НАСТРОЙКА дополняет ручной выбор, не затирая его."""
+    def test_manual_assignment_cycle(self):
+        """Ручной сценарий: 7 назначений → REVIEW → шаг назад по ролям."""
         api = self._api(list(range(7)))
         try:
             with api.lock:
                 api.status = "READY"
                 api.available_cameras = [0, 1, 2, 3, 4, 5, 6]
-                api.assignments = {"INPUT_LEFT": 5}
-                api.role_index = 1
-            state = api.auto_assign()
+                api.candidate_index = 0
+            for expected_id in range(7):
+                with api.lock:
+                    api._preview_verified_id = api._free_cameras_locked()[
+                        api.candidate_index
+                    ]
+                state = api.assign_current()
             self.assertEqual(state["status"], "REVIEW")
-            self.assertEqual(state["assignments"]["INPUT_LEFT"], 5)
-            self.assertEqual(state["assignments"]["TOP"], 6)
-            # Каждый Camera ID используется ровно один раз.
-            ids = list(state["assignments"].values())
-            self.assertEqual(len(ids), len(set(ids)))
-            self.assertEqual(sorted(ids), [0, 1, 2, 3, 4, 5, 6])
+            self.assertEqual(
+                [state["assignments"][role] for role in ROLE_ORDER],
+                [0, 1, 2, 3, 4, 5, 6],
+            )
+
+            # ИЗМЕНИТЬ ПОСЛЕДНЮЮ: шаг назад возвращает роль TOP в READY.
+            state = api.back()
+            self.assertEqual(state["status"], "READY")
+            self.assertEqual(state["step"], 7)
+            self.assertNotIn("TOP", state["assignments"])
+            self.assertIn(6, state["free_camera_ids"])
         finally:
             api.shutdown()
 
-    def test_back_from_review_resets_to_manual(self):
-        """ИЗМЕНИТЬ НАЗНАЧЕНИЕ из REVIEW сбрасывает всё в ручной режим."""
+    def test_back_from_review_keeps_earlier_assignments(self):
+        """Откат из REVIEW затирает только последнюю роль."""
         api = self._api(list(range(7)))
         try:
-            state = api.scan()
-            self.assertEqual(state["status"], "REVIEW")
+            with api.lock:
+                api.status = "REVIEW"
+                api.role_index = 7
+                api.assignments = {
+                    role: index for index, role in enumerate(ROLE_ORDER)
+                }
             state = api.back()
             self.assertEqual(state["status"], "READY")
-            self.assertEqual(state["assignments"], {})
-            self.assertEqual(state["step"], 1)
-            self.assertFalse(state["auto_assigned"])
+            self.assertEqual(
+                set(state["assignments"]),
+                set(ROLE_ORDER[:-1]),
+            )
+            self.assertEqual(state["assignments"]["INPUT_LEFT"], 0)
         finally:
             api.shutdown()
+
+
+class PreviewPoolTest(CameraCalibrationTestBase):
+
+    def test_pool_opens_all_cameras_by_waves(self):
+        """Фаза 2 волнами открывает весь комплект и держит его открытым."""
+        factory = make_factory(list(range(7)))
+        pool, lost = _open_preview_pool(list(range(7)), 7, factory)
+        try:
+            self.assertEqual(lost, {})
+            self.assertEqual(sorted(pool), [0, 1, 2, 3, 4, 5, 6])
+            for capture in pool.values():
+                self.assertTrue(capture.isOpened())
+        finally:
+            for capture in pool.values():
+                capture.release()
+
+    def test_pool_reports_lost_cameras(self):
+        """Камера, не открывшаяся в фазе 2, попадает в lost с причиной."""
+        factory = make_factory([0, 1, 2, 3, 4, 5])  # ID 6 не работает
+        pool, lost = _open_preview_pool(list(range(7)), 7, factory)
+        try:
+            self.assertEqual(len(pool), 6)
+            self.assertIn(6, lost)
+        finally:
+            for capture in pool.values():
+                capture.release()
 
 
 class ProbeBackendTest(CameraCalibrationTestBase):
@@ -259,43 +286,6 @@ class ProbeBackendTest(CameraCalibrationTestBase):
         self.assertIsNone(opened)
         self.assertIsNotNone(error)
         self.assertIn("разрешение", error)
-
-
-class AutoCalibrateTest(CameraCalibrationTestBase):
-
-    def test_auto_calibrate_writes_full_mapping(self):
-        config_path = self._config_path()
-        ok = auto_calibrate(
-            config_path,
-            scan_limit=10,
-            capture_factory=make_factory(list(range(7))),
-        )
-        self.assertTrue(ok)
-        mapping = load_camera_mapping(config_path)
-        self.assertEqual(set(mapping), REQUIRED_ROLES)
-        self.assertEqual(
-            {role: mapping[role] for role in ROLE_ORDER},
-            {
-                "INPUT_LEFT": 0,
-                "INPUT_RIGHT": 1,
-                "SPIDER_LEFT": 2,
-                "SPIDER_RIGHT": 3,
-                "SPIDER_IN": 4,
-                "SPIDER_OUT": 5,
-                "TOP": 6,
-            },
-        )
-
-    def test_auto_calibrate_fails_without_full_set(self):
-        config_path = self._config_path()
-        ok = auto_calibrate(
-            config_path,
-            scan_limit=10,
-            capture_factory=make_factory([0, 1, 2, 3, 4]),
-        )
-        self.assertFalse(ok)
-        with self.assertRaises(RuntimeError):
-            load_camera_mapping(config_path)
 
 
 if __name__ == "__main__":

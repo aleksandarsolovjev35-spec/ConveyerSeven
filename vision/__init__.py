@@ -3,7 +3,6 @@
 __all__ = [
     "CameraManager",
     "calibrate_cameras",
-    "auto_calibrate",
     "launch_camera_calibrator",
     "VisionCluster",
     "MODEL_GROUPS",
@@ -16,15 +15,13 @@ def __getattr__(name):
     if name == "CameraManager":
         from vision.camera_manager import CameraManager
         return CameraManager
-    if name in {"calibrate_cameras", "auto_calibrate", "launch_camera_calibrator"}:
+    if name in {"calibrate_cameras", "launch_camera_calibrator"}:
         from vision.camera_calibration_console import (
             calibrate_cameras,
-            auto_calibrate,
             launch_camera_calibrator,
         )
         return {
             "calibrate_cameras": calibrate_cameras,
-            "auto_calibrate": auto_calibrate,
             "launch_camera_calibrator": launch_camera_calibrator,
         }[name]
     if name == "VisionCluster":
