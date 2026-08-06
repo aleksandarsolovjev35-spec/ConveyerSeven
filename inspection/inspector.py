@@ -16,7 +16,7 @@ from inspection.result import InspectionResult
 
 
 class Inspector:
-    """Выполняет одиночную или трёхпроходную инспекцию."""
+    """Выполняет инспекцию по свежему кадру (без тройного голосования)."""
 
     INPUT_ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     SPIDER_ROLES = (
@@ -30,7 +30,7 @@ class Inspector:
         self.decision = decision
         self.recorder = recorder
 
-    # Production: три свежих кадра, голосование 2 из 3
+    # Production: один свежий кадр, итог — по этому кадру
 
     def inspect_input_consensus(
         self,
@@ -39,12 +39,11 @@ class Inspector:
         frame_runs,
         force_bad: bool = False,
     ) -> InspectionResult:
-        """INPUT-инспекция по трём независимым наборам свежих кадров.
+        """INPUT-инспекция по одному свежему набору кадров.
 
-        Сначала 2 из 3 голосует ``part_presence``. Если деталь подтверждена,
-        все три vision-результата проходят каждый INPUT defect rule, включая
-        прогон, в котором presence отдельно не подтвердился. Поэтому каждое
-        итоговое defect rule всегда имеет ровно три валидных голоса.
+        ``part_presence`` оценивается по кадру; если деталь подтверждена,
+        vision-результат проходит каждый INPUT defect rule. Итог правила —
+        его ``triggered`` в этом единственном прогоне.
         """
 
         stage_frame_runs = self._prepare_frame_runs(
@@ -90,8 +89,8 @@ class Inspector:
             left_count = int(presence_result.details.get("flatness_left") or 0)
             right_count = int(presence_result.details.get("flatness_right") or 0)
             print(
-                f"[EMPTY] Step {step}: majority {presence_vote['empty_votes']}/"
-                f"{INSPECTION_RUNS}; evidence flatness L={left_count} R={right_count}"
+                f"[EMPTY] Step {step}: пустой лоток по кадру; "
+                f"evidence flatness L={left_count} R={right_count}"
             )
             return InspectionResult(
                 stage="input",
@@ -105,7 +104,7 @@ class Inspector:
                 consensus=consensus,
                 model_health=model_health,
                 run_frames=stage_frame_runs,
-                run_rule_results=[[], [], []],
+                run_rule_results=[[]],
             )
 
         rule_results_by_run = [
@@ -128,8 +127,8 @@ class Inspector:
         # Правило присутствия идёт первым в списке результатов для INPUT.
         final_rule_results = [presence_result] + final_rule_results
 
-        # Картинка строится по прогону, чей замер ближе всего к порогу
-        # (в норме), либо ближайшему к порогу браку, если все три — брак.
+        # Картинка строится по замеру, ближе всего к порогу (в норме),
+        # либо ближайшему к порогу браку.
         picture_index = select_picture_run(final_rule_results)
         if picture_index is None:
             picture_index = evidence_index
@@ -160,7 +159,7 @@ class Inspector:
         frame_runs,
         force_bad: bool = False,
     ) -> InspectionResult:
-        """SPIDER/TOP-инспекция по трём свежим кадрам с rule-majority."""
+        """SPIDER/TOP-инспекция по одному свежему кадру."""
 
         stage_frame_runs = self._prepare_frame_runs(
             frame_runs,
@@ -186,8 +185,8 @@ class Inspector:
         final_rule_results, consensus, evidence_index = combine_rule_results(
             rule_results_by_run
         )
-        # Картинка — по прогону, ближайшему к порогу (в норме), либо
-        # ближайшему к порогу браку, если все три замера — брак.
+        # Картинка — по замеру, ближайшему к порогу (в норме), либо
+        # ближайшему к порогу браку.
         picture_index = select_picture_run(final_rule_results)
         if picture_index is None:
             picture_index = evidence_index
@@ -215,8 +214,8 @@ class Inspector:
         runs = list(frame_runs)
         if len(runs) != INSPECTION_RUNS:
             raise InspectionConsensusError(
-                f"{stage}: ожидалось {INSPECTION_RUNS} набора кадров, "
-                f"получено {len(runs)}"
+                f"{stage}: ожидалось наборов кадров: {INSPECTION_RUNS}, "
+                f"получено: {len(runs)}"
             )
         stage_runs = []
         for run_index, frames in enumerate(runs):
@@ -308,7 +307,7 @@ class Inspector:
             run_rule_results=(
                 [list(rows) for rows in run_rule_results]
                 if run_rule_results is not None
-                else [[], [], []]
+                else [[]]
             ),
             run_vision_results=[dict(item) for item in vision_runs],
         )

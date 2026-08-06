@@ -72,6 +72,12 @@ class Conveyor:
         self.transport.send(f"G4 S{accel}")
         self.transport.send(f"G7 S{steps_per_division}")
         self.transport.send(f"G6 S{divisions_per_movement}")
+        # Сохраняем параметры: они читаются production-циклом
+        # (_on_conveyor_progress) для расчёта длительности движения в UI.
+        self.speed = int(speed)
+        self.accel = int(accel)
+        self.steps_per_division = int(steps_per_division)
+        self.divisions_per_movement = int(divisions_per_movement)
         time.sleep(0.5)
 
     @staticmethod

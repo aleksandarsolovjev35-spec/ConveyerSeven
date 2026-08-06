@@ -261,11 +261,11 @@ function setFrameAnalysisRulesFilter(next) {
         updateFrameAnalysisRulesTitle(state.frameAnalysisRulesCache);
         if (typeof renderFrameAnalysisPanel === 'function') {
             const vis = visibleFrameAnalysisRules(state.frameAnalysisRulesCache);
-            renderFrameAnalysisPanel(vis, state.viewRun, state.frameAnalysisModelsCache, {
+            renderFrameAnalysisPanel(vis, state.pictureRun, state.frameAnalysisModelsCache, {
                 totalRules: state.frameAnalysisRulesCache.length,
             });
         } else if (typeof renderFrameAnalysisRules === 'function') {
-            renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.viewRun);
+            renderFrameAnalysisRules(state.frameAnalysisRulesCache, state.pictureRun);
         }
     }
 }
@@ -289,34 +289,9 @@ function appendFaEmpty(container, text) {
     container.appendChild(item);
 }
 
-// Клик по замеру [Значение] → показать тот же прогон на главной камере
-function setupFrameAnalysisRunClicks() {
-    const list = els.frameAnalysisCards || document.getElementById('frame-analysis-cards');
-    const tabs = els.frameAnalysisTabs || document.getElementById('frame-analysis-tabs');
-    const root = document.getElementById('frame-analysis-panel') || document.getElementById('frame-analysis-body') || list;
-    if (!root || root.dataset.runClicksBound === '1') return;
-    root.dataset.runClicksBound = '1';
-    const activate = (event) => {
-        const chip = event.target.closest('.fa-thr-value[data-run], .fa-measurement-value[data-run], .fa-metric-chip[data-run], .fa-threshold-runs [data-run]');
-        if (!chip) return;
-        // не перехватывать клик по вкладкам
-        if (tabs && tabs.contains(chip)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const run = Number(chip.dataset.run);
-        if (!run) return;
-        if (typeof setMainCameraRun === 'function') {
-            setMainCameraRun(run);
-        }
-    };
-    root.addEventListener('click', activate);
-    root.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        const chip = event.target.closest('.fa-thr-value[data-run], .fa-measurement-value[data-run], .fa-metric-chip[data-run]');
-        if (!chip) return;
-        activate(event);
-    });
-}
+// Клик по замеру [Значение] → показать кадр того же набора на главной
+// камере. Тройное голосование убрано: набор один, у замеров нет data-run,
+// переключение недоступно — обработчик не нужен.
 
 function setupFrameAnalysisFilter() {
     const trig = els.frameAnalysisFilterTriggered || document.getElementById('frame-analysis-filter-triggered');
@@ -333,7 +308,7 @@ function setupFrameAnalysisFilter() {
 function showPendingSelectedFrameAnalysis() {
     if (!els.frameAnalysisPanel) return;
     state.frameAnalysisRulesCache = null;
-    state.viewRun = 0;
+    state.pictureRun = 0;
     els.frameAnalysisPanel.classList.remove('is-collapsed');
     if (els.statsSummary) els.statsSummary.classList.add('is-collapsed');
     if (els.distributorDiagnostics) {
@@ -385,7 +360,7 @@ function updateFrameAnalysisStatus(ls) {
     if (!available) {
         state.lastFrameAnalysisRenderKey = null;
         state.frameAnalysisRulesCache = null;
-        state.viewRun = 0;
+        state.pictureRun = 0;
         return;
     }
 
@@ -401,10 +376,8 @@ function updateFrameAnalysisStatus(ls) {
     const picEl = els.frameAnalysisPicture || document.getElementById('frame-analysis-picture');
     if (report.picture_reason && picEl) {
         picEl.classList.remove('is-hidden');
-        setIfChanged(
-            picEl,
-            'КАРТИНКА · ПРОГОН ' + (report.picture_run || '—') + ': ' + report.picture_reason,
-        );
+        // Тройное голосование убрано: набор кадров один, номер не показываем.
+        setIfChanged(picEl, 'КАРТИНКА: ' + report.picture_reason);
     } else if (picEl) {
         picEl.classList.add('is-hidden');
         setIfChanged(picEl, '');
@@ -426,7 +399,7 @@ function updateFrameAnalysisStatus(ls) {
         // данные те же — но фильтр мог смениться, перерисуем с фильтром
         const vis = visibleFrameAnalysisRules(rules);
         if (typeof renderFrameAnalysisPanel === 'function') {
-            renderFrameAnalysisPanel(vis, state.viewRun, report.models, {
+            renderFrameAnalysisPanel(vis, state.pictureRun, report.models, {
                 totalRules: rules.length,
                 status: report.status,
                 message: report.message,
@@ -438,9 +411,7 @@ function updateFrameAnalysisStatus(ls) {
 
     const pictureRun = Number(report.picture_run) || 0;
     state.frameAnalysisRulesCache = rules;
-    if (!(state.runFramesAvailable >= 3 && state.viewRun >= 1)) {
-        state.viewRun = pictureRun;
-    }
+    state.pictureRun = pictureRun;
     if (state.frameAnalysisRulesFilter !== 'all'
         && state.frameAnalysisRulesFilter !== 'triggered') {
         state.frameAnalysisRulesFilter = 'triggered';
@@ -448,13 +419,13 @@ function updateFrameAnalysisStatus(ls) {
 
     const visible = visibleFrameAnalysisRules(rules);
     if (typeof renderFrameAnalysisPanel === 'function') {
-        renderFrameAnalysisPanel(visible, state.viewRun, report.models, {
+        renderFrameAnalysisPanel(visible, pictureRun, report.models, {
             totalRules: rules.length,
             status: report.status,
             message: report.message,
         });
     } else if (typeof renderFrameAnalysisRules === 'function') {
-        renderFrameAnalysisRules(visible, state.viewRun);
+        renderFrameAnalysisRules(visible, pictureRun);
     }
 
     // Сохранить модели для использования при смене фильтра
@@ -510,7 +481,6 @@ function renderLegacyRuleCard(rule, pictureRun) {
 }
 
 function setupSelectedFrameAnalysis() {
-    setupFrameAnalysisRunClicks();
     setupFrameAnalysisFilter();
     if (!els.analyzeSelectedFrame) return;
     els.analyzeSelectedFrame.addEventListener('click', async () => {

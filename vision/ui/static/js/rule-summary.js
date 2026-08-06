@@ -260,27 +260,30 @@ function faGetObjIndex(label) {
 function faVoteSummary(vote) {
     if (!vote) return {className: 'ok', text: '—'};
     const total = Number(vote.total_runs) || 3;
+    // Тройное голосование убрано: при одном прогоне счётчик не показываем.
+    const single = total <= 1;
+    const count = (value) => single ? '' : ` · ${value ?? 0}/${total}`;
     if (vote.decision === 'empty') {
         return {
             className: 'warn',
-            text: `🟡 ПУСТО · ${vote.empty_votes ?? vote.triggered_votes ?? 0}/${total}`,
+            text: `🟡 ПУСТО${count(vote.empty_votes ?? vote.triggered_votes)}`,
         };
     }
     if (vote.decision === 'present') {
         return {
             className: 'ok',
-            text: `🟢 КОРПУС · ${vote.present_votes ?? vote.normal_votes ?? 0}/${total}`,
+            text: `🟢 КОРПУС${count(vote.present_votes ?? vote.normal_votes)}`,
         };
     }
     if (vote.decision === 'triggered') {
         return {
             className: 'bad',
-            text: `🔴 СРАБОТАЛО · ${vote.triggered_votes ?? 0}/${total}`,
+            text: `🔴 СРАБОТАЛО${count(vote.triggered_votes)}`,
         };
     }
     return {
         className: 'ok',
-        text: `🟢 НОРМА · ${vote.normal_votes ?? 0}/${total}`,
+        text: `🟢 НОРМА${count(vote.normal_votes)}`,
     };
 }
 // ===== ОСНОВНЫЕ ФУНКЦИИ РЕНДЕРА =====
@@ -413,8 +416,7 @@ function faBuildRuleRow(rule, pictureRun) {
     if (vote) {
         const summary = faVoteSummary(vote);
         const badge = faEl('span', 'fa-rule-vote ' + summary.className, summary.text);
-        if (vote.picture_run) badge.title = 'Picture: прогон ' + vote.picture_run;
-        if (vote.evidence_run) badge.title += (badge.title ? ' | ' : '') + 'Evidence: прогон ' + vote.evidence_run;
+        // Тройное голосование убрано: детали прогонов в tooltip не нужны.
         head.appendChild(badge);
     }
     if (rule.human_cause && rule.triggered) {
@@ -440,14 +442,20 @@ function faBuildRuleRow(rule, pictureRun) {
         metricRow.appendChild(label);
         const valWrap = faEl('div', 'fa-metric-values');
         const runs = m.runs || [];
-        for (let i = 0; i < 3; i++) {
+        const singleRun = runs.length <= 1;
+        const runCount = singleRun ? 1 : runs.length;
+        for (let i = 0; i < runCount; i++) {
             const r = runs[i] || null;
             const chip = faEl('span', 'fa-metric-chip' + (r && r.ok === false ? ' bad' : r && r.ok === true ? ' ok' : ''));
-            chip.textContent = 'П' + (i+1) + ':' + faFormatValue(r ? r.value : '—');
-            chip.dataset.run = String(i + 1);
-            chip.setAttribute('role', 'button');
-            chip.tabIndex = 0;
-            chip.title = 'Прогон ' + (i + 1) + ' — показать кадр';
+            chip.textContent = singleRun
+                ? faFormatValue(r ? r.value : '—')
+                : 'П' + (i+1) + ':' + faFormatValue(r ? r.value : '—');
+            if (!singleRun) {
+                chip.dataset.run = String(i + 1);
+                chip.setAttribute('role', 'button');
+                chip.tabIndex = 0;
+                chip.title = 'Прогон ' + (i + 1) + ' — показать кадр';
+            }
             if (pictureRun && i+1 === pictureRun) chip.classList.add('pic');
             if (vote && vote.evidence_run && i+1 === vote.evidence_run) chip.classList.add('evd');
             valWrap.appendChild(chip);
@@ -543,19 +551,27 @@ function faBuildThresholdBlock(roleLabel, metric, pictureRun, evidenceRun, isDec
     block.appendChild(head);
     const valuesRow = faEl('div', 'fa-thr-values fa-threshold-runs');
     const runs = Array.isArray(metric.runs) ? metric.runs : [];
+    const singleRun = runs.length <= 1;
+    const runCount = singleRun ? 1 : runs.length;
     const limRaw = typeof metric.limit_raw === 'number' ? metric.limit_raw : null;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < runCount; i++) {
         const run = runs[i] || null;
         const chip = faEl('span', 'fa-thr-value fa-measurement-value ' + faMeasurementClass(run));
-        chip.setAttribute('data-run', String(i + 1));
-        chip.setAttribute('role', 'button');
-        chip.tabIndex = 0;
-        chip.title = 'Прогон ' + (i + 1) + ' — показать кадр';
-        const runLabel = faEl('span', 'fa-mv-run', 'П' + (i + 1));
-        chip.appendChild(runLabel);
+        if (!singleRun) {
+            chip.setAttribute('data-run', String(i + 1));
+            chip.setAttribute('role', 'button');
+            chip.tabIndex = 0;
+            chip.title = 'Прогон ' + (i + 1) + ' — показать кадр';
+        }
+        if (!singleRun) {
+            const runLabel = faEl('span', 'fa-mv-run', 'П' + (i + 1));
+            chip.appendChild(runLabel);
+        }
         const badges = faEl('span', 'fa-mv-badges');
-        if (pictureRun && (i + 1) === pictureRun) { badges.appendChild(faEl('span', 'fa-mv-badge fa-mv-badge-picture', 'П')); chip.classList.add('is-picture-run'); }
-        if (evidenceRun && (i + 1) === evidenceRun) { badges.appendChild(faEl('span', 'fa-mv-badge fa-mv-badge-evidence', 'Д')); chip.classList.add('is-evidence-run'); }
+        if (!singleRun) {
+            if (pictureRun && (i + 1) === pictureRun) { badges.appendChild(faEl('span', 'fa-mv-badge fa-mv-badge-picture', 'П')); chip.classList.add('is-picture-run'); }
+            if (evidenceRun && (i + 1) === evidenceRun) { badges.appendChild(faEl('span', 'fa-mv-badge fa-mv-badge-evidence', 'Д')); chip.classList.add('is-evidence-run'); }
+        }
         chip.appendChild(badges);
         chip.appendChild(faEl('span', 'fa-mv-value', faFormatValue(run ? run.value : null)));
         const deltaText = faFormatDelta(run, limRaw);
@@ -575,7 +591,7 @@ function faBuildModelPerformance(models) {
     const wrap = faEl('div', 'fa-model-performance');
     wrap.appendChild(faEl('div', 'fa-model-perf-title', 'Производительность моделей:'));
     const list = faEl('div', 'fa-model-perf-list');
-    models.forEach(m => { if (!m || typeof m !== 'object') return; const item = faEl('div', 'fa-model-perf-item'); const header = faEl('div', 'fa-model-perf-header'); header.appendChild(faEl('span', 'fa-model-perf-role', faCameraRoleLabel(m.role) + ' · ' + (m.model || 'model'))); if (m.elapsed_ms != null && Number.isFinite(Number(m.elapsed_ms))) header.appendChild(faEl('span', 'fa-model-perf-time', Number(m.elapsed_ms).toFixed(1) + ' мс (ср.)')); item.appendChild(header); if (m.detections_by_run && m.detections_by_run.length) { const detRow = faEl('div', 'fa-model-perf-dets'); detRow.textContent = 'Детекции: ' + m.detections_by_run.map((d, i) => 'П' + (i+1) + '=' + d).join(', '); item.appendChild(detRow); } if (m.error) { const errRow = faEl('div', 'fa-model-perf-error'); errRow.textContent = 'Ошибка: ' + m.error; item.appendChild(errRow); } list.appendChild(item); });
+    models.forEach(m => { if (!m || typeof m !== 'object') return; const item = faEl('div', 'fa-model-perf-item'); const header = faEl('div', 'fa-model-perf-header'); header.appendChild(faEl('span', 'fa-model-perf-role', faCameraRoleLabel(m.role) + ' · ' + (m.model || 'model'))); if (m.elapsed_ms != null && Number.isFinite(Number(m.elapsed_ms))) header.appendChild(faEl('span', 'fa-model-perf-time', Number(m.elapsed_ms).toFixed(1) + ' мс (ср.)')); item.appendChild(header); if (m.detections_by_run && m.detections_by_run.length) { const detRow = faEl('div', 'fa-model-perf-dets'); detRow.textContent = m.detections_by_run.length <= 1 ? 'Детекции: ' + m.detections_by_run[0] : 'Детекции: ' + m.detections_by_run.map((d, i) => 'П' + (i+1) + '=' + d).join(', '); item.appendChild(detRow); } if (m.error) { const errRow = faEl('div', 'fa-model-perf-error'); errRow.textContent = 'Ошибка: ' + m.error; item.appendChild(errRow); } list.appendChild(item); });
     wrap.appendChild(list); return wrap;
 }
 // ===== ЭКСПОРТ =====

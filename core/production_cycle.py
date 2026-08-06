@@ -561,15 +561,14 @@ class ProductionCycle:
             for run_number in range(1, INSPECTION_RUNS + 1):
                 self._set_process(
                     "SELECTED_MODEL_ANALYSIS",
-                    f"{role}: свежий кадр {run_number}/{INSPECTION_RUNS}",
+                    f"{role}: свежий кадр",
                 )
                 frame = self.cameras.capture_single(role)
                 stage_frames = {role: frame}
                 vision_results = self.inspector.vision.process_all(stage_frames)
                 if role not in vision_results:
                     raise RuntimeError(
-                        f"Модели не вернули результат камеры {role} "
-                        f"в прогоне {run_number}"
+                        f"Модели не вернули результат камеры {role}"
                     )
 
                 frame_runs.append(frame)
@@ -602,7 +601,7 @@ class ProductionCycle:
                     # Пустой лоток: defect-правила не выполняются (проверять
                     # нечего), итог — только по part_presence. Важно:
                     # combine_rule_results здесь вызывать нельзя — прогонов
-                    # defect-правил нет (0 из 3), голосование невозможно.
+                    # defect-правил нет (0).
                     rule_results = []
                     evidence_index = presence_evidence
                     consensus = {
@@ -613,7 +612,7 @@ class ProductionCycle:
                         "rules": {},
                     }
                     # Пустой лоток: картинка по самому пограничному flatness
-                    # (ближайший к порогу ложных срабатываний прогон).
+                    # (ближайший к порогу ложных срабатываний замер).
                     picture_index = select_picture_run([presence_result])
                     if picture_index is None:
                         picture_index = evidence_index
@@ -649,8 +648,8 @@ class ProductionCycle:
                     combine_rule_results(rule_results_by_run)
                 )
 
-            # Картинка — по прогону, ближе всего к порогу (в норме), либо
-            # ближайшему к порогу браку, если все три замера — брак.
+            # Картинка — по замеру, ближе всего к порогу (в норме), либо
+            # ближайшему к порогу браку.
             if is_input:
                 picture_candidates = [presence_result] + list(rule_results)
             else:
@@ -670,7 +669,8 @@ class ProductionCycle:
             model_rows = summarize_model_health(raw_model_health)
             if not model_rows or any(not row.get("ok") for row in model_rows):
                 raise RuntimeError(
-                    f"Нет полного комплекта model health 3/3 для камеры {role}"
+                    f"Нет полного комплекта model health "
+                    f"{INSPECTION_RUNS}/{INSPECTION_RUNS} для камеры {role}"
                 )
 
             rule_rows = []
@@ -700,7 +700,7 @@ class ProductionCycle:
                 "status": "PASSED",
                 "kind": "SELECTED_MODEL",
                 "message": (
-                    f"{role}: 3 свежих кадра; моделей {len(model_rows)}; "
+                    f"{role}: свежий кадр; моделей {len(model_rows)}; "
                     f"правил {len(rule_rows)}; объекты "
                     + "/".join(str(value) for value in detection_counts)
                 ),
@@ -723,20 +723,18 @@ class ProductionCycle:
                 "SELECTED_MODEL_READY",
                 f"Анализ кадра {role} завершён; поток приостановлен",
             )
+            # Разметка кадра — по правилам этого кадра. Публикуется тем же
+            # вызовом, что и кадры: единый снимок.
             self._refresh_monitor(
                 stage_frames,
                 run_frames=[{role: frame_runs[index]}
                             for index in range(INSPECTION_RUNS)],
-            )
-            if self.monitor:
-                # Разметка каждого кадра прогона — по правилам этого прогона
-                # (raw-результаты каждого прогона, до majority-слияния).
-                run_rules = (
+                run_rule_results=(
                     rule_results_by_run
                     if rule_results_by_run
-                    else [[], [], []]
-                )
-                self.monitor.server.set_run_rule_results(run_rules)
+                    else [[]]
+                ),
+            )
             return True
         except Exception as exc:
             self._selected_analysis_active = False
@@ -1087,7 +1085,7 @@ class ProductionCycle:
         self._check_motion_cancelled()
 
     def _stage_capture(self):
-        """CAPTURE: три синхронных набора кадров неподвижной детали."""
+        """CAPTURE: один синхронный набор кадров неподвижной детали."""
         self.stages.enter_capture()
 
         # Сброс буфера драйвера: UVC-драйверы игнорируют
@@ -1107,25 +1105,20 @@ class ProductionCycle:
         if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
 
-        frame_runs = []
-        for run_number in range(1, INSPECTION_RUNS + 1):
-            self._set_process(
-                "CAMERA_CAPTURE",
-                f"Синхронный захват семи камер: прогон "
-                f"{run_number}/{INSPECTION_RUNS}",
-                positions=active_cam_positions,
-            )
-            frame_runs.append(self.cameras.capture_all())
-            self._check_motion_cancelled()
+        self._set_process(
+            "CAMERA_CAPTURE",
+            "Синхронный захват семи камер",
+            positions=active_cam_positions,
+        )
+        frame_runs = [self.cameras.capture_all()]
+        self._check_motion_cancelled()
         return frame_runs
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
         """ANALYSIS: модели и defect rules по уже снятым кадрам."""
         self.stages.enter_analysis()
 
-        # По умолчанию UI получает самый свежий набор. Для каждой реально
-        # выполненной стадии он заменяется evidence-кадрами, выбранными
-        # majority-алгоритмом как наиболее согласованными с итогом.
+        # Единственный набор кадров стадии: он же уходит в UI и архив.
         display_frames = dict(frame_runs[-1])
         run_frames = []
         run_rule_results = []
@@ -1140,7 +1133,7 @@ class ProductionCycle:
         if accept_input_for_this_step:
             self._set_process(
                 "INPUT_ANALYSIS",
-                "Вход: три прогона моделей и голосование правил 2 из 3",
+                "Вход: модели и правила по свежему кадру",
                 positions=active_positions,
             )
             input_result = self._process_input_stage(frame_runs)
@@ -1165,7 +1158,7 @@ class ProductionCycle:
         if spider_parts:
             self._set_process(
                 "SPIDER_CHECK",
-                "Проверка корпуса на +4: три прогона, голосование 2 из 3",
+                "Проверка корпуса на +4: свежий кадр",
                 positions=active_positions,
             )
             spider_result = self._run_spider_inspection(frame_runs)
@@ -1182,17 +1175,21 @@ class ProductionCycle:
                     )
             self._check_motion_cancelled()
 
-        # Все три набора кадров стадии уходят в UI: по клику на главный
-        # кадр оператор переключает прогон 1..3 (см. /frame?run=N).
+        # Набор кадров стадии уходит в UI. Кадры, разметка, правила,
+        # статус линии и цвет корпусов публикуются ОДНИМ вызовом: фронтенд
+        # видит единый снимок и может показать обрисовку правил и цвет
+        # корпуса на линии синхронно.
         if run_frames:
-            self._refresh_monitor(display_frames, run_frames=run_frames)
-            if run_rule_results and self.monitor:
-                self.monitor.server.set_run_rule_results(run_rule_results)
+            self._refresh_monitor(
+                display_frames,
+                run_frames=run_frames,
+                run_rule_results=run_rule_results,
+            )
         return display_frames
 
     @staticmethod
     def _merge_run_frames(acc: list, incoming: list) -> list:
-        """Слить три набора кадров по номерам прогонов (INPUT + SPIDER)."""
+        """Слить наборы кадров по номерам прогонов (INPUT + SPIDER)."""
         if not incoming:
             return acc
         merged = []
@@ -1331,12 +1328,12 @@ class ProductionCycle:
     # Input stage
 
     def _process_input_stage(self, frame_runs):
-        """Обработать INPUT по трём свежим кадрам и majority 2 из 3."""
+        """Обработать INPUT по свежему кадру (без тройного голосования)."""
 
         candidate_id = self.part_counter + 1
         self._set_process(
             "INPUT_ANALYSIS",
-            f"Вход: голосование 2 из 3 для кандидата #{candidate_id}",
+            f"Вход: анализ кандидата #{candidate_id}",
             part_id=candidate_id,
             positions=[self.OFFSET_INPUT],
         )
@@ -1348,7 +1345,7 @@ class ProductionCycle:
         )
         if not callable(inspect_consensus):
             raise RuntimeError(
-                "Inspector не поддерживает обязательный INPUT consensus 2 из 3"
+                "Inspector не поддерживает обязательную INPUT инспекцию"
             )
         result = inspect_consensus(
             part_id=candidate_id,
@@ -1366,7 +1363,7 @@ class ProductionCycle:
             self._last_rule_results.extend(result.rule_results)
             print(
                 f"[EMPTY] Пустой лоток на step {self.current_step} "
-                f"по majority 2/3 (total empty: {self.empty_count})"
+                f"(total empty: {self.empty_count})"
             )
             # Пустой лоток остаётся нейтральным: Part и архив не создаются.
             return result
@@ -1399,7 +1396,7 @@ class ProductionCycle:
 
         print(
             f"[INPUT] Деталь #{part.id} "
-            f"дефекты majority: {result.defects or ['none']}"
+            f"дефекты: {result.defects or ['none']}"
         )
         return result
 
@@ -1413,7 +1410,7 @@ class ProductionCycle:
 
             self._set_process(
                 "SPIDER_ANALYSIS",
-                f"Контроль 2 из 3 для корпуса #{part.id}",
+                f"Контроль корпуса #{part.id}",
                 part_id=part.id,
                 positions=[self.OFFSET_SPIDER],
             )
@@ -1424,7 +1421,7 @@ class ProductionCycle:
             )
             if not callable(inspect_consensus):
                 raise RuntimeError(
-                    "Inspector не поддерживает обязательный SPIDER consensus 2 из 3"
+                    "Inspector не поддерживает обязательную SPIDER инспекцию"
                 )
             result = inspect_consensus(
                 part_id=part.id,
@@ -1457,7 +1454,7 @@ class ProductionCycle:
 
             print(
                 f"[SPIDER] Деталь #{part.id} "
-                f"дефекты majority: {result.defects or ['none']} "
+                f"дефекты: {result.defects or ['none']} "
                 f"категория={part.route_category}"
             )
             return result
@@ -1635,7 +1632,7 @@ class ProductionCycle:
             rows = getattr(vision, "last_health", None) or []
         consensus = getattr(result, "consensus", None) or {}
         
-        # Подготовить модели с детальной информацией по прогонам
+        # Подготовить модели с детальной информацией о прогоне
         model_details = []
         for item in rows:
             if not isinstance(item, dict):
@@ -1862,8 +1859,8 @@ class ProductionCycle:
             role_suffix = f" · {active_role}" if active_role else ""
             if has_data:
                 message = (
-                    f"{stage_label}{role_suffix}: итог трёх свежих кадров; "
-                    "голосование каждого правила 2 из 3"
+                    f"{stage_label}{role_suffix}: итог по свежему кадру; "
+                    "правила считаются по единственному замеру"
                 )
             else:
                 message = (
@@ -2083,6 +2080,7 @@ class ProductionCycle:
         self,
         frames: dict | None = None,
         run_frames: list | None = None,
+        run_rule_results: list | None = None,
     ):
         if not self.monitor:
             return
@@ -2095,10 +2093,12 @@ class ProductionCycle:
                 line_status=status,
                 recent_parts=list(self.recent_parts),
                 run_frames=run_frames,
+                run_rule_results=run_rule_results,
             )
         else:
             self.monitor.update(
                 line_status=status,
                 recent_parts=list(self.recent_parts),
                 run_frames=run_frames,
+                run_rule_results=run_rule_results,
             )

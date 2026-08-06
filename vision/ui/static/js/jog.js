@@ -85,20 +85,13 @@ function showJogPanel(active) {
     });
 }
 
-// Суффикс «· ПРОГОН N/3» для статичных кадров: оператор видит, кадр
-// какого прогона голосования 2 из 3 сейчас на главной камере.
-function runBadgeSuffix() {
-    if (state.runFramesAvailable < 3 || state.viewRun <= 0) return '';
-    return ` · ПРОГОН ${state.viewRun}/${state.runFramesAvailable}`;
-}
-
 function applyLiveBadge(active) {
     if (!els.modeBadge) return;
     els.modeBadge.classList.remove(
         'is-faded', 'mode-live', 'mode-analysis', 'mode-static',
     );
     if (state.selectedAnalysisActive) {
-        els.modeBadge.textContent = `АНАЛИЗ${runBadgeSuffix()}`;
+        els.modeBadge.textContent = 'АНАЛИЗ';
         els.modeBadge.classList.add('mode-analysis');
         return;
     }
@@ -112,7 +105,7 @@ function applyLiveBadge(active) {
     if (state.liveStatic) {
         els.modeBadge.textContent = (state.mode === 'RAW'
             ? 'СТОП-КАДР · RAW'
-            : 'СТОП-КАДР · ПРАВИЛА') + runBadgeSuffix();
+            : 'СТОП-КАДР · ПРАВИЛА');
         els.modeBadge.classList.add('mode-static');
         return;
     }

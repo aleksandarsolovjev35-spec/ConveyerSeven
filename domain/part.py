@@ -25,7 +25,7 @@ class Part:
         self.final_decision: str = "none"
         self.route_category: str = CATEGORY_UNKNOWN
 
-        # Аудит production-голосования по стадиям input/spider.
+        # Аудит инспекции по стадиям input/spider.
         self.inspection_consensus: dict = {}
 
     def add_input_defect(self, defect: str):

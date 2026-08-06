@@ -6,7 +6,7 @@ UI uses ordered classic browser modules and does not require a production bundle
 
 1. `core.js` — constants, state, DOM cache, API and shared helpers.
 2. `boot.js` — splash, boot polling and readiness.
-3. `diagnostics.js` — distributor diagnostics and selected-frame (3 кадра) analysis.
+3. `diagnostics.js` — distributor diagnostics and selected-frame analysis.
 4. `status.js` — backend status, OFFLINE, process telemetry and part path.
 5. `controls.js` — START/STOP/EXIT, errors and state overlay.
 6. `cameras.js` — camera selection, RAW/RULES and frame refresh.
@@ -37,7 +37,7 @@ Functions may call functions from later modules only after all scripts have load
 - `splash` — экран запуска и ошибка инициализации.
 - `operator-header` — статус линии, заголовок и метрики.
 - `preview-strip` — семь миниатюр камер.
-- `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ 3 кадров.
+- `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ кадра.
 - `process-line` — путь деталей: непрозрачные ворота входа/выхода, из-под которых появляются и уезжают маркеры деталей.
 - `history-strip` — последние детали.
 - `right-panel` — прокручиваемая правая колонка.

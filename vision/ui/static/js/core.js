@@ -102,6 +102,19 @@ const state = {
     distributorDiagnosticPending: false,
     distributorDiagnosticBackendBusy: false,
 
+    // Выбранный анализ кадра (кнопка «АНАЛИЗ КАДРА»): задаются из
+    // diagnostics.js (updateSelectedAnalysisStatus/setupSelectedFrameAnalysis).
+    selectedAnalysisActive: false,
+    selectedAnalysisRole:   null,
+    selectedAnalysisPending: false,
+
+    // Кэши «полной» панели анализа (diagnostics.js, legacy). В текущем
+    // index.html DOM этой панели отсутствует — поля остаются неактивными.
+    frameAnalysisRulesCache: null,
+    frameAnalysisRulesFilter: 'triggered',
+    frameAnalysisModelsCache: null,
+    lastFrameAnalysisRenderKey: null,
+
     liveFps:              0.0,
     liveStreaming:        false,
     liveStatic:           false,
@@ -116,15 +129,24 @@ const state = {
     activeCameraRequestBusy: false,
     thresholdsRevision:   null,
 
-    // Переключение прогонов на главной камере: 0 — кадр по умолчанию
-    // (evidence, выбранный сервером), 1..3 — выбранный оператором прогон.
-    viewRun: 0,
-    runFramesAvailable: 0,
+    // Номер набора кадров, по которому строится «картинка» анализа
+    // (пометка решающего замера в панели правил). После отмены тройного
+    // голосования всегда 0 или 1.
+    pictureRun: 0,
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,
     mainCamAnalysisKey:   null,
     livePullTimer:        null,
+
+    // Синхронизация «сначала монитор, потом UI»: версия публикации анализа,
+    // визуальные результаты которой (цвет корпуса на линии, карточки правил,
+    // превью) ждут показа кадра с обрисовкой правил на главной камере.
+    // Пока pendingAnalysisVersion не null, эти элементы держат предыдущее
+    // состояние и переключаются одним кадром вместе с обрисовкой.
+    pendingAnalysisVersion: null,
+    pendingFlushTimer:      null,
+    lastLineStatus:         null,
 };
 
 // ─── Gallery state ───────────────────────────────────────────
@@ -208,6 +230,11 @@ const els = {
     jogHwDist2:       $('jog-hw-dist2'),
 
     frameAnalysisPanelNew: $('frame-analysis-panel'),
+    // Алиас для diagnostics.js: updateFrameAnalysisStatus и
+    // showPendingSelectedFrameAnalysis проверяют els.frameAnalysisPanel.
+    // Без алиаса они всегда выходили рано, и полная панель анализа
+    // (rule-summary.js) не отрабатывала.
+    frameAnalysisPanel: $('frame-analysis-panel'),
 
     btnStart:         $('btn-start'),
     btnPause:         $('btn-pause'),
@@ -262,6 +289,19 @@ mainBuffer.addEventListener('load', () => {
         els.mainCamera.src = mainBuffer.src;
     }
     mainBufferLoading = false;
+
+    // Кадр с обрисовкой правил показан на главной камере: только теперь
+    // применяем отложенные визуальные результаты анализа — цвет корпуса
+    // на линии, карточки правил и превью. Деталь под камерами и на линии
+    // появляется синхронно («сначала монитор, потом UI»).
+    if (
+        requestIsCurrent
+        && state.pendingAnalysisVersion !== null
+        && typeof flushPendingAnalysis === 'function'
+    ) {
+        flushPendingAnalysis();
+    }
+
     if (
         state.mainCamMode === 'live-pull'
         && typeof scheduleNextLiveFrame === 'function'

@@ -71,16 +71,6 @@ function setupHotkeys() {
             return;
         }
 
-        // Переключение кадров трёх прогонов анализа на главной камере
-        // (то же, что клик по кадру). Используем физический код KeyN,
-        // чтобы работало и в русской раскладке.
-        if (e.code === 'KeyN' && !e.repeat) {
-            if (typeof cycleMainCameraRun === 'function') {
-                cycleMainCameraRun();
-            }
-            return;
-        }
-
         if (state.jogActive) {
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                 e.preventDefault();
@@ -140,7 +130,6 @@ function init() {
     setupHotkeys();
     setupGallery();
     setupCameraHover();
-    setupMainCameraRunCycle();
     setupViewModeControls();
     setupJogControls();
     setupDistributorDiagnostics();
@@ -163,7 +152,6 @@ function setupForTest() {
     setupHotkeys();
     setupGallery();
     setupCameraHover();
-    setupMainCameraRunCycle();
     setupViewModeControls();
     setupJogControls();
     setupDistributorDiagnostics();
@@ -188,6 +176,8 @@ if (window.__TRANSPORTER_UI_TEST__ === true) {
         updateLineStatus,
         updateJogState,
         updateLineCells,
+        flushPendingAnalysis,
+        armPendingFlushFallback,
         updateRecentParts,
         updateStateOverlay,
         updateMode,
@@ -206,9 +196,6 @@ if (window.__TRANSPORTER_UI_TEST__ === true) {
         toggleMode,
         setViewMode,
         updateViewModeControls,
-        cycleMainCameraRun,
-        setMainCameraRun,
-        updateRunCycleAvailability,
         setFrameAnalysisRulesFilter,
         openGallery,
         closeGallery,

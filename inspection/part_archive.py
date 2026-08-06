@@ -88,9 +88,9 @@ class PartArchive:
             raw_frames: {role: frame} — чистые кадры.
             annotated_frames: {role: frame} — обрисовка правил.
             raw_overlay_frames: {role: frame} — сырые детекции нейросети.
-            run_frames: список из трёх словарей кадров прогонов.
-            run_rule_results: список из трёх списков результатов правил по прогонам.
-            run_vision_results: список из трёх словарей детекций по прогонам.
+            run_frames: список словарей кадров прогонов (один элемент).
+            run_rule_results: список списков результатов правил по прогонам.
+            run_vision_results: список словарей детекций по прогонам.
         """
         if not self.enabled:
             return
@@ -116,7 +116,7 @@ class PartArchive:
                     buf[role] = {}
                 buf[role]["raw_overlay"] = self._encode_image(frame)
 
-        # Сохранение всех трёх независимых прогонов для каждого ракурса
+        # Сохранение набора прогонов для каждого ракурса
         if run_frames:
             for idx, r_frames in enumerate(run_frames):
                 run_num = idx + 1
@@ -209,7 +209,7 @@ class PartArchive:
                     os.path.join(folder_path, f"{role}_debug.jpg"),
                 )
 
-            # Сохранение всех трёх отдельных прогонов на диск
+            # Сохранение отдельных прогонов на диск
             for r in (1, 2, 3):
                 r_raw = frames.get(f"raw_run{r}")
                 if r_raw is not None:

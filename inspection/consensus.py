@@ -1,12 +1,20 @@
-"""Строгое голосование трёх независимых прогонов инспекции."""
+"""Единичный прогон инспекции (тройное голосование убрано).
+
+Раньше каждая стадия снимала три набора кадров и голосовала 2 из 3.
+Теперь стадия выполняется по одному свежему кадру, а вспомогательные
+функции этого модуля остались только для построения отчёта (run_cards,
+статусы области, выбор картинки). ``INSPECTION_RUNS = 1`` держит
+структуры данных совместимыми: ``run_cards`` — один элемент, голосов —
+один, evidence — единственный прогон.
+"""
 
 from __future__ import annotations
 
 from copy import deepcopy
 
 
-INSPECTION_RUNS = 3
-CONSENSUS_MIN_VOTES = 2
+INSPECTION_RUNS = 1
+CONSENSUS_MIN_VOTES = 1
 
 # Причины, по которым правило «не смогло построить область» (fail-closed):
 # отсутствие/невалидность области означает срабатывание, а не пропуск.
@@ -32,11 +40,11 @@ REGION_MISSING_MARKERS = (
 
 
 class InspectionConsensusError(RuntimeError):
-    """Невозможно получить валидное решение 2 из 3."""
+    """Невозможно получить валидный результат прогона."""
 
 
 def summarize_model_health(model_health) -> list[dict]:
-    """Свернуть три запуска одной пары camera/model в одну UI-строку."""
+    """Свернуть запуски пары camera/model в одну UI-строку."""
 
     grouped = {}
     order = []
@@ -75,20 +83,21 @@ def summarize_model_health(model_health) -> list[dict]:
     return summary
 
 
-def _require_three(items, label: str) -> list:
+def _require_runs(items, label: str) -> list:
     values = list(items)
     if len(values) != INSPECTION_RUNS:
         raise InspectionConsensusError(
-            f"{label}: ожидалось {INSPECTION_RUNS} прогона, получено {len(values)}"
+            f"{label}: ожидалось прогонов: {INSPECTION_RUNS}, "
+            f"получено: {len(values)}"
         )
     return values
 
 
 def _strict_majority(states, label: str) -> tuple[bool, int, int]:
-    values = _require_three(states, label)
+    values = _require_runs(states, label)
     if any(type(value) is not bool for value in values):
         raise InspectionConsensusError(
-            f"{label}: каждый результат голосования должен быть bool"
+            f"{label}: каждый результат должен быть bool"
         )
 
     positive_votes = sum(values)
@@ -98,21 +107,20 @@ def _strict_majority(states, label: str) -> tuple[bool, int, int]:
     if negative_votes >= CONSENSUS_MIN_VOTES:
         return False, positive_votes, negative_votes
     raise InspectionConsensusError(
-        f"{label}: нет строгого большинства {CONSENSUS_MIN_VOTES} из "
+        f"{label}: нет решения {CONSENSUS_MIN_VOTES} из "
         f"{INSPECTION_RUNS}"
     )
 
 
 def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
-    """Объединить результаты defect rules по схеме 2 из 3.
+    """Вернуть результаты defect rules единственного прогона.
 
-    Возвращает ``(final_results, metadata, evidence_run_index)``. Геометрия
-    каждого финального правила берётся из последнего прогона, который
-    поддерживает итог этого правила. Общий evidence-прогон выбирается по
-    максимальному совпадению со всем вектором итоговых решений.
+    Возвращает ``(final_results, metadata, evidence_run_index)``. При одном
+    прогоне это по сути передача результатов насквозь: итог правила — его
+    ``triggered`` в этом прогоне, evidence — сам прогон.
     """
 
-    runs = _require_three(rule_results_by_run, "defect rules")
+    runs = _require_runs(rule_results_by_run, "defect rules")
     runs = [list(results) for results in runs]
     if not runs[0]:
         if any(runs[1:]):
@@ -188,7 +196,7 @@ def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
         ]
         if len(matching_runs) < CONSENSUS_MIN_VOTES:
             raise InspectionConsensusError(
-                f"{rule_name}: нет двух результатов, подтверждающих итог"
+                f"{rule_name}: нет результатов, подтверждающих итог"
             )
         source_index = (
             evidence_index
@@ -205,9 +213,9 @@ def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
             "source_run": source_index + 1,
             "evidence_run": evidence_index + 1,
         }
-        # Замеры каждого из трёх прогонов по этому правилу: UI показывает
-        # под правилом «три замера порога», а выбор кадра для картинки
-        # (select_picture_run) идёт по близости замера к порогу.
+        # Единственный замер по этому правилу: UI показывает под правилом
+        # «замер порога», а выбор картинки (select_picture_run) идёт по
+        # близости замера к порогу.
         run_results = [results[result_index] for results in runs]
         consensus["run_cards"] = _run_summary_cards(rule_name, run_results)
         # Статус области по каждому прогону: «В НОРМЕ» / «ОТКЛОНЕНИЕ» /
@@ -230,14 +238,15 @@ def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
 
 
 def _run_summary_cards(rule_name: str, run_results) -> list:
-    """Сводка метрик правила по каждому прогону (для «трёх замеров»).
+    """Сводка метрик правила по прогону (для «замера»).
 
-    Возвращает список из трёх элементов — ``build_rule_summary`` по каждому
-    прогону. Для ``part_presence`` — сводка по входным камерам. Если у
-    прогона нет ``per_role`` (пропуск), карточка пустая: в UI покажется «—».
-    Импорт ``core.rule_summary`` выполняется здесь (внутри функции), чтобы
-    не создавать цикл: ``core.production_cycle`` импортирует
-    ``inspection.consensus``, а ``core/__init__`` тянет ``production_cycle``.
+    Возвращает список — ``build_rule_summary`` по каждому прогону (при
+    одном прогоне — один элемент). Для ``part_presence`` — сводка по
+    входным камерам. Если у прогона нет ``per_role`` (пропуск), карточка
+    пустая: в UI покажется «—». Импорт ``core.rule_summary`` выполняется
+    здесь (внутри функции), чтобы не создавать цикл:
+    ``core.production_cycle`` импортирует ``inspection.consensus``, а
+    ``core/__init__`` тянет ``production_cycle``.
     """
     from core.rule_summary import build_presence_summary, build_rule_summary
 
@@ -275,7 +284,7 @@ def _region_missing(role_details: dict) -> bool:
 def _run_statuses(rule_name: str, run_results) -> list:
     """Статус правила по каждому прогону (для fail-closed дефектов).
 
-    Возвращает список из трёх элементов; каждый — список записей по ролям::
+    Возвращает список из одного элемента; каждый — список записей по ролям::
 
         [{"role": "SPIDER_LEFT", "status": "ОБЛАСТЬ НЕ ПОСТРОЕНА",
           "reason": "no_detections"}, ...]
@@ -396,8 +405,7 @@ def _pick_metric_run(table: dict, triggered: bool):
       (наименее плохой дефект); если таких нет — по всем метрикам;
     * для нормального правила — метрика с минимальным расстоянием в норме;
     * внутри метрики приоритет у замера **в норме** с минимальным
-      расстоянием до порога, иначе — у брака с минимальным расстоянием;
-    * при равенстве — самый свежий прогон.
+      расстоянием до порога, иначе — у брака с минимальным расстоянием.
     """
     if not table:
         return None
@@ -487,32 +495,30 @@ def _picture_choice(final_results):
 
 
 def select_picture_run(final_results) -> int | None:
-    """Выбрать прогон (0..2), по которому строить картинку с разметкой.
+    """Выбрать прогон (0), по которому строить картинку с разметкой.
 
     Решающие правила — сработавшие при браке, иначе все. Внутри правила
     сначала выбирается решающая метрика (для сработавшего — вышедшая за
-    порог; для нормального — ближайшая к порогу), затем прогон: приоритет
-    у замера **в норме** с минимальным расстоянием до порога; если все три
-    замера метрики — брак, берём замер с минимальным расстоянием. При
-    равенстве — самый свежий прогон.
+    порог; для нормального — ближайшая к порогу). При одном прогоне это
+    всегда индекс 0, если у правила есть числовые пороги.
 
     Возвращает ``None``, если ни у одного правила нет числовых порогов
-    (тогда вызывающий использует прежний выбор по большинству голосов).
+    (тогда вызывающий использует единственный прогон).
     """
     choice = _picture_choice(final_results)
     return choice[0] if choice else None
 
 
 def describe_picture_run(final_results, run_index: int) -> str:
-    """Почему выбран именно этот прогон для картинки.
+    """Почему для картинки выбран этот прогон.
 
     Всегда согласован с :func:`select_picture_run`: сообщает ту же
-    решающую метрику и её замер. Без числовых порогов — «выбран по
-    большинству голосов».
+    решающую метрику и её замер. Без числовых порогов — «единственный
+    прогон».
     """
     choice = _picture_choice(final_results)
     if choice is None or choice[0] != run_index:
-        return "выбран по большинству голосов (нет числовых порогов)"
+        return "единственный прогон (нет числовых порогов)"
     _, rule_name, metric = choice
     value = metric.get("values", {}).get(run_index)
     limit = metric.get("limit")
@@ -531,9 +537,12 @@ def describe_picture_run(final_results, run_index: int) -> str:
 
 
 def combine_presence_results(presence_results) -> tuple[object, dict, int]:
-    """Проголосовать ``empty_tray`` служебного правила part_presence."""
+    """Определить ``empty_tray`` служебного правила part_presence.
 
-    results = _require_three(presence_results, "part_presence")
+    При одном прогоне итог — результат этого единственного прогона.
+    """
+
+    results = _require_runs(presence_results, "part_presence")
     empty_states = []
     for run_index, result in enumerate(results):
         if getattr(result, "rule_name", None) != "part_presence":
@@ -568,9 +577,9 @@ def combine_presence_results(presence_results) -> tuple[object, dict, int]:
         "states": ["empty" if state else "present" for state in empty_states],
         "source_run": evidence_index + 1,
         "evidence_run": evidence_index + 1,
-        # Три замера по входным камерам: flatness каждого прогона.
+        # Замер по входным камерам: flatness прогона.
         "run_cards": _run_summary_cards("part_presence", results),
-        # Статус каждого прогона: «КОРПУС» / «ПУСТО».
+        # Статус прогона: «КОРПУС» / «ПУСТО».
         "run_status": _run_statuses("part_presence", results),
     }
     details["consensus"] = consensus
