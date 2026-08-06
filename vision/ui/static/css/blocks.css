@@ -364,12 +364,6 @@
 .fa-new-meas.is-bad  { color: var(--bad); border-color: var(--bad); background: var(--bad-bg); }
 .fa-new-meas.is-pic  { outline: 1px dashed var(--accent); outline-offset: 1px; }
 
-.fa-new-run-label {
-    color: var(--text-muted);
-    font: 700 7px var(--font-ui);
-    letter-spacing: 0.2px;
-}
-
 .fa-new-empty {
     padding: 8px 6px;
     color: var(--text-muted);
