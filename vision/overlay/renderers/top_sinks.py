@@ -23,9 +23,9 @@ class TopSinksRenderer:
             drawing.get("platform_mask"),
             drawing.get("platform_bbox"),
         )
-        cv2.polylines(img, [central], True, COLOR_CASE_CENTRAL, LINE_THIN)
+        cv2.polylines(img, [central], True, COLOR_CASE_CENTRAL, LINE_THIN, lineType=cv2.LINE_AA)
         if drawing.get("draw_platform_reference", True):
-            cv2.polylines(img, [platform], True, COLOR_SKIP, LINE_THIN)
+            cv2.polylines(img, [platform], True, COLOR_SKIP, LINE_THIN, lineType=cv2.LINE_AA)
         if drawing.get("draw_contact_references", True):
             masks = drawing.get("contact_masks") or []
             boxes = drawing.get("contact_bboxes") or []
@@ -33,6 +33,7 @@ class TopSinksRenderer:
                 points = TopSinksRenderer._points(mask, bbox)
                 cv2.polylines(
                     img, [points], True, COLOR_SKIP, LINE_THIN,
+                    lineType=cv2.LINE_AA,
                 )
 
     @staticmethod
@@ -41,7 +42,7 @@ class TopSinksRenderer:
             drawing.get("sink_mask"),
             drawing.get("sink_bbox"),
         )
-        cv2.polylines(img, [sink_points], True, COLOR_SHELL, LINE_THIN)
+        cv2.polylines(img, [sink_points], True, COLOR_SHELL, LINE_THIN, lineType=cv2.LINE_AA)
         raster = drawing.get("forbidden_raster")
         if raster is not None:
             raster = np.asarray(raster)
@@ -58,7 +59,7 @@ class TopSinksRenderer:
             if not raw_contour:
                 continue
             contour = np.asarray(raw_contour, dtype=np.int32).reshape(-1, 1, 2)
-            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL)
+            cv2.drawContours(img, [contour], -1, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_invalid_reference(img, drawing):
@@ -66,7 +67,7 @@ class TopSinksRenderer:
             drawing.get("mask"),
             drawing.get("bbox"),
         )
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
         TopSinksRenderer._draw_cross(img, points)
 
     @staticmethod
@@ -81,6 +82,7 @@ class TopSinksRenderer:
             True,
             COLOR_FAIL if drawing.get("invalid") else COLOR_SKIP,
             LINE_FAIL if drawing.get("invalid") else LINE_THIN,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod

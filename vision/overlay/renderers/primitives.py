@@ -45,9 +45,9 @@ class DrawPrimitives:
             fill_color = COLOR_FAIL if d.get("triggered") else (60, 60, 60)
             cv2.fillPoly(overlay, [pts], fill_color)
             cv2.addWeighted(overlay, MASK_ALPHA, img, 1 - MASK_ALPHA, 0, img)
-            cv2.polylines(img, [pts], True, color, thickness)
+            cv2.polylines(img, [pts], True, color, thickness, lineType=cv2.LINE_AA)
         else:
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_text_with_bg(img, text, pos, color, font_scale=FONT_S, bg_pad=2, center_x=False):
@@ -56,7 +56,7 @@ class DrawPrimitives:
         if center_x:
             x = x - tw // 2
         x1, y1, x2, y2 = x - bg_pad, y - th - bg_pad, x + tw + bg_pad, y + bg_pad
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 0), -1)
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 0), -1, lineType=cv2.LINE_AA)
         cv2.putText(img, text, (x, y), FONT, font_scale, color, THICK)
 
     @staticmethod

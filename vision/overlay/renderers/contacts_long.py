@@ -27,17 +27,18 @@ class ContactsLongRenderer:
             True,
             COLOR_FAIL if triggered else COLOR_PASS,
             LINE_FAIL if triggered else LINE_THIN,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod
     def draw_count_item(img, drawing):
         points = ContactsLongRenderer._points(drawing)
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
 
     @staticmethod
     def draw_invalid_mask(img, drawing):
         points = ContactsLongRenderer._points(drawing)
-        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL)
+        cv2.polylines(img, [points], True, COLOR_FAIL, LINE_FAIL, lineType=cv2.LINE_AA)
         ContactsLongRenderer._draw_cross(img, points)
 
     @staticmethod
@@ -155,6 +156,7 @@ class ContactsLongRenderer:
             True,
             COLOR_REFERENCE_RECT if fits else COLOR_FAIL,
             LINE_THIN if fits else LINE_FAIL,
+            lineType=cv2.LINE_AA,
         )
 
     @staticmethod
