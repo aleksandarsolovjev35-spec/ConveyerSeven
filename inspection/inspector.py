@@ -127,8 +127,8 @@ class Inspector:
         # Правило присутствия идёт первым в списке результатов для INPUT.
         final_rule_results = [presence_result] + final_rule_results
 
-        # Картинка строится по прогону, чей замер ближе всего к порогу
-        # (в норме), либо ближайшему к порогу браку, если все три — брак.
+        # Картинка строится по замеру, ближе всего к порогу (в норме),
+        # либо ближайшему к порогу браку.
         picture_index = select_picture_run(final_rule_results)
         if picture_index is None:
             picture_index = evidence_index

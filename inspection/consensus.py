@@ -196,7 +196,7 @@ def combine_rule_results(rule_results_by_run) -> tuple[list, dict, int]:
         ]
         if len(matching_runs) < CONSENSUS_MIN_VOTES:
             raise InspectionConsensusError(
-                f"{rule_name}: нет двух результатов, подтверждающих итог"
+                f"{rule_name}: нет результатов, подтверждающих итог"
             )
         source_index = (
             evidence_index
