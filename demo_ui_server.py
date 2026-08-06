@@ -39,9 +39,9 @@ def build_demo_frame_analysis():
         bottom = 30 + (idx % 3)
         ok = 20 <= top <= 40
         windows.extend([
-            metric(f"Окно #{idx}: верх, px", str(top), "20…40 px", ok,
+            metric(f"Окно #{idx}: верх, px", str(top), "20-40 px", ok,
                    f"window_{idx}_top_px", f"Окно #{idx}"),
-            metric(f"Окно #{idx}: низ, px", str(bottom), "20…40 px", True,
+            metric(f"Окно #{idx}: низ, px", str(bottom), "20-40 px", True,
                    f"window_{idx}_bottom_px", f"Окно #{idx}"),
             metric(f"Окно #{idx}: в допуске", "1" if ok else "0", "1", ok,
                    f"window_{idx}_ok", f"Окно #{idx}"),

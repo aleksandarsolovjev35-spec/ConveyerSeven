@@ -614,7 +614,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 if metric is not None and len(top_limits) == 2:
                     # Понятный оператору диапазон вместо одной границы.
                     metric["limit"] = (
-                        f"{_number(top_limits[0])}…{_number(top_limits[1])} px"
+                        f"{_number(top_limits[0])}-{_number(top_limits[1])} px"
                     )
                 add(metric)
 
@@ -643,7 +643,7 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 )
                 if metric is not None and len(bottom_limits) == 2:
                     metric["limit"] = (
-                        f"{_number(bottom_limits[0])}…"
+                        f"{_number(bottom_limits[0])}-"
                         f"{_number(bottom_limits[1])} px"
                     )
                 add(metric)

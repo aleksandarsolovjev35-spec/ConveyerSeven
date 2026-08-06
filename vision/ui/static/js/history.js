@@ -33,6 +33,7 @@ function updateRecentParts(parts) {
         return `
             <div class="history-card cat-${cat}"
                  onclick="window._openPartGallery(${p.id})"
+                 title="Корпус #${p.id} · ${symbol}"
                  style="cursor:pointer">
                 <div class="history-card-id">#${p.id}</div>
                 <div class="history-card-symbol">${symbol}</div>
