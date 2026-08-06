@@ -1,7 +1,7 @@
 """Тесты строк отчёта правил при одиночном прогоне.
 
-Проверяют форму ``build_rule_report_row``/``build_rule_report_rows`` после
-отмены тройного голосования: run_cards содержит ровно один замер,
+Проверяют форму ``build_rule_report_row``/``build_rule_report_rows``:
+run_cards содержит ровно один замер,
 vote_details у defect-правил отсутствует (как и раньше), у part_presence —
 один прогон с required_votes=1.
 """

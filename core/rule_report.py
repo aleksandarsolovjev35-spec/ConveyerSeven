@@ -1085,7 +1085,7 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
     """Извлечь детали прогона для правила из consensus.
 
     Возвращает структуру с результатом прогона, evidence run для
-    отображения в UI (при одном прогоне голоса — 1/0).
+    отображения в UI.
     """
     if not isinstance(consensus, dict):
         return None
@@ -1114,14 +1114,14 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
             "agreement_scores": consensus.get("agreement_scores") or [],
             "picture_run": consensus.get("picture_run"),
             "picture_reason": consensus.get("picture_reason"),
-            "total_runs": int(consensus.get("runs") or 3),
-            "required_votes": int(consensus.get("required_votes") or 2),
+            "total_runs": int(consensus.get("runs") or 1),
+            "required_votes": int(consensus.get("required_votes") or 1),
         }
 
     if not isinstance(rule_meta, dict):
         return None
 
-    # Базовые голоса
+    # Базовые метрики
     triggered_votes = int(rule_meta.get("triggered_votes") or 0)
     normal_votes = int(rule_meta.get("normal_votes") or 0)
     decision = rule_meta.get("decision")
@@ -1146,8 +1146,8 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
         "agreement_scores": agreement_scores,
         "picture_run": picture_run,
         "picture_reason": picture_reason,
-        "total_runs": int(consensus.get("runs") or 3),
-        "required_votes": int(consensus.get("required_votes") or 2),
+        "total_runs": int(consensus.get("runs") or 1),
+        "required_votes": int(consensus.get("required_votes") or 1),
     }
 
 

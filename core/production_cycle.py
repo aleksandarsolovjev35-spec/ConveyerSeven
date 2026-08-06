@@ -1328,7 +1328,7 @@ class ProductionCycle:
     # Input stage
 
     def _process_input_stage(self, frame_runs):
-        """Обработать INPUT по свежему кадру (без тройного голосования)."""
+        """Обработать INPUT по свежему кадру."""
 
         candidate_id = self.part_counter + 1
         self._set_process(

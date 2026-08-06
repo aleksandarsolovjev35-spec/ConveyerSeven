@@ -29,5 +29,5 @@ class InspectionResult:
     # совпадал с кадром. Один элемент — список RuleResult'ов.
     run_rule_results: list = field(default_factory=list)
 
-    # Детекции моделей по каждому прогону (list из 3 dict-ов)
+    # Детекции моделей по каждому прогону
     run_vision_results: list = field(default_factory=list)

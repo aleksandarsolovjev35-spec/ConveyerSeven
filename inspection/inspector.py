@@ -16,7 +16,7 @@ from inspection.result import InspectionResult
 
 
 class Inspector:
-    """Выполняет инспекцию по свежему кадру (без тройного голосования)."""
+    """Выполняет инспекцию по свежему кадру."""
 
     INPUT_ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     SPIDER_ROLES = (

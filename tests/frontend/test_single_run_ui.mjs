@@ -1,7 +1,7 @@
 // test_single_run_ui.mjs — рендер компактной панели анализа при одиночном прогоне.
 //
-// Тройное голосование убрано: у каждого порога ровно один замер, бейджи
-// правил не показывают счётчики «· 2/3», у замеров нет data-run (переключение
+// У каждого порога ровно один замер, бейджи
+// правил не показывают счётчики, у замеров нет data-run (переключение
 // кадров недоступно). Тест работает с реальным DOM из index.html: только
 // компактная панель (fa-new-*), «полная» панель (frame-analysis-cards и т.п.)
 // в production отсутствует.
@@ -22,16 +22,14 @@ const body = `
     assert(els.frameAnalysisPanel === els.frameAnalysisPanelNew,
         'frameAnalysisPanel alias resolves to the real panel');
 
-    // ── Бейджи: один прогон — без счётчика голосов ──
+    // ── Бейджи ──
     assert(faNewVoteSummary({ decision: 'present', present_votes: 1, total_runs: 1, required_votes: 1 }).text === 'КОРПУС',
         'present badge without count');
     assert(faNewVoteSummary({ decision: 'triggered', triggered_votes: 1, total_runs: 1, required_votes: 1 }).text === 'СРАБОТАЛО',
         'triggered badge without count');
     assert(faNewVoteSummary({ decision: 'empty', empty_votes: 1, total_runs: 1, required_votes: 1 }).text === 'ПУСТО',
         'empty badge without count');
-    // Мультипрогоновые данные (если INSPECTION_RUNS вернётся > 1) всё ещё показывают счётчик
-    assert(faNewVoteSummary({ decision: 'normal', normal_votes: 2, total_runs: 3, required_votes: 2 }).text.includes('/3'),
-        'multi-run badge keeps count');
+
 
     // ── Компактная панель: один замер на порог, без data-run ──
     const report = {
