@@ -203,7 +203,6 @@ export function createSandbox({ fetchImpl } = {}) {
 
 const UI_SCRIPTS = [
     'core.js',
-    'rule-summary.js',
     'status.js',
     'cameras.js',
     'frame-analysis.js',

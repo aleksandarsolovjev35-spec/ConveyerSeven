@@ -537,7 +537,7 @@ function setupSelectedFrameAnalysis() {
 }
 
 // Экспорт для тестов/совместимости
-// renderRuleMeasurements(rule, pictureRun) — рендер порогов правила (определён в rule-summary.js)
+// Рендер порогов правила (реализуется в frame-analysis.js / diagnostics.js)
 // Вызывается из renderFrameAnalysisPanel и updateFrameAnalysisStatus
 if (typeof window !== 'undefined') {
     window.visibleFrameAnalysisRules = visibleFrameAnalysisRules;
