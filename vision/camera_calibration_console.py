@@ -22,7 +22,6 @@ from config.camera_mapping import (
 )
 from vision.camera_manager import (
     CameraManager,
-    _REQUESTED_FPS,
     _env_float,
     _env_int,
 )
@@ -31,9 +30,6 @@ from vision.camera_manager import default_backends as _camera_backends
 
 CAMERA_SCAN_LIMIT = 10
 EXPECTED_SIZE = (1280, 720)
-# FPS согласуется тот же, что запросит production (CAMERA_FPS): мастер
-# обязан проверять камеры ровно в том режиме, в котором им работать.
-REQUESTED_FPS = _REQUESTED_FPS
 JPEG_QUALITY = 78
 PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
@@ -230,13 +226,6 @@ def _scan_working_cameras(max_tested, factory):
     return working
 
 
-def detect_available_cameras(max_tested=CAMERA_SCAN_LIMIT, capture_factory=None):
-    """Найти Camera ID, которые дают валидный production-кадр."""
-
-    factory = capture_factory or _open_capture
-    return _scan_working_cameras(max_tested, factory)
-
-
 def _open_preview_pool(working, required_count, factory):
     """Фаза 2: одновременно открыть проверенные камеры для предпросмотра.
 
@@ -316,7 +305,6 @@ class CameraCalibrationApi:
         self.saved = False
         self.closed = False
         self._captures: dict[int, object] = {}
-        self._active_camera_id = None
         self._preview_verified_id = None
         self._close_callback = None
         self._scan_thread = None
@@ -556,7 +544,6 @@ class CameraCalibrationApi:
                     raise RuntimeError(
                         f"Camera ID {camera_id} больше не открыта"
                     )
-                self._active_camera_id = camera_id
                 frame, error = _probe_capture(
                     capture, attempts=PREVIEW_PROBE_ATTEMPTS
                 )
@@ -656,7 +643,6 @@ class CameraCalibrationApi:
         ]
 
     def _clear_active_camera_locked(self):
-        self._active_camera_id = None
         self._preview_verified_id = None
 
     def _drop_camera_locked(self, camera_id: int):

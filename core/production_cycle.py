@@ -92,7 +92,6 @@ class ProductionCycle:
 
         self._last_vision_results: dict = {}
         self._last_rule_results: list = []
-        self._last_model_health: list = []
         self._frame_analysis_groups = self._empty_frame_analysis_groups()
 
         self._drain_start_time: float = 0
@@ -228,7 +227,6 @@ class ProductionCycle:
             if accepted:
                 self._drain_start_time = 0
                 self._fault_reason = None
-                self._last_model_health = []
                 self._reset_frame_analysis()
                 # Деталь могла остаться под входными камерами ещё до пуска:
                 # первый шаг выполняется без движения ленты, чтобы она
@@ -698,7 +696,6 @@ class ProductionCycle:
 
             self._last_vision_results = vision_results
             self._last_rule_results = rule_results
-            self._last_model_health = model_rows
             self._diagnostics = {
                 "status": "PASSED",
                 "kind": "SELECTED_MODEL",
@@ -762,7 +759,6 @@ class ProductionCycle:
             self._selected_analysis_role = None
             self._last_vision_results = {}
             self._last_rule_results = []
-            self._last_model_health = []
             self._reset_frame_analysis()
             self._diagnostics = {
                 "status": "NOT_RUN",
@@ -1360,8 +1356,6 @@ class ProductionCycle:
             frame_runs=frame_runs,
             force_bad=self.force_all_bad,
         )
-        self._append_latest_model_health(result)
-
         if result.is_empty_tray:
             self._record_frame_analysis("INPUT", None, result)
             self.empty_count += 1
@@ -1438,7 +1432,6 @@ class ProductionCycle:
                 frame_runs=frame_runs,
                 force_bad=self.force_all_bad,
             )
-            self._append_latest_model_health(result)
             self._record_frame_analysis("SPIDER", part.id, result)
             part.inspection_consensus["spider"] = dict(result.consensus)
 
@@ -1608,17 +1601,6 @@ class ProductionCycle:
             "category": part.route_category,
             "time":     time.time(),
         })
-
-    def _append_latest_model_health(self, inspection_result=None):
-        result_rows = getattr(inspection_result, "model_health", None)
-        if isinstance(result_rows, list) and result_rows:
-            self._last_model_health = [dict(item) for item in result_rows]
-            return
-        vision = getattr(self.inspector, "vision", None)
-        rows = getattr(vision, "last_health", None)
-        if not isinstance(rows, list):
-            return
-        self._last_model_health = [dict(item) for item in rows]
 
     # Анализ кадра по группам камер (ВХОД / КОНТРОЛЬ +4)
 

@@ -218,18 +218,3 @@ def overlap_mask(raster_a, raster_b):
     if raster_a is None or raster_b is None:
         return None
     return cv2.bitwise_and(raster_a, raster_b)
-
-
-def raster_contours(raster):
-    if raster is None:
-        return []
-    contours, _ = cv2.findContours(
-        raster,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE,
-    )
-    return [
-        contour.reshape(-1, 2).astype(np.int32).tolist()
-        for contour in contours
-        if len(contour) >= 3
-    ]

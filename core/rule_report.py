@@ -268,10 +268,7 @@ DETAILED_RULES = (
     "short_omission",
 )
 
-CONTACT_GROUPS = (("L", 5), ("R", 5), ("T", 2), ("B", 2))
-
 NO_MEASUREMENT = "нет измерения"
-
 
 
 def _detail_window_geometry(per_role: dict) -> list:
@@ -881,17 +878,6 @@ def _status_label(rule_name: str, triggered: bool, details: dict, consensus: dic
     ), False
 
 
-# === Расширенные данные голосования для анализа кадра ===
-VOTE_DETAIL_KEYS = (
-    "triggered_votes",
-    "normal_votes",
-    "decision",
-    "states",
-    "source_run",
-    "evidence_run",
-    "agreement_scores",
-)
-
 # === Упрощённые человеческие причины дефектов (для быстрого понимания оператором) ===
 HUMAN_CAUSE_MAP = {
     # INPUT
@@ -951,8 +937,6 @@ from core.rule_summary import build_presence_summary, build_rule_summary
 SUMMARY_LINES_LIMIT = 4
 
 PART_PRESENCE_RULE = "part_presence"
-
-PART_ABSENT_TEXT = "КОРПУС НЕ ОБНАРУЖЕН"
 
 # Камеры, для которых правило имеет смысл в анализе кадра.
 # Панель «Анализ кадра» показывает только вычисления выбранной камеры,

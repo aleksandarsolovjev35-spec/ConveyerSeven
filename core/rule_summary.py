@@ -67,14 +67,6 @@ def _within(value, limit):
         return None
 
 
-def _in_range(value, low, high):
-    try:
-        number = float(value)
-        return float(low) <= number <= float(high)
-    except (TypeError, ValueError):
-        return None
-
-
 def _finite_numbers(values) -> list:
     numbers = []
     for value in values or []:

@@ -10,4 +10,3 @@ class SpiderShortOmissionRule(OmissionBoundaryMixin, BaseRule):
     TARGET_CLASS = "omission-short"
     FAMILY = "short"
     DRAWING_TYPE = "short_omission_item"
-    PANEL_LABEL = "short_omission"

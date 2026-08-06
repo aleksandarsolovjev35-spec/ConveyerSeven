@@ -276,7 +276,6 @@ def main():
                 monitor.thresholds_reload_callback = _thresholds_reload_from_file
 
                 def _thresholds_apply(role, values, labels):
-                    nonlocal inspector
                     if cycle is None or inspector is None:
                         raise RuntimeError(
                             "Система контроля ещё не инициализирована"

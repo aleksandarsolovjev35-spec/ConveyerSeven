@@ -8,7 +8,7 @@ from vision.overlay.debug_overlay import DebugOverlay
 class DebugRecorder:
     """
     Аннотирует кадры результатами правил и сохраняет на диск.
-    Хранит последние аннотированные кадры для UI.
+    Возвращает аннотированные кадры вызывающей стороне для UI.
     """
 
     def __init__(
@@ -22,7 +22,6 @@ class DebugRecorder:
         self.save_interval = save_interval
 
         self._step_counter   = 0
-        self._last_annotated: dict = {}
 
         if self.enabled:
             os.makedirs(self.folder, exist_ok=True)
@@ -37,9 +36,6 @@ class DebugRecorder:
         rule_results: list[RuleResult],
     ) -> dict:
         annotated = self._annotate(frames, rule_results)
-
-        # Полная замена — не накапливаем старые роли
-        self._last_annotated = annotated.copy()
 
         if self._should_save():
             self._save(part_id, step, annotated)

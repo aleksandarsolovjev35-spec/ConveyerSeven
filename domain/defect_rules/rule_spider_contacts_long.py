@@ -285,9 +285,6 @@ class SpiderContactsLongRule(BaseRule):
                 "failures": failures,
             })
 
-        x_left = float(np.min(xs)) - 40
-        x_right = float(np.max(xs)) + 40
-
         # Визуализируем ровно ту же линию, которая участвует в решении:
         # линию центров вписанных прямоугольников. Старые линии по верхнему
         # и нижнему краям segmentation mask больше не показываем.
