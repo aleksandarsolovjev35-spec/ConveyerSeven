@@ -268,9 +268,9 @@ def _detail_window_geometry(per_role: dict) -> list:
         top_limits = role_details.get("top_limits_px") or [0, 0]
         bottom_limits = role_details.get("bottom_limits_px") or [0, 0]
         detail_lines.append(
-            f"{role}: T {float(top_limits[0]):g}…"
+            f"{role}: T {float(top_limits[0]):g}-"
             f"{float(top_limits[1]):g} px; B "
-            f"{float(bottom_limits[0]):g}…"
+            f"{float(bottom_limits[0]):g}-"
             f"{float(bottom_limits[1]):g} px"
         )
         ignored = int(role_details.get("ignored") or 0)

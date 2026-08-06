@@ -42,7 +42,10 @@
     /* Самая длинная подпись «ОЧИСТКА» должна входить целиком даже при
        десяти карточках в штатном окне 1280px: компактные боковые
        паддинги освобождают место под текст, а max-width оставляет
-       запас на широких окнах. */
+       запас на широких окнах. Карточка объявлена контейнером, чтобы
+       надписи масштабировались под её фактическую ширину и не
+       обрезались на узких окнах (последние корпуса всегда видны). */
+    container-type: inline-size;
     padding: 3px 4px;
     display: flex;
     flex-direction: column;
@@ -83,9 +86,21 @@
        обрезки, а ellipsis остаётся страховкой на узких окнах. */
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.03em;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* Узкие карточки: надписи ужимаются под фактическую ширину, чтобы
+   текст последних корпусов не обрубался. Там, где контейнерные
+   единицы не поддерживаются, остаётся базовый размер 10px. */
+@supports (width: 1cqw) {
+    .history-card-id {
+        font-size: clamp(7px, 22cqw, 10px);
+    }
+    .history-card-symbol {
+        font-size: clamp(6px, 15cqw, 10px);
+    }
 }
 
 .history-card.cat-good .history-card-symbol    { color: var(--ok); }
