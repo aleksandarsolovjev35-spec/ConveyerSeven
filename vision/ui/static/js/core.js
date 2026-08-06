@@ -102,6 +102,19 @@ const state = {
     distributorDiagnosticPending: false,
     distributorDiagnosticBackendBusy: false,
 
+    // Выбранный анализ кадра (кнопка «АНАЛИЗ КАДРА»): задаются из
+    // diagnostics.js (updateSelectedAnalysisStatus/setupSelectedFrameAnalysis).
+    selectedAnalysisActive: false,
+    selectedAnalysisRole:   null,
+    selectedAnalysisPending: false,
+
+    // Кэши «полной» панели анализа (diagnostics.js, legacy). В текущем
+    // index.html DOM этой панели отсутствует — поля остаются неактивными.
+    frameAnalysisRulesCache: null,
+    frameAnalysisRulesFilter: 'triggered',
+    frameAnalysisModelsCache: null,
+    lastFrameAnalysisRenderKey: null,
+
     liveFps:              0.0,
     liveStreaming:        false,
     liveStatic:           false,
