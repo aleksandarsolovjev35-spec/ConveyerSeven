@@ -302,10 +302,10 @@
 .fa-new-rule-badge.ok   { background: var(--ok); color: var(--bg-0); }
 .fa-new-rule-badge.warn { background: var(--warn); color: var(--bg-0); }
 
-/* Строка порога */
+/* Строка порога: подпись · порог · замер (один прогон — одна колонка) */
 .fa-new-thr-row {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) 68px 1fr 1fr 1fr;
+    grid-template-columns: minmax(0, 1.4fr) 68px 1fr;
     gap: 4px;
     align-items: center;
     padding: 2px 5px;
@@ -372,4 +372,88 @@
     border: 1px dashed var(--border);
     border-radius: 3px;
 }
+
+/* Блок объекта: один объект — один блок со всеми его замерами */
+.fa-new-obj-block {
+    margin-left: 6px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-0);
+    overflow: hidden;
+}
+
+.fa-new-obj-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 5px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--border);
+}
+
+.fa-new-obj-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fa-new-obj-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 2px;
+    font: 700 7px var(--font-mono);
+    white-space: nowrap;
+}
+.fa-new-obj-badge.ok    { background: var(--ok-bg); color: var(--ok); }
+.fa-new-obj-badge.bad   { background: var(--bad-bg); color: var(--bad); }
+.fa-new-obj-badge.muted { color: var(--text-muted); }
+
+.fa-new-obj-block .fa-new-thr-row {
+    margin-left: 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+}
+.fa-new-obj-block .fa-new-thr-row:first-of-type { border-top: none; }
+
+/* Статистика корпусов: всего / годные / брак / очистка */
+.fa-new-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    flex: 0 0 auto;
+    margin-top: 2px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+}
+
+.fa-new-stats-cell {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 4px;
+    padding: 2px 4px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--text-dim);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.fa-new-stats-cell b {
+    font: 700 11px var(--font-mono);
+    color: var(--text);
+}
+.fa-new-stats-cell.ok b   { color: var(--ok); }
+.fa-new-stats-cell.bad b  { color: var(--bad); }
+.fa-new-stats-cell.warn b { color: var(--warn); }
 
