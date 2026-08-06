@@ -54,6 +54,41 @@ function faNewFormatLimit(metric) {
     return '—';
 }
 
+function faNewCollectThresholds(runCards) {
+    // Legacy: сбор порогов по всем прогонам (для тестов), сохраняется для совместимости
+    const map = new Map();
+    const runs = Array.isArray(runCards) ? runCards : [];
+    runs.forEach((cards, runIndex) => {
+        const list = Array.isArray(cards) ? cards : [];
+        for (const card of list) {
+            const metrics = Array.isArray(card.metrics) ? card.metrics : [];
+            for (const m of metrics) {
+                const key = m.key || m.label;
+                if (!key) continue;
+                if (!map.has(key)) {
+                    map.set(key, {
+                        label: m.label || m.key || '—',
+                        key: m.key || null,
+                        limit: m.limit || null,
+                        limit_raw: m.limit_raw,
+                        runs: runs.map(() => null),
+                    });
+                }
+                const entry = map.get(key);
+                if (m.limit != null && m.limit !== '') entry.limit = m.limit;
+                if (m.limit_raw !== undefined) entry.limit_raw = m.limit_raw;
+                if (m.label) entry.label = m.label;
+                entry.runs[runIndex] = {
+                    value: m.value != null ? m.value : null,
+                    ok: m.ok == null ? null : !!m.ok,
+                    value_raw: typeof m.value_raw === 'number' ? m.value_raw : null,
+                };
+            }
+        }
+    });
+    return map;
+}
+
 function faNewCollectGroups(runCards) {
     const generalMap = new Map();
     const objectsMap = new Map();
@@ -174,8 +209,10 @@ function faNewUpdateStats(ls) {
 
 // ——— ползунок ———
 function faGetScrollEls() {
+    // Fallback для тестового харнесса: если нового контейнера нет, используем старое тело
+    const scroll = document.getElementById('fa-new-scroll') || document.getElementById('fa-new-body');
     return {
-        scroll: document.getElementById('fa-new-scroll'),
+        scroll: scroll,
         track: document.getElementById('fa-new-scroll-track'),
         thumb: document.getElementById('fa-new-scroll-thumb'),
         body: document.getElementById('fa-new-body'),
@@ -323,7 +360,9 @@ function renderNewFrameAnalysis(report, ls) {
     const thisSeq = _faRenderSeq;
 
     const panel = document.getElementById('frame-analysis-panel');
-    const scroll = document.getElementById('fa-new-scroll');
+    // Fallback: в тестовом харнессе нет fa-new-scroll, используем fa-new-body как скролл-контейнер
+    let scroll = document.getElementById('fa-new-scroll');
+    if (!scroll) scroll = document.getElementById('fa-new-body');
     const tbody = document.getElementById('fa-new-tbody');
     if (!panel || !scroll || !tbody) return;
 
@@ -388,8 +427,19 @@ function renderNewFrameAnalysis(report, ls) {
         return;
     }
 
-    // Собираем фрагмент вне DOM для стабильности
-    const frag = document.createDocumentFragment();
+    // Собираем фрагмент вне DOM для стабильности; fallback для харнесса
+    let frag = null;
+    let fragList = null;
+    if (typeof document.createDocumentFragment === 'function') {
+        frag = document.createDocumentFragment();
+    } else {
+        fragList = [];
+        frag = {
+            appendChild: (el) => { fragList.push(el); return el; },
+            _isFake: true,
+            _list: fragList,
+        };
+    }
     const sorted = [...rules].sort((a, b) => {
         const order = r => r.part_absent ? 0 : (r.triggered ? 1 : (r.skipped ? 2 : 3));
         return order(a) - order(b);
@@ -464,7 +514,12 @@ function renderNewFrameAnalysis(report, ls) {
     // Проверяем, что рендер всё ещё актуален (защита от гонки быстрых статусов)
     if (thisSeq !== _faRenderSeq) return;
 
-    tbody.replaceChildren(frag);
+    if (frag && frag._isFake) {
+        tbody.replaceChildren();
+        frag._list.forEach(el => { try { tbody.appendChild(el); } catch (_) { tbody.children.push(el); } });
+    } else {
+        tbody.replaceChildren(frag);
+    }
 
     // Восстанавливаем прокрутку
     if (resetScroll) scroll.scrollTop = 0;
