@@ -13,6 +13,11 @@
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
+`test_ui_server_http.py` использует `fastapi.testclient` (для HTTP-запросов
+к реальному UIServer). На свежих версиях starlette (1.x) для этого нужен
+`pip install httpx2`. Если TestClient недоступен — тест пропускается с
+пояснением, остальной набор не падает.
+
 - `test_consensus_single_run.py` — `INSPECTION_RUNS == 1`:
   проход результатов насквозь, отклонение многопрогоновых входов,
   part_presence, выбор «картинки», сводка model health.
