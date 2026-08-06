@@ -217,6 +217,11 @@ const els = {
     jogHwDist2:       $('jog-hw-dist2'),
 
     frameAnalysisPanelNew: $('frame-analysis-panel'),
+    // Алиас для diagnostics.js: updateFrameAnalysisStatus и
+    // showPendingSelectedFrameAnalysis проверяют els.frameAnalysisPanel.
+    // Без алиаса они всегда выходили рано, и полная панель анализа
+    // (rule-summary.js) не отрабатывала.
+    frameAnalysisPanel: $('frame-analysis-panel'),
 
     btnStart:         $('btn-start'),
     btnPause:         $('btn-pause'),
