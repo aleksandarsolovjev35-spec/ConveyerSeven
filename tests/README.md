@@ -62,6 +62,22 @@ python -m unittest discover -s tests -p "test_*.py" -v
 - `test_part_archive.py` — PartArchive: буферизация кадров, финализация,
   meta.json, run1-изображения (run2/run3 не создаются при одиночном
   прогоне), zip-сжатие, отключённый архив.
+- `test_jog_controller.py` — dead-man hold: heartbeat, release, таймаут
+  без heartbeat, валидация параметров, восстановление normal_steps.
+- `test_live_preview.py` — LivePreview: потоки start/stop, публикация
+  активной камеры, пауза блокирует чтения, ошибка камеры.
+- `test_geometry.py` — примитивы (bbox, центроиды, площади) и split_top_row.
+- `test_serial_transport.py` — send/query/close через фейковый serial.
+- `test_debug_recorder.py` — аннотация кадров, save_interval.
+- `test_calibration_loader.py` — валидация полей и диапазонов
+  calibration.json.
+- `test_threshold_loader.py` — REQUIRED_KEYS, роли, describe_role_parameters,
+  roundtrip save/reload.
+- `test_defect_rules_smoke.py` — все defect rules на пустых детекциях:
+  не падают, структурные правила fail-closed, presence-правила без объекта
+  дефекта дают норму, строки отчёта строятся.
+- `test_cycle_diagnostics.py` — diagnostic_check_cameras, анализ выбранного
+  кадра и его release, JOG enter/exit/hold, pause/resume.
 
 ## Frontend (Node)
 
