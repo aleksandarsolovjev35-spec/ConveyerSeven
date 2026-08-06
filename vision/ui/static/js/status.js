@@ -78,6 +78,10 @@ async function fetchStatus() {
         }
     }
 
+    if (typeof updateArchiveStatus === 'function') {
+        updateArchiveStatus(status.archive || null);
+    }
+
     const lineStatusPayload = status.line_status || {};
     const liveInfo = lineStatusPayload.live || {};
     const staticPublish = (
@@ -130,6 +134,7 @@ function markUiOffline() {
         els.jogPanel.querySelectorAll('.jog-hold-btn').forEach(button => { button.disabled = true; });
     }
     if (typeof updateThresholdsPanel === 'function') updateThresholdsPanel();
+    if (typeof updateArchiveStatus === 'function') updateArchiveStatus(null);
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
@@ -206,6 +211,7 @@ function updateLineStatus(ls) {
     handleJogAutoToggle(lineState, ls.jog || null);
 
     if (typeof updateThresholdsPanel === 'function') updateThresholdsPanel();
+    if (typeof updateArchiveButton === 'function') updateArchiveButton();
 }
 
 // ─── Line cells ──────────────────────────────────────────────

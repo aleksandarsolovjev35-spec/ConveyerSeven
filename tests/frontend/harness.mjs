@@ -90,7 +90,14 @@ const UI_IDS = [
     'stat-inline', 'stat-empty', 'line-cells', 'process-phase-label',
     'defects-section', 'defects-title', 'defects-list', 'jog-panel',
     'jog-last-action', 'jog-hw-serial', 'jog-hw-cameras', 'jog-hw-conveyor',
-    'jog-hw-dist1', 'jog-hw-dist2', 'frame-analysis-panel', 'btn-start',
+    'jog-hw-dist1', 'jog-hw-dist2', 'frame-analysis-panel',
+    'archive-settings-open', 'archive-settings-modal', 'archive-settings-close',
+    'archive-settings-cancel', 'archive-pick-folder', 'archive-settings-save',
+    'archive-root-path', 'archive-jpeg-quality', 'archive-zip-compression',
+    'archive-zip-level', 'archive-enabled', 'archive-compress-on-shutdown', 'archive-delete-original',
+    'archive-settings-validation', 'archive-settings-status', 'archive-batch-id',
+    'archive-batch-good', 'archive-batch-bad', 'archive-batch-cleanup',
+    'btn-start',
     'btn-pause', 'btn-resume', 'btn-stop', 'btn-exit', 'thresholds-panel',
     'thresholds-camera-label', 'thresholds-hint', 'thresholds-body',
     'thresholds-status', 'thresholds-save', 'thresholds-reset',
@@ -211,6 +218,7 @@ const UI_SCRIPTS = [
     'frame-analysis.js',
     'diagnostics.js',
     'jog.js',
+    'archive.js',
     'bootstrap.js',
 ];
 

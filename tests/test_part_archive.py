@@ -55,6 +55,10 @@ class PartArchiveTest(unittest.TestCase):
         self.assertIsNotNone(info)
         folder = info["folder"]
         self.assertTrue(os.path.isdir(folder))
+        self.assertTrue(folder.endswith(os.path.join("BAD", "part_0001")))
+        self.assertTrue(os.path.exists(os.path.join(
+            os.path.dirname(os.path.dirname(folder)), "batch.json",
+        )))
 
         # Основные файлы
         for name in ("INPUT_LEFT.jpg", "INPUT_RIGHT.jpg", "SPIDER_LEFT.jpg",

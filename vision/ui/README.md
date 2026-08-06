@@ -12,7 +12,8 @@ UI uses ordered classic browser modules and does not require a production bundle
 6. `cameras.js` — camera selection, RAW/RULES and frame refresh.
 7. `jog.js` — dead-man hold/heartbeat/release logic.
 8. `history.js` — recent parts, archive gallery and fullscreen.
-9. `bootstrap.js` — hotkeys, initialization and test-only hook.
+9. `archive.js` — настройки папки партий, качества JPEG и ZIP.
+10. `bootstrap.js` — hotkeys, initialization and test-only hook.
 
 Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html`.
 
@@ -29,6 +30,7 @@ Functions may call functions from later modules only after all scripts have load
 - `gallery.css` — archive modal and fullscreen.
 - `process.css` — process line, distributor, diagnostics and OFFLINE/error additions.
 - `motion.css` — non-blocking fades, panel collapse/expand and frame/content transitions.
+- `archive.css` — modal настройки хранения партий и политики сжатия.
 
 ## Блочная карта UI
 
@@ -44,6 +46,7 @@ Functions may call functions from later modules only after all scripts have load
 - `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
 - `operator-footer` — кнопки ПУСК/СТОП/ВЫХОД и горячие клавиши.
 - `gallery` — архивная галерея детали.
+- `archive-settings` — выбор папки хранения и политики сжатия партий.
 - `calibration-header`, `calibration-preview`, `calibration-assignment`, `calibration-footer` — отдельные блоки мастера калибровки.
 
 Правило для новых зон: сначала добавить `data-ui-block`, затем проверить, что длинные русские подписи либо обрезаются через `ellipsis`, либо переносятся через `overflow-wrap: anywhere`.

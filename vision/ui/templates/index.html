@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="/static/css/process.css?v=39">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=19">
+    <link rel="stylesheet" href="/static/css/archive.css?v=1">
 </head>
 <body>
 
@@ -266,10 +267,68 @@
                 <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
                 <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
                 <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
+                <button id="archive-settings-open" class="btn btn-archive-settings" disabled>АРХИВ</button>
                 <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
             <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
         </footer>
+    </div>
+
+    <!-- ARCHIVE SETTINGS MODAL -->
+    <div id="archive-settings-modal" class="archive-settings-modal is-hidden" data-ui-block="archive-settings">
+        <div class="archive-settings-backdrop"></div>
+        <section class="archive-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="archive-settings-title">
+            <div class="archive-settings-head">
+                <h2 id="archive-settings-title">АРХИВ ПАРТИЙ</h2>
+                <button id="archive-settings-close" class="archive-settings-close" type="button" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="archive-settings-body">
+                <div class="archive-settings-row archive-settings-path-row">
+                    <label for="archive-root-path">ПАПКА ХРАНЕНИЯ</label>
+                    <div class="archive-settings-path-controls">
+                        <input id="archive-root-path" type="text" autocomplete="off" spellcheck="false" placeholder="D:\\InspectionArchive">
+                        <button id="archive-pick-folder" class="btn btn-sm" type="button">ВЫБРАТЬ</button>
+                    </div>
+                </div>
+                <div class="archive-settings-row">
+                    <label for="archive-jpeg-quality">КАЧЕСТВО JPEG</label>
+                    <div class="archive-settings-inline">
+                        <input id="archive-jpeg-quality" type="number" min="70" max="98" step="1">
+                        <span class="archive-settings-hint">70–98 · ниже = меньше размер</span>
+                    </div>
+                </div>
+                <div class="archive-settings-row">
+                    <label for="archive-zip-compression">МЕТОД ZIP</label>
+                    <select id="archive-zip-compression">
+                        <option value="deflated">DEFLATED · баланс</option>
+                        <option value="stored">STORED · быстрее для JPEG</option>
+                        <option value="lzma">LZMA · медленнее</option>
+                    </select>
+                </div>
+                <div class="archive-settings-row">
+                    <label for="archive-zip-level">УРОВЕНЬ ZIP</label>
+                    <div class="archive-settings-inline">
+                        <input id="archive-zip-level" type="number" min="0" max="9" step="1">
+                        <span class="archive-settings-hint">0–9 · влияет в основном на JSON</span>
+                    </div>
+                </div>
+                <label class="archive-settings-check"><input id="archive-enabled" type="checkbox"> <span>СОХРАНЯТЬ АРХИВ</span></label>
+                <label class="archive-settings-check"><input id="archive-compress-on-shutdown" type="checkbox"> <span>СЖИМАТЬ ПАРТИЮ ПРИ ВЫХОДЕ</span></label>
+                <label class="archive-settings-check"><input id="archive-delete-original" type="checkbox"> <span>УДАЛЯТЬ РАСПАКОВАННУЮ ПАПКУ ПОСЛЕ ZIP</span></label>
+                <div id="archive-settings-validation" class="archive-settings-validation"></div>
+                <div class="archive-settings-batch">
+                    <span>ТЕКУЩАЯ ПАРТИЯ: <b id="archive-batch-id">—</b></span>
+                    <span>ГОДНОЕ <b id="archive-batch-good">0</b></span>
+                    <span>БРАК <b id="archive-batch-bad">0</b></span>
+                    <span>ОЧИСТКА <b id="archive-batch-cleanup">0</b></span>
+                </div>
+            </div>
+            <div class="archive-settings-actions">
+                <span id="archive-settings-status" class="archive-settings-status"></span>
+                <button id="archive-settings-cancel" class="btn btn-sm" type="button">ОТМЕНА</button>
+                <button id="archive-settings-save" class="btn btn-sm btn-archive-save" type="button">СОХРАНИТЬ</button>
+            </div>
+        </section>
     </div>
 
     <!-- GALLERY MODAL -->
@@ -309,6 +368,7 @@
     <script src="/static/js/frame-analysis.js?v=10"></script>
     <script src="/static/js/jog.js?v=35"></script>
     <script src="/static/js/history.js?v=33"></script>
+    <script src="/static/js/archive.js?v=1"></script>
     <script src="/static/js/bootstrap.js?v=35"></script>
 </body>
 </html>

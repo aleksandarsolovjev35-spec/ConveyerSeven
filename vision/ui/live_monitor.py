@@ -1,6 +1,27 @@
 from vision.ui.server.server import UIServer
 
 
+class LiveMonitorApi:
+    """Небольшой native bridge для действий, недоступных обычному браузеру."""
+
+    def __init__(self, monitor):
+        self.monitor = monitor
+
+    def choose_archive_folder(self):
+        """Открыть системный диалог выбора папки в pywebview."""
+        window = self.monitor._webview_window
+        if window is None:
+            return {"ok": False, "error": "Окно интерфейса ещё не готово"}
+        try:
+            import webview
+            selected = window.create_file_dialog(webview.FOLDER_DIALOG)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        return {"ok": True, "path": str(selected[0])}
+
+
 class LiveMonitor:
     """
     Фасад UI: FastAPI сервер + pywebview окно.
@@ -51,6 +72,7 @@ class LiveMonitor:
         self._bind_server_callbacks()
 
         self._webview_window = None
+        self.webview_api = LiveMonitorApi(self)
         self._close_requested = False
 
     # Public API

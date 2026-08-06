@@ -5,7 +5,7 @@ import time
 
 import webview
 
-from config import load_calibration
+from config import load_calibration, load_archive_config
 
 from hardware.serial_transport import SerialTransport
 from hardware.port_discovery   import find_controller
@@ -245,10 +245,20 @@ def main():
                     decision=decision,
                     recorder=recorder,
                 )
+                archive_config = load_archive_config()
                 archive = PartArchive(
-                    root_folder="archive", enabled=True,
+                    root_folder=archive_config["root_path"],
+                    enabled=archive_config["enabled"],
+                    jpeg_quality=archive_config["jpeg_quality"],
+                    zip_compression=archive_config["zip_compression"],
+                    zip_level=archive_config["zip_level"],
+                    compress_on_shutdown=archive_config["compress_on_shutdown"],
+                    delete_original_after_zip=archive_config[
+                        "delete_original_after_zip"
+                    ],
                 )
                 monitor.server.archive = archive
+                monitor.server.archive_config_path = "archive_config.json"
 
                 # Редактор порогов правил: сервер отдаёт текущие значения
                 # (GET /api/thresholds), а применение изменений пересоздаёт
@@ -615,6 +625,7 @@ def main():
             url=f"http://{monitor.host}:{monitor.port}/",
             fullscreen=monitor.fullscreen,
             background_color="#0b0f13",
+            js_api=monitor.webview_api,
         )
         monitor._webview_window = window
         webview.start()
@@ -820,7 +831,7 @@ def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict
 
 
 def _shutdown_compress(archive):
-    if not archive or not archive.enabled:
+    if not archive or not archive.enabled or not archive.compress_on_shutdown:
         return
 
     t = threading.Thread(
@@ -838,7 +849,7 @@ def _shutdown_compress(archive):
 def _safe_compress(archive):
     try:
         print("[SHUTDOWN] Сжатие архива...")
-        archive.compress(delete_original=True)
+        archive.compress(delete_original=archive.delete_original_after_zip)
     except Exception as e:
         print(f"[SHUTDOWN] Ошибка сжатия архива: {e}")
 
