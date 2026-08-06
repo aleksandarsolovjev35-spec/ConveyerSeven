@@ -73,6 +73,10 @@ def fit_omission_top_line(
     ys = np.asarray([point[1] for point in samples], dtype=np.float64)
     slope, intercept = fit_theil_sen_line(xs, ys)
 
+    all_sample_points = [
+        [int(round(x)), int(round(y))]
+        for x, y in zip(xs, ys, strict=True)
+    ]
     residuals = np.abs(ys - (slope * xs + intercept))
     median_residual = float(np.median(residuals))
     robust_limit = max(1.0, median_residual * 3.0)
@@ -91,6 +95,10 @@ def fit_omission_top_line(
             [int(round(x)), int(round(y))]
             for x, y in zip(xs, ys, strict=True)
         ],
+        # Все сэмплы верхней кромки до отбрасывания выбросов: по ним
+        # omission_boundary проверяет долю точек у линии (общая картина),
+        # а не худшую единичную точку.
+        "all_sample_points": all_sample_points,
     }
 
 

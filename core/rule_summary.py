@@ -78,6 +78,13 @@ def _within(value, limit):
         return None
 
 
+def _at_least(value, limit):
+    try:
+        return float(value) >= float(limit)
+    except (TypeError, ValueError):
+        return None
+
+
 def _finite_numbers(values) -> list:
     numbers = []
     for value in values or []:
@@ -154,12 +161,21 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             "глубина", role_details.get("max_excess_depth_px"),
             unit=" px", key="max_excess_depth_px",
         ))
+        # Макс. остаток — информационный: валидность линии определяется
+        # долей точек у линии (см. метрику ниже), а не худшей точкой.
         residual = role_details.get("top_line_actual_max_residual_px")
         residual_max = role_details.get("top_line_max_residual_px")
         add(_metric(
             "отклонение линии", residual, residual_max,
-            ok=_within(residual, residual_max), unit=" px",
+            unit=" px",
             key="top_line_max_residual_px",
+        ))
+        inlier_ratio = role_details.get("top_line_actual_inlier_ratio")
+        inlier_ratio_min = role_details.get("top_line_min_inlier_ratio")
+        add(_metric(
+            "доля у линии", inlier_ratio, inlier_ratio_min,
+            ok=_at_least(inlier_ratio, inlier_ratio_min),
+            key="top_line_min_inlier_ratio",
         ))
         add(_metric(
             "крупн. фрагмент",
@@ -176,7 +192,6 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
 
     # ─── Длинные контакты 5 шт ───────────────────────────────
     elif rule_name == "contacts_long":
-        tolerance = role_details.get("line_tolerance_px") or role_details.get("tolerance")
         expected = role_details.get("expected_count") or 5
         found = role_details.get("found")
         if found is not None:
@@ -185,47 +200,40 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 ok=int(found) == int(expected),
                 key="found",
             ))
-        # Агрегированные дельты (если есть)
-        for label, key, metric_key in (
-            ("Δ верх, px", "delta_top", "delta_top"),
-            ("Δ низ, px", "delta_bottom", "delta_bottom"),
-            ("Δ высота, px", "delta_height", "delta_height"),
-        ):
-            if key in role_details and role_details.get(key) is not None:
-                add(_metric(
-                    label, role_details.get(key), tolerance,
-                    ok=_within(role_details.get(key), tolerance),
-                    unit=" px", key=metric_key,
-                ))
-        # Макс. отклонение от линии центров
-        max_dev = role_details.get("max_dev_top")
-        items = role_details.get("items") or []
-        if max_dev is None and items:
-            devs = _finite_numbers(it.get("dev_top_px") for it in items)
-            if devs:
-                max_dev = max(devs)
-        if max_dev is not None and tolerance is not None:
+        damper_open = role_details.get("damper_open_px")
+        damper_open_max = role_details.get("damper_open_max_px")
+        gap_dev = role_details.get("gap_dev_px")
+        gap_dev_max = role_details.get("gap_dev_max_px")
+        if damper_open is None and damper_open_max is not None:
+            # Порог виден даже без успешного замера (нет опорной линии).
             add(_metric(
-                "Макс. откл. от линии, px", max_dev, tolerance,
-                ok=_within(max_dev, tolerance), unit=" px",
-                key="line_tolerance_px",
+                "Порог заслонки, px", damper_open_max, unit=" px",
+                key="damper_open_max_px",
             ))
-        elif tolerance is not None and not items:
-            # Порог виден даже без успешного прогона (wrong_count).
+        else:
             add(_metric(
-                "Допуск линии, px", tolerance, unit=" px",
-                key="line_tolerance_px",
+                "Заслонка: перепад, px", damper_open, damper_open_max,
+                ok=_within(damper_open, damper_open_max),
+                unit=" px", key="damper_open_max_px",
             ))
-        # Наклон линии центров
-        slope = role_details.get("level_slope")
-        max_slope = role_details.get("max_level_slope")
-        if slope is not None:
+        if gap_dev is None and gap_dev_max is not None:
             add(_metric(
-                "Наклон линии", slope, max_slope,
-                ok=_within(abs(float(slope)), max_slope) if max_slope is not None else None,
-                key="max_level_slope",
+                "Порог разброса стен, px", gap_dev_max, unit=" px",
+                key="gap_dev_max_px",
             ))
-        # Эталонный прямоугольник
+        else:
+            add(_metric(
+                "Стены: разброс, px", gap_dev, gap_dev_max,
+                ok=_within(gap_dev, gap_dev_max),
+                unit=" px", key="gap_dev_max_px",
+            ))
+        # Прямолинейность ряда — информационно (на вердикт не влияет).
+        straight = role_details.get("straight_dev_max_px")
+        if straight is not None:
+            add(_metric(
+                "Прямолинейность (инфо), px", straight,
+                unit=" px", key="straight_dev_max_px",
+            ))
         if role_details.get("rect_width_px") is not None:
             add(_metric(
                 "Ширина эталона, px", role_details.get("rect_width_px"),
@@ -236,39 +244,36 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 "Высота эталона, px", role_details.get("rect_height_px"),
                 unit=" px", key="rect_height_px",
             ))
-        # Наклон к линии пропуска
-        tilt = role_details.get("omission_tilt_check") or {}
-        ratio = tilt.get("distance_trend_ratio")
-        if ratio is None:
-            ratio = tilt.get("distance_delta_ratio")
-        ratio_max = role_details.get("omission_tilt_ratio_max")
-        if ratio is not None:
-            add(_metric(
-                "Наклон к линии пропуска", ratio, ratio_max,
-                ok=_within(ratio, ratio_max),
-                key="omission_tilt_ratio_max",
-            ))
         # На каждый контакт
+        items = role_details.get("items") or []
         for it in items:
             idx = int(it.get("index") or 0)
             if not idx:
                 continue
             obj = f"Контакт #{idx}"
-            dev_top = it.get("dev_top_px")
-            dev_bot = it.get("dev_bottom_px")
+            gap_distance = it.get("omission_distance_px")
+            gap_deviation = it.get("gap_deviation_px")
+            straight_dev = it.get("straight_dev_px")
             rect_fits = it.get("rect_fits")
-            omission = it.get("omission_distance_px")
-            if dev_top is not None:
+            if gap_distance is not None:
                 add(_metric(
-                    f"Контакт #{idx}: откл. верх, px", dev_top, tolerance,
-                    ok=_within(dev_top, tolerance), unit=" px",
-                    key=f"contact_{idx}_dev_top_px", object=obj,
+                    f"Контакт #{idx}: расстояние до линии пропуска, px",
+                    gap_distance, unit=" px",
+                    key=f"contact_{idx}_omission_dist_px", object=obj,
                 ))
-            if dev_bot is not None and float(dev_bot) != 0.0:
+            if gap_deviation is not None:
                 add(_metric(
-                    f"Контакт #{idx}: откл. низ, px", dev_bot, tolerance,
-                    ok=_within(dev_bot, tolerance), unit=" px",
-                    key=f"contact_{idx}_dev_bottom_px", object=obj,
+                    f"Контакт #{idx}: Δ стены, px", gap_deviation,
+                    gap_dev_max,
+                    ok=_within(abs(float(gap_deviation)), gap_dev_max),
+                    unit=" px",
+                    key=f"contact_{idx}_gap_dev_px", object=obj,
+                ))
+            if straight_dev is not None:
+                add(_metric(
+                    f"Контакт #{idx}: прямолинейность (инфо), px",
+                    straight_dev, unit=" px",
+                    key=f"contact_{idx}_straight_dev_px", object=obj,
                 ))
             if rect_fits is not None:
                 add(_metric(
@@ -276,15 +281,9 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                     1 if rect_fits else 0, 1, ok=bool(rect_fits),
                     key=f"contact_{idx}_rect_fits", object=obj,
                 ))
-            if omission is not None:
-                add(_metric(
-                    f"Контакт #{idx}: расстояние до линии пропуска, px", omission,
-                    unit=" px", key=f"contact_{idx}_omission_dist_px", object=obj,
-                ))
 
     # ─── Короткие контакты 2 шт ──────────────────────────────
     elif rule_name == "contacts_short":
-        tolerance = role_details.get("line_tolerance_px") or role_details.get("tolerance")
         expected = role_details.get("expected_count") or 2
         found = role_details.get("found")
         if found is not None:
@@ -299,21 +298,24 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 "Мин. площадь, px²", area_min, unit=" px²",
                 key="area_absolute_min_px2",
             ))
-        for label, key, metric_key in (
-            ("Δ верх, px", "delta_top", "delta_top"),
-            ("Δ низ, px", "delta_bottom", "delta_bottom"),
-            ("Δ высота, px", "delta_height", "delta_height"),
-        ):
-            if key in role_details and role_details.get(key) is not None:
-                add(_metric(
-                    label, role_details.get(key), tolerance,
-                    ok=_within(role_details.get(key), tolerance),
-                    unit=" px", key=metric_key,
-                ))
-        if tolerance is not None and role_details.get("delta_top") is None:
+        damper_open = role_details.get("damper_open_px")
+        damper_open_max = role_details.get("damper_open_max_px")
+        if damper_open is None and damper_open_max is not None:
             add(_metric(
-                "Допуск уровня, px", tolerance, unit=" px",
-                key="line_tolerance_px",
+                "Порог заслонки, px", damper_open_max, unit=" px",
+                key="damper_open_max_px",
+            ))
+        else:
+            add(_metric(
+                "Заслонка: открытие, px", damper_open, damper_open_max,
+                ok=_within(damper_open, damper_open_max),
+                unit=" px", key="damper_open_max_px",
+            ))
+        straight = role_details.get("straight_delta_y_px")
+        if straight is not None:
+            add(_metric(
+                "Δцентров по Y (инфо), px", straight,
+                unit=" px", key="straight_delta_y_px",
             ))
         if role_details.get("rect_width_px") is not None:
             add(_metric(
@@ -324,17 +326,6 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
             add(_metric(
                 "Высота эталона, px", role_details.get("rect_height_px"),
                 unit=" px", key="rect_height_px",
-            ))
-        tilt = role_details.get("omission_tilt_check") or {}
-        ratio = tilt.get("distance_trend_ratio")
-        if ratio is None:
-            ratio = tilt.get("distance_delta_ratio")
-        ratio_max = role_details.get("omission_tilt_ratio_max")
-        if ratio is not None:
-            add(_metric(
-                "Наклон к линии пропуска", ratio, ratio_max,
-                ok=_within(ratio, ratio_max),
-                key="omission_tilt_ratio_max",
             ))
         items = role_details.get("items") or []
         for it in items:
@@ -370,8 +361,9 @@ def _role_metrics(rule_name: str, role_details: dict) -> list:
                 ))
             if omission is not None:
                 add(_metric(
-                    f"Контакт #{idx}: расстояние до линии пропуска, px", omission,
-                    unit=" px", key=f"contact_{idx}_omission_dist_px", object=obj,
+                    f"Контакт #{idx}: расстояние до линии пропуска, px",
+                    omission, unit=" px",
+                    key=f"contact_{idx}_omission_dist_px", object=obj,
                 ))
 
     # ─── Контакты сверху 14 шт ───────────────────────────────

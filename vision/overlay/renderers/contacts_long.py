@@ -68,7 +68,7 @@ class ContactsLongRenderer:
         label = drawing.get("label")
         color = (
             COLOR_TOP_LINE
-            if label in ("top", "center")
+            if label in ("top", "center", "damper")
             else COLOR_BOTTOM_LINE
         )
         if drawing.get("triggered"):

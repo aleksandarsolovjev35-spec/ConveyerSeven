@@ -65,6 +65,9 @@ class OmissionBoundaryMixin:
             "top_line_max_residual_px": (
                 prefix + "top_line_max_residual_px"
             ),
+            "top_line_min_inlier_ratio": (
+                prefix + "top_line_min_inlier_ratio"
+            ),
         }
         missing = [key for key in names.values() if key not in self.thresholds]
         if missing:
@@ -86,6 +89,13 @@ class OmissionBoundaryMixin:
             raise ValueError(
                 f"{names['excess_component_min_px']} должен быть целым >= 1"
             )
+        ratio_min = values["top_line_min_inlier_ratio"]
+        if type(ratio_min) not in (int, float) or not math.isfinite(
+            float(ratio_min)
+        ) or not 0.0 < float(ratio_min) <= 1.0:
+            raise ValueError(
+                f"{names['top_line_min_inlier_ratio']} должен быть числом > 0 и <= 1"
+            )
         return {
             "min_confidence": float(values["min_confidence"]),
             "allowed_thickness_px": float(values["allowed_thickness_px"]),
@@ -93,6 +103,7 @@ class OmissionBoundaryMixin:
             "top_line_max_residual_px": float(
                 values["top_line_max_residual_px"]
             ),
+            "top_line_min_inlier_ratio": float(ratio_min),
         }
 
     def _check_role(self, *, role, candidates, config, drawings):
@@ -101,6 +112,7 @@ class OmissionBoundaryMixin:
             allowed_thickness_px=config["allowed_thickness_px"],
             excess_component_min_px=config["excess_component_min_px"],
             top_line_max_residual_px=config["top_line_max_residual_px"],
+            top_line_min_inlier_ratio=config["top_line_min_inlier_ratio"],
         )
         if not measurement["valid"]:
             drawings.append({
@@ -119,6 +131,12 @@ class OmissionBoundaryMixin:
                 "allowed_thickness_px": config["allowed_thickness_px"],
                 "excess_component_min_px": config[
                     "excess_component_min_px"
+                ],
+                "top_line_max_residual_px": config[
+                    "top_line_max_residual_px"
+                ],
+                "top_line_min_inlier_ratio": config[
+                    "top_line_min_inlier_ratio"
                 ],
                 "excess_pixels": None,
                 "max_excess_depth_px": None,
@@ -155,6 +173,12 @@ class OmissionBoundaryMixin:
             "top_line_actual_max_residual_px": measurement[
                 "top_line_actual_max_residual_px"
             ],
+            "top_line_min_inlier_ratio": config[
+                "top_line_min_inlier_ratio"
+            ],
+            "top_line_actual_inlier_ratio": measurement[
+                "top_line_actual_inlier_ratio"
+            ],
             "raw_excess_pixels": measurement["raw_excess_pixels"],
             "excess_pixels": measurement["excess_pixels"],
             "largest_component_pixels": measurement[
@@ -180,6 +204,7 @@ def measure_omission_boundary(
     allowed_thickness_px,
     excess_component_min_px,
     top_line_max_residual_px,
+    top_line_min_inlier_ratio,
 ):
     if not detections:
         return _invalid("no_detections")
@@ -226,12 +251,29 @@ def measure_omission_boundary(
     if reference is None:
         return _invalid("no_valid_top_line")
     slope, intercept = reference["line"]
+    # Валидность верхней линии проверяется по ОБЩЕЙ КАРТИНЕ кромки:
+    # берём все сэмплы до отбрасывания выбросов и требуем, чтобы доля
+    # точек в пределах top_line_max_residual_px от линии была не ниже
+    # top_line_min_inlier_ratio. Единичные зубцы маски (шум сегментации)
+    # больше не заваливают весь замер, как при проверке худшей точки.
+    all_points = (
+        reference.get("all_sample_points") or reference["sample_points"]
+    )
     residuals = [
         abs(float(y) - (slope * float(x) + intercept))
-        for x, y in reference["sample_points"]
+        for x, y in all_points
     ]
     actual_max_residual = max(residuals, default=float("inf"))
-    if actual_max_residual > top_line_max_residual_px:
+    if not residuals:
+        return _invalid("top_line_residual_too_large")
+    inlier_count = sum(
+        residual <= (
+            top_line_max_residual_px + BOUNDARY_NUMERIC_EPSILON_PX
+        )
+        for residual in residuals
+    )
+    actual_inlier_ratio = inlier_count / len(residuals)
+    if actual_inlier_ratio < top_line_min_inlier_ratio:
         return _invalid("top_line_residual_too_large")
 
     local = points.copy()
@@ -333,6 +375,9 @@ def measure_omission_boundary(
         ),
         "top_line_actual_max_residual_px": round(
             float(actual_max_residual), 3,
+        ),
+        "top_line_actual_inlier_ratio": round(
+            float(actual_inlier_ratio), 3,
         ),
         "excess_contours": excess_contours,
         "excess_mask": confirmed_local,

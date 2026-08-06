@@ -7,14 +7,22 @@ from domain.defect_rules.omission_reference import (
     fit_omission_top_line,
     signed_distance_and_projection,
 )
-
-
-TOP_PERCENTILE = 10.0
-BOTTOM_PERCENTILE = 90.0
+from domain.defect_rules.rule_spider_contacts_long import (
+    MIN_REFERENCE_COVERAGE,
+    TOP_PERCENTILE,
+    BOTTOM_PERCENTILE,
+)
 
 
 class SpiderContactsShortRule(BaseRule):
-    """Короткие контакты: собственная геометрия + наклон к omission-short."""
+    """Короткие контакты: ровность пары по схеме «дымоход-заслонка».
+
+    Опорная линия строится по верху полосы omission; перпендикуляры из
+    центров вписанных эталонов к этой линии — «стены дымохода», отрезок
+    между центрами — «заслонка». Закрытая заслонка (перпендикулярна
+    стенам, т.е. |d1 − d2| мало) — ряд ровный; открытие заслонки выше
+    порога в px — брак. Наклон всей детали на вердикт не влияет.
+    """
 
     name = "contacts_short"
     ROLES = ("SPIDER_IN", "SPIDER_OUT")
@@ -35,28 +43,26 @@ class SpiderContactsShortRule(BaseRule):
 
             min_conf = self._get("spider_contacts_short_min_confidence", 0.3, role=role)
             expected_count = self._get("spider_contacts_short_expected_count", 2, role=role)
-            # Алгоритм сравнивает строго пару p_a/p_b; другое количество
+            # Алгоритм сравнивает строго пару; другое количество
             # нельзя трактовать как настраиваемый допуск.
             if type(expected_count) is not int or expected_count != 2:
                 raise ValueError(
                     f"{role}.spider_contacts_short_expected_count "
                     "должен быть равен 2 (пара контактов)"
                 )
-            level_dev_ratio = self._get("spider_contacts_short_level_deviation_ratio", 0.20, role=role)
             rect_width_px = self._get(
-                "spider_contacts_short_inscribed_rect_width_px", 25.2, role=role,
+                "spider_contacts_short_inscribed_rect_width_px", 30.0, role=role,
             )
             rect_height_px = self._get(
-                "spider_contacts_short_inscribed_rect_height_px", 9.6, role=role,
+                "spider_contacts_short_inscribed_rect_height_px", 18.0, role=role,
             )
             area_absolute_min = self._get("spider_contacts_short_area_absolute_min", 400, role=role)
             y_filter_ratio = self._get("spider_contacts_short_y_filter_ratio", 3.0, role=role)
             omission_min_conf = self._get(
                 "spider_short_omission_min_confidence", 0.3, role=role,
             )
-            omission_tilt_ratio_max = self._get(
-                "spider_contacts_short_omission_tilt_ratio_max", 0.20,
-                role=role,
+            damper_open_max_px = self._read_positive_px(
+                role, "spider_contacts_short_damper_open_max_px",
             )
 
             candidates = [
@@ -71,11 +77,11 @@ class SpiderContactsShortRule(BaseRule):
 
             role_result = self._check_role(
                 role=role, candidates=candidates, omissions=omissions,
-                expected_count=expected_count, level_dev_ratio=level_dev_ratio,
+                expected_count=expected_count,
                 rect_width_px=rect_width_px, rect_height_px=rect_height_px,
                 area_absolute_min=area_absolute_min,
                 y_filter_ratio=y_filter_ratio,
-                omission_tilt_ratio_max=omission_tilt_ratio_max,
+                damper_open_max_px=damper_open_max_px,
                 drawings=drawings,
             )
 
@@ -86,10 +92,20 @@ class SpiderContactsShortRule(BaseRule):
         return RuleResult(self.name, triggered,
             details={"per_role": details_per_role}, drawings=drawings)
 
+    def _read_positive_px(self, role, name):
+        value = self._get(name, None, role=role)
+        if (
+            type(value) not in (int, float)
+            or not np.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise ValueError(f"{role}.{name} должен быть числом > 0")
+        return float(value)
+
     def _check_role(self, role, candidates, omissions, expected_count,
-                    level_dev_ratio, rect_width_px, rect_height_px,
+                    rect_width_px, rect_height_px,
                     area_absolute_min, y_filter_ratio,
-                    omission_tilt_ratio_max, drawings):
+                    damper_open_max_px, drawings):
         found_raw = len(candidates)
         selected, ignored, filter_note = self._select_pair(
             candidates, expected_count, area_absolute_min, y_filter_ratio)
@@ -201,33 +217,9 @@ class SpiderContactsShortRule(BaseRule):
 
         params = [self._extract_params(d) for d in candidates_sorted]
         p_a, p_b = params[0], params[1]
-
         median_height = max(1.0, float(np.median([p_a["height"], p_b["height"]])))
-        tolerance = median_height * level_dev_ratio
 
-        # Проверка 1: ровность между собой
-        delta_top = abs(p_a["top_y"] - p_b["top_y"])
-        delta_bottom = abs(p_a["bottom_y"] - p_b["bottom_y"])
-        delta_height = abs(p_a["height"] - p_b["height"])
-        top_fail = delta_top > tolerance
-        bottom_fail = delta_bottom > tolerance
-        height_fail = delta_height > tolerance
-        level_fail = top_fail or bottom_fail or height_fail
-
-        # Проверка 2: наклон относительно верхней линии omission
-        omission_tilt_check = self._check_omission_tilt(
-            omissions=omissions,
-            contact_a=p_a,
-            contact_b=p_b,
-            median_contact_height=median_height,
-            ratio_max=omission_tilt_ratio_max,
-        )
-        omission_reference_fail = omission_tilt_check["status"] == "error"
-        omission_tilt_fail = omission_tilt_check["status"] == "fail"
-        omission_fail = omission_reference_fail or omission_tilt_fail
-
-        # Проверка 3: вписываемость эталонного прямоугольника,
-        # размер задан непосредственно в пикселях.
+        # Вписываемость эталонного прямоугольника (центры — опоры стен).
         expected_height_px = float(rect_height_px)
         expected_width_px = float(rect_width_px)
         inscribe_fail_indices = []
@@ -247,31 +239,34 @@ class SpiderContactsShortRule(BaseRule):
             "rect_height_px": round(expected_height_px, 1),
             "fails": len(inscribe_fail_indices),
         }
-
         inscribe_fail = inscribe_check["status"] == "fail"
-
-        # Уровень определяется центрами вписанных эталонных прямоугольников,
-        # а не границами исходной segmentation mask. Размер/форма контакта
-        # остаются отдельной проверкой inscribe_fail.
         rect_centers = [res.get("center") for res in inscribe_results]
+
+        # Прямолинейность пары — информационная цифра (старое измерение),
+        # на вердикт не влияет.
+        straight_delta_y = None
         if all(center is not None for center in rect_centers):
-            rect_center_delta_y = abs(
+            straight_delta_y = abs(
                 float(rect_centers[0][1]) - float(rect_centers[1][1])
             )
-            level_tolerance = tolerance
-            level_fail = rect_center_delta_y > level_tolerance
-        else:
-            rect_center_delta_y = None
-            level_tolerance = tolerance
-        role_triggered = level_fail or omission_fail or inscribe_fail
 
-        # Отрисовка
-        omission_distances = {}
-        if omission_tilt_check.get("status") != "error":
-            omission_distances = {
-                1: float(omission_tilt_check["contact_a"]["distance_px"]),
-                2: float(omission_tilt_check["contact_b"]["distance_px"]),
-            }
+        # ── Дымоход-заслонка ─────────────────────────────────────────
+        damper = self._build_damper_check(
+            omissions=omissions,
+            rect_centers=rect_centers,
+            contact_span=(
+                min(p_a["bbox_x1"], p_b["bbox_x1"]),
+                max(p_a["bbox_x2"], p_b["bbox_x2"]),
+            ),
+            damper_open_max_px=damper_open_max_px,
+        )
+        reference_missing = damper["status"] == "error"
+        damper_fail = damper.get("damper_fail", False)
+        role_triggered = reference_missing or damper_fail or inscribe_fail
+
+        gaps = damper.get("gaps", [])
+        gap_by_index = {int(gap["index"]): gap for gap in gaps}
+
         items = []
         for i, (det, parameters) in enumerate(
             zip(candidates_sorted, params, strict=True),
@@ -283,6 +278,7 @@ class SpiderContactsShortRule(BaseRule):
                 and inscribe_results[array_index]["fits"]
             )
             failures = [] if rect_fits else ["size"]
+            gap = gap_by_index.get(i)
             drawings.append({
                 "type": "contacts_short_item",
                 "role": role,
@@ -300,7 +296,7 @@ class SpiderContactsShortRule(BaseRule):
                 "x": int(parameters["center_x"]),
                 "y_top": int(parameters["top_y"]),
                 "y_bottom": int(parameters["bottom_y"]),
-                "triggered": height_fail,
+                "triggered": bool(gap and gap.get("fail")),
             })
             if (
                 inscribe_results
@@ -311,7 +307,7 @@ class SpiderContactsShortRule(BaseRule):
                         "type": "contacts_short_level_center",
                         "role": role,
                         "center": inscribe_results[array_index]["center"],
-                        "triggered": bool(level_fail),
+                        "triggered": bool(damper_fail or not rect_fits),
                     })
                 drawings.append({
                     "type": "contacts_short_inscribed_rect",
@@ -326,9 +322,9 @@ class SpiderContactsShortRule(BaseRule):
                 "bottom_y": round(float(parameters["bottom_y"]), 3),
                 "height_px": round(float(parameters["height"]), 3),
                 "rect_fits": rect_fits,
+                "gap_fail": bool(gap and gap.get("fail")),
                 "omission_distance_px": (
-                    round(omission_distances[i], 3)
-                    if i in omission_distances else None
+                    round(gap["distance_px"], 3) if gap else None
                 ),
                 "failures": failures,
             })
@@ -337,9 +333,8 @@ class SpiderContactsShortRule(BaseRule):
         x_left = min(p_a["bbox_x1"], p_b["bbox_x1"]) - 40
         x_right = max(p_a["bbox_x2"], p_b["bbox_x2"]) + 40
 
-        # Показываем ту же геометрию, по которой принимается решение:
-        # линию между центрами вписанных прямоугольников.
-        if all(center is not None for center in rect_centers):
+        if not reference_missing:
+            # Заслонка — отрезок между центрами эталонов.
             center_a, center_b = rect_centers
             drawings.append({
                 "type": "contacts_short_level_line", "role": role,
@@ -348,34 +343,30 @@ class SpiderContactsShortRule(BaseRule):
                 "y_b": int(round(center_b[1])),
                 "x_a": int(round(center_a[0])),
                 "x_b": int(round(center_b[0])),
-                "label": "C",
-                "delta": round(float(rect_center_delta_y or 0), 1),
-                "tolerance": round(float(level_tolerance), 1),
-                "triggered": level_fail,
+                "label": "T",
+                "delta": round(float(damper["damper_open_px"]), 1),
+                "tolerance": round(float(damper_open_max_px), 1),
+                "triggered": damper_fail,
             })
-
-        # Опорная линия omission и расстояния контактов
-        if omission_tilt_check["status"] != "error":
+            # Крыша — опорная линия omission.
             drawings.append({
                 "type": "contacts_short_omission_line",
                 "role": role,
-                "x_start": omission_tilt_check["x_start"],
-                "y_start": omission_tilt_check["y_start"],
-                "x_end": omission_tilt_check["x_end"],
-                "y_end": omission_tilt_check["y_end"],
-                "triggered": omission_tilt_fail,
+                "x_start": damper["x_start"],
+                "y_start": damper["y_start"],
+                "x_end": damper["x_end"],
+                "y_end": damper["y_end"],
+                "triggered": damper_fail,
             })
-            for contact in (
-                omission_tilt_check["contact_a"],
-                omission_tilt_check["contact_b"],
-            ):
+            # Стены — перпендикуляры от центров к опорной.
+            for gap in gaps:
                 drawings.append({
                     "type": "contacts_short_omission_distance",
                     "role": role,
-                    "contact_point": contact["point"],
-                    "projection_point": contact["projection"],
-                    "distance_px": contact["distance_px"],
-                    "triggered": omission_tilt_fail,
+                    "contact_point": gap["point"],
+                    "projection_point": gap["projection"],
+                    "distance_px": gap["distance_px"],
+                    "triggered": damper_fail,
                 })
         else:
             missing_bbox = self._combined_bbox(candidates_sorted)
@@ -395,29 +386,25 @@ class SpiderContactsShortRule(BaseRule):
 
         return {
             "triggered": role_triggered,
-            "reason": None,
+            "reason": damper.get("reason") if reference_missing else None,
             "found": found,
             "found_raw": found_raw,
             "ignored": len(ignored),
             "filter_note": filter_note,
             "area_absolute_min_px2": area_absolute_min,
             "median_contact_height_px": round(median_height, 3),
-            "delta_top": round(delta_top, 3),
-            "delta_bottom": round(delta_bottom, 3),
-            "delta_height": round(delta_height, 3),
-            "tolerance": round(tolerance, 3),
-            "top_fail": top_fail, "bottom_fail": bottom_fail,
-            "height_fail": height_fail, "level_fail": level_fail,
-            "rect_center_delta_y": (
-                round(float(rect_center_delta_y), 3)
-                if rect_center_delta_y is not None else None
+            "damper_open_px": damper.get("damper_open_px"),
+            "damper_open_max_px": damper_open_max_px,
+            "damper_fail": damper_fail,
+            "straight_delta_y_px": (
+                round(float(straight_delta_y), 3)
+                if straight_delta_y is not None else None
             ),
-            "rect_center_level_tolerance": round(float(level_tolerance), 3),
-            "omission_fail": omission_fail,
-            "omission_reference_fail": omission_reference_fail,
-            "omission_tilt_fail": omission_tilt_fail,
-            "omission_tilt_ratio_max": omission_tilt_ratio_max,
-            "omission_tilt_check": omission_tilt_check,
+            "reference_coverage": damper.get("reference_coverage"),
+            "omission_reference": damper.get("omission_reference"),
+            "gaps": gaps,
+            # Общий флаг проверок уровня — для согласованности отчётов.
+            "omission_fail": bool(damper_fail or reference_missing),
             "inscribe_fail": inscribe_fail,
             "inscribe_check": inscribe_check,
             "rect_width_px": rect_width_px,
@@ -425,75 +412,93 @@ class SpiderContactsShortRule(BaseRule):
             "items": items,
         }
 
-    # Верхняя опорная линия omission
+    # ─── Дымоход-заслонка ────────────────────────────────────────────
 
     @classmethod
-    def _check_omission_tilt(
+    def _build_damper_check(
         cls,
         *,
         omissions,
-        contact_a,
-        contact_b,
-        median_contact_height,
-        ratio_max,
+        rect_centers,
+        contact_span,
+        damper_open_max_px,
     ):
+        """Опорная линия omission + две стены + открытие заслонки.
+
+        Для пары контактов «наклон заслонки» и «разница длин стен» —
+        одна и та же величина: открытие = |d1 − d2| в px.
+        """
+        x_start = float(contact_span[0])
+        x_end = float(contact_span[1])
         reference = fit_omission_top_line(
-            omissions,
-            x_start=min(contact_a["bbox_x1"], contact_b["bbox_x1"]),
-            x_end=max(contact_a["bbox_x2"], contact_b["bbox_x2"]),
+            omissions, x_start=x_start, x_end=x_end,
         )
         if reference is None:
+            return {"status": "error", "reason": "no_valid_omission_top_line"}
+
+        all_points = (
+            reference.get("all_sample_points") or reference["sample_points"]
+        )
+        coverage = 0.0
+        if all_points:
+            sample_xs = [float(point[0]) for point in all_points]
+            span = max(1.0, x_end - x_start)
+            coverage = (max(sample_xs) - min(sample_xs)) / span
+        if coverage < MIN_REFERENCE_COVERAGE:
             return {
                 "status": "error",
-                "reason": "no_valid_omission_top_line",
-                "distance_delta_ratio": None,
-                "ratio_max": ratio_max,
+                "reason": "omission_reference_too_short",
+                "reference_coverage": round(float(coverage), 3),
             }
 
-        slope, intercept = reference["line"]
-        point_a = (float(contact_a["center_x"]), float(contact_a["top_y"]))
-        point_b = (float(contact_b["center_x"]), float(contact_b["top_y"]))
-        distance_a, projection_a = signed_distance_and_projection(
-            point_a, slope, intercept,
-        )
-        distance_b, projection_b = signed_distance_and_projection(
-            point_b, slope, intercept,
-        )
-        delta_px = abs(distance_a - distance_b)
-        ratio = delta_px / max(1.0, float(median_contact_height))
-        failed = ratio > ratio_max
-        x_line_start = float(reference["x_start"])
-        x_line_end = float(reference["x_end"])
+        slope_o, intercept = reference["line"]
+        centers = [
+            (float(center[0]), float(center[1]))
+            for center in rect_centers
+            if center is not None
+        ]
+        gaps = []
+        for index, point in enumerate(centers, start=1):
+            distance, projection = signed_distance_and_projection(
+                point, slope_o, intercept,
+            )
+            gaps.append({
+                "index": index,
+                "point": [round(point[0], 3), round(point[1], 3)],
+                "projection": [
+                    round(projection[0], 3), round(projection[1], 3),
+                ],
+                "distance_px": round(float(distance), 3),
+            })
+
+        if len(gaps) >= 2:
+            damper_open = abs(
+                float(gaps[0]["distance_px"]) - float(gaps[1]["distance_px"])
+            )
+        else:
+            damper_open = 0.0
+        damper_fail = damper_open > damper_open_max_px
+        for gap in gaps:
+            gap["fail"] = bool(damper_fail)
+
         return {
-            "status": "fail" if failed else "ok",
+            "status": "fail" if damper_fail else "ok",
             "reason": None,
-            "valid_points": reference["valid_points"],
-            "sample_points": reference["sample_points"],
-            "slope": round(float(slope), 8),
-            "intercept": round(float(intercept), 3),
-            "angle_deg": round(float(np.degrees(np.arctan(slope))), 3),
-            "x_start": int(round(x_line_start)),
-            "y_start": int(round(slope * x_line_start + intercept)),
-            "x_end": int(round(x_line_end)),
-            "y_end": int(round(slope * x_line_end + intercept)),
-            "contact_a": {
-                "point": [round(point_a[0], 3), round(point_a[1], 3)],
-                "projection": [
-                    round(projection_a[0], 3), round(projection_a[1], 3),
-                ],
-                "distance_px": round(float(distance_a), 3),
+            "damper_fail": bool(damper_fail),
+            "damper_open_px": round(float(damper_open), 3),
+            "omission_slope": round(float(slope_o), 8),
+            "reference_coverage": round(float(coverage), 3),
+            "gaps": gaps,
+            "omission_reference": {
+                "angle_deg": round(
+                    float(np.degrees(np.arctan(slope_o))), 3,
+                ),
+                "valid_points": reference["valid_points"],
             },
-            "contact_b": {
-                "point": [round(point_b[0], 3), round(point_b[1], 3)],
-                "projection": [
-                    round(projection_b[0], 3), round(projection_b[1], 3),
-                ],
-                "distance_px": round(float(distance_b), 3),
-            },
-            "distance_delta_px": round(float(delta_px), 3),
-            "median_contact_height_px": round(float(median_contact_height), 3),
-            "distance_delta_ratio": round(float(ratio), 6),
-            "ratio_max": round(float(ratio_max), 6),
+            "x_start": int(round(reference["x_start"])),
+            "y_start": int(round(slope_o * reference["x_start"] + intercept)),
+            "x_end": int(round(reference["x_end"])),
+            "y_end": int(round(slope_o * reference["x_end"] + intercept)),
         }
 
     # Вписываемость
@@ -563,8 +568,6 @@ class SpiderContactsShortRule(BaseRule):
         return {
             "fits": fits,
             "points": cl.astype(np.int32).tolist(),
-            # Центр фактически вписанного прямоугольника, включая возможный
-            # сдвиг, найденный через erosion.
             "center": (
                 float(np.mean(cl[:, 0])),
                 float(np.mean(cl[:, 1])),

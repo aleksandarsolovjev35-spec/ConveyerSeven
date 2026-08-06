@@ -10,9 +10,23 @@ from domain.defect_rules.omission_reference import (
 TOP_PERCENTILE = 10.0
 BOTTOM_PERCENTILE = 90.0
 
+# Опорная линия omission должна покрывать не меньше этой доли размаха
+# ряда контактов. Иначе линия экстраполируется за пределы фит-участка и
+# заслонка меряется по недостоверной опорной.
+MIN_REFERENCE_COVERAGE = 0.5
+
 
 class SpiderContactsLongRule(BaseRule):
-    """Длинные контакты: собственная геометрия + наклон к omission-long."""
+    """Длинные контакты: ровность ряда по схеме «дымоход-заслонка».
+
+    Опорная линия строится по верху полосы omission (контакты всегда под
+    ней). От неё опускаются перпендикуляры («стены») до центров вписанных
+    в контакты эталонных прямоугольников. Линия через эти центры —
+    «заслонка». Ряд ровный, когда заслонка параллельна опорной (перепад
+    заслонки на размахе ряда в px) и длины стен одинаковые (разброс
+    расстояний в px). Наклон всей детали на вердикт не влияет: дымоход
+    наклоняется вместе с деталью, а заслонка остаётся закрытой.
+    """
 
     name = "contacts_long"
     ROLES = ("SPIDER_LEFT", "SPIDER_RIGHT")
@@ -38,23 +52,21 @@ class SpiderContactsLongRule(BaseRule):
                     f"{role}.spider_contacts_long_expected_count "
                     "должен быть целым числом >= 2"
                 )
-            line_dev = self._get("spider_contacts_long_line_deviation_ratio", 0.35, role=role)
-            max_level_slope = self._get(
-                "spider_contacts_long_max_level_slope", 0.10, role=role,
-            )
             rect_width_px = self._get(
-                "spider_contacts_long_inscribed_rect_width_px", 11.5, role=role,
+                "spider_contacts_long_inscribed_rect_width_px", 38.0, role=role,
             )
             rect_height_px = self._get(
-                "spider_contacts_long_inscribed_rect_height_px", 8.6, role=role,
+                "spider_contacts_long_inscribed_rect_height_px", 18.0, role=role,
             )
             y_filter = self._get("spider_contacts_long_y_filter_ratio", 3.0, role=role)
             omission_min_conf = self._get(
                 "spider_long_omission_min_confidence", 0.3, role=role,
             )
-            omission_tilt_ratio_max = self._get(
-                "spider_contacts_long_omission_tilt_ratio_max", 0.20,
-                role=role,
+            damper_open_max_px = self._read_positive_px(
+                role, "spider_contacts_long_damper_open_max_px",
+            )
+            gap_dev_max_px = self._read_positive_px(
+                role, "spider_contacts_long_gap_dev_max_px",
             )
 
             candidates = [
@@ -68,9 +80,9 @@ class SpiderContactsLongRule(BaseRule):
             ]
 
             role_result = self._check_role(
-                role, candidates, omissions, expected, line_dev,
+                role, candidates, omissions, expected,
                 rect_width_px, rect_height_px, y_filter,
-                omission_tilt_ratio_max, max_level_slope, drawings,
+                damper_open_max_px, gap_dev_max_px, drawings,
             )
 
             if role_result["triggered"]:
@@ -83,10 +95,20 @@ class SpiderContactsLongRule(BaseRule):
             drawings=drawings,
         )
 
+    def _read_positive_px(self, role, name):
+        value = self._get(name, None, role=role)
+        if (
+            type(value) not in (int, float)
+            or not np.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise ValueError(f"{role}.{name} должен быть числом > 0")
+        return float(value)
+
     def _check_role(self, role, candidates, omissions, expected_count,
-                    line_dev_ratio, rect_width_px, rect_height_px,
-                    y_filter_ratio, omission_tilt_ratio_max,
-                    max_level_slope, drawings):
+                    rect_width_px, rect_height_px,
+                    y_filter_ratio, damper_open_max_px, gap_dev_max_px,
+                    drawings):
         found_raw = len(candidates)
 
         selected, ignored, filter_note = self._select_contacts(
@@ -163,93 +185,58 @@ class SpiderContactsLongRule(BaseRule):
             }
 
         params = [self._extract_params(d) for d in sorted_dets]
-
-        xs = np.array([p["center_x"] for p in params], dtype=np.float64)
-        ys_top = np.array([p["top_y"] for p in params], dtype=np.float64)
-        ys_bot = np.array([p["bottom_y"] for p in params], dtype=np.float64)
         heights = np.array([p["height"] for p in params], dtype=np.float64)
-
         median_h = max(1.0, float(np.median(heights)))
-        line_tol = median_h * line_dev_ratio
-
-        line_top = self._fit_line(xs, ys_top)
-        line_bot = self._fit_line(xs, ys_bot)
-
-        devs_top = np.abs(ys_top - self._eval_line(line_top, xs))
-        devs_bot = np.abs(ys_bot - self._eval_line(line_bot, xs))
-
-        max_dev_top = float(np.max(devs_top)) if len(devs_top) else 0
-        max_dev_bot = float(np.max(devs_bot)) if len(devs_bot) else 0
-        line_fail = max_dev_top > line_tol or max_dev_bot > line_tol
-
-        omission_tilt_check = self._check_omission_tilt(
-            omissions=omissions,
-            contacts=sorted_dets,
-            contact_params=params,
-            median_contact_height=median_h,
-            ratio_max=omission_tilt_ratio_max,
-        )
-        omission_reference_fail = omission_tilt_check["status"] == "error"
-        omission_tilt_fail = omission_tilt_check["status"] == "fail"
-        omission_fail = omission_reference_fail or omission_tilt_fail
 
         inscribe_check, inscribe_results, _fail_indices = self._run_inscribe(
             sorted_dets, rect_width_px, rect_height_px,
         )
         inscribe_fail = inscribe_check["status"] in ("fail", "error")
-
-        # После подтверждения формы уровень оценивается по центрам
-        # вписанных эталонных прямоугольников, а не по краям mask.
         rect_centers = [res.get("center") for res in inscribe_results]
-        if all(center is not None for center in rect_centers):
-            center_xs = np.array([center[0] for center in rect_centers], dtype=np.float64)
-            center_ys = np.array([center[1] for center in rect_centers], dtype=np.float64)
-            line_center = self._fit_line(center_xs, center_ys)
-            center_devs = np.abs(center_ys - self._eval_line(line_center, center_xs))
-            center_slope = float(line_center[0])
-            slope_fail = abs(center_slope) > max_level_slope
-            line_fail = bool(np.max(center_devs) > line_tol or slope_fail)
-        else:
-            center_xs = center_ys = center_devs = None
-            line_center = None
-            center_slope = None
-            slope_fail = False
-        role_triggered = line_fail or omission_fail or inscribe_fail
-        omission_distances = {
-            int(contact["index"]): float(contact["distance_px"])
-            for contact in omission_tilt_check.get("contacts", [])
+
+        # ── Дымоход-заслонка ─────────────────────────────────────────
+        damper = self._build_damper_check(
+            omissions=omissions,
+            rect_centers=rect_centers,
+            contact_span=(
+                min(float(d["bbox"][0]) for d in sorted_dets),
+                max(float(d["bbox"][2]) for d in sorted_dets),
+            ),
+            damper_open_max_px=damper_open_max_px,
+            gap_dev_max_px=gap_dev_max_px,
+        )
+        reference_missing = damper["status"] == "error"
+        damper_fail = damper.get("damper_fail", False)
+        gap_fail = damper.get("gap_fail", False)
+        measure_fail = damper_fail or gap_fail
+        role_triggered = reference_missing or measure_fail or inscribe_fail
+
+        gap_by_index = {
+            int(gap["index"]): gap for gap in damper.get("gaps", [])
         }
+        straight_by_index = damper.get("straight_devs", {})
+
         items = []
-        for i, (det, _p) in enumerate(
-            zip(sorted_dets, params, strict=True),
-            start=1,
-        ):
+        for i, det in enumerate(sorted_dets, start=1):
             array_index = i - 1
-            top_failed = bool(
-                (center_devs[array_index] if center_devs is not None else devs_top[array_index])
-                > line_tol
-            )
-            bottom_failed = False
             rect_fits = bool(
                 inscribe_results
                 and inscribe_results[array_index]["fits"]
             )
+            gap = gap_by_index.get(i)
             failures = []
-            if top_failed:
-                failures.append("line_T")
-            if bottom_failed:
-                failures.append("line_B")
             if not rect_fits:
                 failures.append("size")
+            if gap is not None and gap["fail"]:
+                failures.append("gap")
             item_triggered = bool(failures)
 
             drawings.append({
                 "type": "contacts_long_item", "role": role,
                 "bbox": det["bbox"], "mask": det.get("mask"),
                 "index": i,
-                "dev_top": round(float(devs_top[array_index]), 3),
-                "dev_bottom": round(float(devs_bot[array_index]), 3),
-                "failures": failures, "triggered": item_triggered,
+                "failures": failures,
+                "triggered": item_triggered,
             })
             if (
                 inscribe_results
@@ -260,7 +247,7 @@ class SpiderContactsLongRule(BaseRule):
                         "type": "contacts_long_level_center",
                         "role": role,
                         "center": inscribe_results[array_index]["center"],
-                        "triggered": bool(line_fail),
+                        "triggered": item_triggered,
                     })
                 drawings.append({
                     "type": "contacts_long_inscribed_rect", "role": role,
@@ -270,55 +257,56 @@ class SpiderContactsLongRule(BaseRule):
                 })
             items.append({
                 "index": i,
-                "dev_top_px": round(float(
-                    center_devs[array_index]
-                    if center_devs is not None else devs_top[array_index]
-                ), 3),
-                "dev_bottom_px": 0.0,
-                "top_fail": top_failed,
-                "bottom_fail": bottom_failed,
                 "rect_fits": rect_fits,
+                "gap_fail": bool(gap and gap["fail"]),
+                "gap_deviation_px": (
+                    round(gap["deviation_px"], 3) if gap else None
+                ),
                 "omission_distance_px": (
-                    round(omission_distances[i], 3)
-                    if i in omission_distances else None
+                    round(gap["distance_px"], 3) if gap else None
+                ),
+                "straight_dev_px": (
+                    round(straight_by_index[i], 3)
+                    if i in straight_by_index else None
                 ),
                 "failures": failures,
             })
 
-        # Визуализируем ровно ту же линию, которая участвует в решении:
-        # линию центров вписанных прямоугольников. Старые линии по верхнему
-        # и нижнему краям segmentation mask больше не показываем.
-        if line_center is not None:
+        if not reference_missing:
+            # Заслонка — устойчивая линия через центры эталонов.
+            x_start = damper["damper_x_start"] - 40
+            x_end = damper["damper_x_end"] + 40
+            slope_c = damper["damper_line"][0]
+            intercept_c = damper["damper_line"][1]
             drawings.append({
                 "type": "contacts_long_fit_line", "role": role,
-                "x_start": int(np.min(center_xs) - 40),
-                "x_end": int(np.max(center_xs) + 40),
-                "y_start": int(self._eval_line(line_center, np.array([np.min(center_xs) - 40]))[0]),
-                "y_end": int(self._eval_line(line_center, np.array([np.max(center_xs) + 40]))[0]),
-                "tolerance": int(line_tol), "label": "center",
-                "triggered": line_fail,
-                "slope": center_slope,
-                "max_slope": max_level_slope,
+                "x_start": int(x_start),
+                "x_end": int(x_end),
+                "y_start": int(round(slope_c * x_start + intercept_c)),
+                "y_end": int(round(slope_c * x_end + intercept_c)),
+                "tolerance": 0,
+                "label": "damper",
+                "triggered": damper_fail,
             })
-
-        if omission_tilt_check["status"] != "error":
+            # Крыша — опорная линия omission.
             drawings.append({
                 "type": "contacts_long_omission_line",
                 "role": role,
-                "x_start": omission_tilt_check["x_start"],
-                "y_start": omission_tilt_check["y_start"],
-                "x_end": omission_tilt_check["x_end"],
-                "y_end": omission_tilt_check["y_end"],
-                "triggered": omission_tilt_fail,
+                "x_start": damper["x_start"],
+                "y_start": damper["y_start"],
+                "x_end": damper["x_end"],
+                "y_end": damper["y_end"],
+                "triggered": measure_fail,
             })
-            for contact in omission_tilt_check["contacts"]:
+            # Стены — перпендикуляры от центров к опорной.
+            for gap in damper["gaps"]:
                 drawings.append({
                     "type": "contacts_long_omission_distance",
                     "role": role,
-                    "contact_point": contact["point"],
-                    "projection_point": contact["projection"],
-                    "distance_px": contact["distance_px"],
-                    "triggered": omission_tilt_fail,
+                    "contact_point": gap["point"],
+                    "projection_point": gap["projection"],
+                    "distance_px": gap["distance_px"],
+                    "triggered": bool(gap["fail"]),
                 })
         else:
             missing_bbox = self._combined_bbox(sorted_dets)
@@ -338,27 +326,27 @@ class SpiderContactsLongRule(BaseRule):
 
         return {
             "triggered": role_triggered,
-            "reason": None,
+            "reason": damper.get("reason") if reference_missing else None,
             "found": found,
             "found_raw": found_raw,
             "ignored": len(ignored),
             "filter_note": filter_note,
             "median_contact_height_px": round(median_h, 3),
-            "line_tolerance_px": round(line_tol, 3),
-            "level_slope": (
-                round(float(center_slope), 6)
-                if center_slope is not None else None
-            ),
-            "max_level_slope": round(float(max_level_slope), 6),
-            "slope_fail": slope_fail,
-            "max_dev_top": round(max_dev_top, 3),
-            "max_dev_bottom": round(max_dev_bot, 3),
-            "line_fail": line_fail,
-            "omission_fail": omission_fail,
-            "omission_reference_fail": omission_reference_fail,
-            "omission_tilt_fail": omission_tilt_fail,
-            "omission_tilt_ratio_max": omission_tilt_ratio_max,
-            "omission_tilt_check": omission_tilt_check,
+            "damper_open_px": damper.get("damper_open_px"),
+            "damper_open_max_px": damper_open_max_px,
+            "damper_fail": damper_fail,
+            "gap_dev_px": damper.get("gap_dev_px"),
+            "gap_dev_max_px": gap_dev_max_px,
+            "gap_fail": gap_fail,
+            "gap_median_px": damper.get("gap_median_px"),
+            "damper_slope": damper.get("damper_slope"),
+            "omission_slope": damper.get("omission_slope"),
+            "reference_coverage": damper.get("reference_coverage"),
+            "straight_dev_max_px": damper.get("straight_dev_max_px"),
+            "omission_reference": damper.get("omission_reference"),
+            "gaps": damper.get("gaps", []),
+            # Общий флаг проверок уровня — для согласованности отчётов.
+            "omission_fail": bool(measure_fail or reference_missing),
             "inscribe_fail": inscribe_fail,
             "inscribe_check": inscribe_check,
             "rect_width_px": rect_width_px,
@@ -366,45 +354,62 @@ class SpiderContactsLongRule(BaseRule):
             "items": items,
         }
 
-    @staticmethod
-    def _check_omission_tilt(
+    # ─── Дымоход-заслонка ────────────────────────────────────────────
+
+    @classmethod
+    def _build_damper_check(
+        cls,
         *,
         omissions,
-        contacts,
-        contact_params,
-        median_contact_height,
-        ratio_max,
+        rect_centers,
+        contact_span,
+        damper_open_max_px,
+        gap_dev_max_px,
     ):
-        x_start = min(float(detection["bbox"][0]) for detection in contacts)
-        x_end = max(float(detection["bbox"][2]) for detection in contacts)
+        """Опорная линия omission + перпендикуляры + линия центров.
+
+        Возвращает ``status``: ok / fail (заслонка открыта или стены
+        разъехались) / error (опорную не построить: нет omission линии
+        или она покрывает слишком малую долю размаха ряда).
+        """
+        x_start = float(contact_span[0])
+        x_end = float(contact_span[1])
         reference = fit_omission_top_line(
-            omissions,
-            x_start=x_start,
-            x_end=x_end,
+            omissions, x_start=x_start, x_end=x_end,
         )
         if reference is None:
+            return {"status": "error", "reason": "no_valid_omission_top_line"}
+
+        all_points = (
+            reference.get("all_sample_points") or reference["sample_points"]
+        )
+        coverage = 0.0
+        if all_points:
+            sample_xs = [float(point[0]) for point in all_points]
+            span = max(1.0, x_end - x_start)
+            coverage = (max(sample_xs) - min(sample_xs)) / span
+        if coverage < MIN_REFERENCE_COVERAGE:
             return {
                 "status": "error",
-                "reason": "no_valid_omission_top_line",
-                "distance_trend_ratio": None,
-                "ratio_max": ratio_max,
+                "reason": "omission_reference_too_short",
+                "reference_coverage": round(float(coverage), 3),
             }
 
-        slope, intercept = reference["line"]
-        measured_contacts = []
-        xs = []
-        distances = []
-        for index, parameters in enumerate(contact_params, start=1):
-            point = (
-                float(parameters["center_x"]),
-                float(parameters["top_y"]),
-            )
+        slope_o, intercept = reference["line"]
+        centers = [
+            (float(center[0]), float(center[1]))
+            for center in rect_centers
+            if center is not None
+        ]
+        xs = [center[0] for center in centers]
+        ys = [center[1] for center in centers]
+
+        gaps = []
+        for index, point in enumerate(centers, start=1):
             distance, projection = signed_distance_and_projection(
-                point, slope, intercept,
+                point, slope_o, intercept,
             )
-            xs.append(point[0])
-            distances.append(distance)
-            measured_contacts.append({
+            gaps.append({
                 "index": index,
                 "point": [round(point[0], 3), round(point[1], 3)],
                 "projection": [
@@ -413,42 +418,69 @@ class SpiderContactsLongRule(BaseRule):
                 "distance_px": round(float(distance), 3),
             })
 
-        if len({round(value, 6) for value in xs}) < 2:
-            return {
-                "status": "error",
-                "reason": "contact_span_too_small",
-                "distance_trend_ratio": None,
-                "ratio_max": ratio_max,
-            }
-        distance_slope, distance_intercept = fit_theil_sen_line(xs, distances)
-        left_x = min(xs)
-        right_x = max(xs)
-        predicted_left = distance_slope * left_x + distance_intercept
-        predicted_right = distance_slope * right_x + distance_intercept
-        trend_delta_px = predicted_right - predicted_left
-        ratio = abs(trend_delta_px) / max(1.0, float(median_contact_height))
-        failed = ratio > ratio_max
-        return {
-            "status": "fail" if failed else "ok",
-            "reason": None,
-            "valid_points": reference["valid_points"],
-            "sample_points": reference["sample_points"],
-            "slope": round(float(slope), 8),
-            "intercept": round(float(intercept), 3),
-            "angle_deg": round(float(np.degrees(np.arctan(slope))), 3),
-            "x_start": int(round(reference["x_start"])),
-            "y_start": int(round(slope * reference["x_start"] + intercept)),
-            "x_end": int(round(reference["x_end"])),
-            "y_end": int(round(slope * reference["x_end"] + intercept)),
-            "contacts": measured_contacts,
-            "distance_trend_slope": round(float(distance_slope), 8),
-            "predicted_left_distance_px": round(float(predicted_left), 3),
-            "predicted_right_distance_px": round(float(predicted_right), 3),
-            "distance_trend_delta_px": round(float(trend_delta_px), 3),
-            "median_contact_height_px": round(float(median_contact_height), 3),
-            "distance_trend_ratio": round(float(ratio), 6),
-            "ratio_max": round(float(ratio_max), 6),
+        distances = [gap["distance_px"] for gap in gaps]
+        median_distance = float(np.median(distances)) if distances else 0.0
+        for gap in gaps:
+            deviation = gap["distance_px"] - median_distance
+            gap["deviation_px"] = round(float(deviation), 3)
+            gap["fail"] = bool(
+                abs(float(deviation)) > gap_dev_max_px
+            )
+        deviations = [abs(gap["deviation_px"]) for gap in gaps]
+        gap_dev = max(deviations) if deviations else 0.0
+        gap_fail = any(gap["fail"] for gap in gaps)
+
+        center_x_start = min(xs) if xs else x_start
+        center_x_end = max(xs) if xs else x_end
+        span = max(1.0, center_x_end - center_x_start)
+        slope_c, intercept_c = fit_theil_sen_line(
+            np.asarray(xs, dtype=np.float64),
+            np.asarray(ys, dtype=np.float64),
+        )
+        damper_open = abs(float(slope_c) - float(slope_o)) * span
+        damper_fail = damper_open > damper_open_max_px
+
+        straight = np.abs(
+            np.asarray(ys, dtype=np.float64)
+            - (slope_c * np.asarray(xs, dtype=np.float64) + intercept_c)
+        ) if xs else np.asarray([])
+        straight_devs = {
+            index: round(float(deviation), 3)
+            for index, deviation in enumerate(straight, start=1)
         }
+
+        return {
+            "status": "fail" if (damper_fail or gap_fail) else "ok",
+            "reason": None,
+            "damper_fail": bool(damper_fail),
+            "gap_fail": bool(gap_fail),
+            "damper_open_px": round(float(damper_open), 3),
+            "gap_dev_px": round(float(gap_dev), 3),
+            "gap_median_px": round(float(median_distance), 3),
+            "damper_slope": round(float(slope_c), 8),
+            "omission_slope": round(float(slope_o), 8),
+            "reference_coverage": round(float(coverage), 3),
+            "damper_line": (float(slope_c), float(intercept_c)),
+            "damper_x_start": float(center_x_start),
+            "damper_x_end": float(center_x_end),
+            "straight_dev_max_px": (
+                round(float(np.max(straight)), 3) if len(straight) else None
+            ),
+            "straight_devs": straight_devs,
+            "gaps": gaps,
+            "omission_reference": {
+                "angle_deg": round(
+                    float(np.degrees(np.arctan(slope_o))), 3,
+                ),
+                "valid_points": reference["valid_points"],
+            },
+            "x_start": int(round(reference["x_start"])),
+            "y_start": int(round(slope_o * reference["x_start"] + intercept)),
+            "x_end": int(round(reference["x_end"])),
+            "y_end": int(round(slope_o * reference["x_end"] + intercept)),
+        }
+
+    # ─── Вписывание эталона (без изменений) ──────────────────────────
 
     def _run_inscribe(self, sorted_dets, width_px, height_px):
         expected_height_px = float(height_px)
@@ -476,57 +508,6 @@ class SpiderContactsLongRule(BaseRule):
             "fails": len(fail_indices),
         }
         return check, results, fail_indices
-
-    @classmethod
-    def _select_contacts(cls, candidates, expected, y_filter_ratio):
-        n = len(candidates)
-        if n == 0:
-            return [], [], "no detections"
-        if n <= expected:
-            return list(candidates), [], "no filtering needed"
-
-        params = [cls._extract_params_basic(d) for d in candidates]
-        center_ys = np.array([p["center_y"] for p in params])
-        heights = np.array([p["height"] for p in params])
-        median_y = float(np.median(center_ys))
-        y_tol = float(np.median(heights)) * y_filter_ratio
-
-        y_kept = [i for i in range(n) if abs(center_ys[i] - median_y) <= y_tol]
-        y_drop = [i for i in range(n) if i not in y_kept]
-
-        if len(y_kept) < expected:
-            s = [candidates[i] for i in y_kept]
-            g = [candidates[i] for i in y_drop]
-            return s, g, f"y-filter left only {len(y_kept)}"
-        if len(y_kept) == expected:
-            s = [candidates[i] for i in y_kept]
-            g = [candidates[i] for i in y_drop]
-            return s, g, f"y-filter dropped {len(y_drop)}"
-
-        kept_sorted = sorted(y_kept, key=lambda i: params[i]["center_x"])
-        best_window, best_score = None, float("inf")
-        for start in range(len(kept_sorted) - expected + 1):
-            widx = kept_sorted[start:start + expected]
-            wxs = [params[i]["center_x"] for i in widx]
-            sp = np.diff(wxs)
-            if len(sp) < 1:
-                continue
-            med = float(np.median(sp))
-            if med <= 0:
-                continue
-            sc = float(np.max(np.abs(sp - med))) / med
-            if sc < best_score:
-                best_score, best_window = sc, widx
-
-        if best_window is None:
-            s = [candidates[i] for i in kept_sorted[:expected]]
-            g = [c for i, c in enumerate(candidates) if i not in kept_sorted[:expected]]
-            return s, g, "fallback: first N"
-
-        s = [candidates[i] for i in best_window]
-        g = [c for i, c in enumerate(candidates) if i not in best_window]
-        note = f"y-drop={len(y_drop)} x-drop={len(kept_sorted) - expected} score={best_score:.2f}"
-        return s, g, note
 
     @staticmethod
     def _try_inscribe(det, expected_short_px, expected_long_px, common_angle):
@@ -612,20 +593,64 @@ class SpiderContactsLongRule(BaseRule):
             ),
         }
 
+    # ─── Отбор кандидатов (без изменений) ────────────────────────────
+
+    @classmethod
+    def _select_contacts(cls, candidates, expected, y_filter_ratio):
+        n = len(candidates)
+        if n == 0:
+            return [], [], "no detections"
+        if n <= expected:
+            return list(candidates), [], "no filtering needed"
+
+        params = [cls._extract_params_basic(d) for d in candidates]
+        center_ys = np.array([p["center_y"] for p in params])
+        heights = np.array([p["height"] for p in params])
+        median_y = float(np.median(center_ys))
+        y_tol = float(np.median(heights)) * y_filter_ratio
+
+        y_kept = [i for i in range(n) if abs(center_ys[i] - median_y) <= y_tol]
+        y_drop = [i for i in range(n) if i not in y_kept]
+
+        if len(y_kept) < expected:
+            s = [candidates[i] for i in y_kept]
+            g = [candidates[i] for i in y_drop]
+            return s, g, f"y-filter left only {len(y_kept)}"
+        if len(y_kept) == expected:
+            s = [candidates[i] for i in y_kept]
+            g = [candidates[i] for i in y_drop]
+            return s, g, f"y-filter dropped {len(y_drop)}"
+
+        kept_sorted = sorted(y_kept, key=lambda i: params[i]["center_x"])
+        best_window, best_score = None, float("inf")
+        for start in range(len(kept_sorted) - expected + 1):
+            widx = kept_sorted[start:start + expected]
+            wxs = [params[i]["center_x"] for i in widx]
+            sp = np.diff(wxs)
+            if len(sp) < 1:
+                continue
+            med = float(np.median(sp))
+            if med <= 0:
+                continue
+            sc = float(np.max(np.abs(sp - med))) / med
+            if sc < best_score:
+                best_score, best_window = sc, widx
+
+        if best_window is None:
+            s = [candidates[i] for i in kept_sorted[:expected]]
+            g = [c for i, c in enumerate(candidates) if i not in kept_sorted[:expected]]
+            return s, g, "fallback: first N"
+
+        s = [candidates[i] for i in best_window]
+        g = [c for i, c in enumerate(candidates) if i not in best_window]
+        note = f"y-drop={len(y_drop)} x-drop={len(kept_sorted) - expected} score={best_score:.2f}"
+        return s, g, note
+
+    # ─── Helpers ─────────────────────────────────────────────────────
+
     @staticmethod
     def _bbox_center_x(bbox):
         return (bbox[0] + bbox[2]) / 2.0
-
-    @staticmethod
-    def _fit_line(xs, ys):
-        if len(xs) < 2:
-            return 0.0, float(ys[0]) if len(ys) else 0.0
-        a, b = np.polyfit(xs, ys, 1)
-        return float(a), float(b)
-
-    @staticmethod
-    def _eval_line(line, xs):
-        return line[0] * xs + line[1]
 
     @staticmethod
     def _combined_bbox(detections):
