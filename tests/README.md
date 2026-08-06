@@ -46,6 +46,17 @@ python -m unittest discover -s tests -p "test_*.py" -v
   порядка -> StageSequenceError), передача камер инспекции, reset.
 - `test_live_preview_gate.py` — LiveCaptureGate: пауза блокирует live-чтения,
   вложенные паузы, ожидание активного чтения, reset.
+- `test_conveyor.py` — параметры конвейера сохраняются в атрибуты
+  (speed/accel/steps_per_division), невалидная геометрия отклоняется.
+- `test_axis.py` — Axis: валидация, move_absolute, home, парсинг статусов,
+  verify_homed.
+- `test_distributor.py` — Distributor: валидация позиций, маршруты
+  BAD/CLEANUP, status для UI, cancel_check, emergency_stop.
+- `test_decision_engine.py` — DecisionEngine: создание из thresholds.json,
+  правила по ролям, пустые детекции.
+- `test_part_archive.py` — PartArchive: буферизация кадров, финализация,
+  meta.json, run1-изображения (run2/run3 не создаются при одиночном
+  прогоне), zip-сжатие, отключённый архив.
 
 ## Frontend (Node)
 
