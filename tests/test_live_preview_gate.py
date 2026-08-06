@@ -41,7 +41,7 @@ class LiveCaptureGateTest(unittest.TestCase):
         release = threading.Event()
 
         def reader():
-            with gate.live_read() as allowed:
+            with gate.live_read():
                 release.wait(timeout=2.0)
 
         thread = threading.Thread(target=reader)
