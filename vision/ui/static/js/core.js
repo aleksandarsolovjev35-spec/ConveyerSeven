@@ -1,4 +1,7 @@
-// core.js — Line Monitor UI module
+// core.js — Line Monitor UI module (reworked for stability)
+// - устранены гонки в поллинге статуса и загрузке кадров
+// - mainBuffer защищён счётчиком последовательности
+// - адаптивный polling на setTimeout вместо setInterval
 'use strict';
 
 // ─── Config ──────────────────────────────────────────────────
@@ -14,9 +17,7 @@ const MAIN_CAM_MIN_GAP     = 16;
 const LIVE_CAM_MIN_GAP     = 1000 / 30;
 
 const JOG_ALLOWED_STATES = ["IDLE", "STOPPED", "PAUSED"];
-
 const JOG_HEARTBEAT_INTERVAL = 100;
-
 const EXPECTED_CAMERAS = 7;
 
 const CAMERA_ROLE_LABELS = {
@@ -85,7 +86,6 @@ const state = {
     statusFetchBusy:     false,
     camerasFetchBusy:    false,
 
-    // UI readiness
     statusReceived:      false,
     jogReceived:         false,
     uiReady:             false,
@@ -102,14 +102,10 @@ const state = {
     distributorDiagnosticPending: false,
     distributorDiagnosticBackendBusy: false,
 
-    // Выбранный анализ кадра (кнопка «АНАЛИЗ КАДРА»): задаются из
-    // diagnostics.js (updateSelectedAnalysisStatus/setupSelectedFrameAnalysis).
     selectedAnalysisActive: false,
     selectedAnalysisRole:   null,
     selectedAnalysisPending: false,
 
-    // Кэши «полной» панели анализа (diagnostics.js, legacy). В текущем
-    // index.html DOM этой панели отсутствует — поля остаются неактивными.
     frameAnalysisRulesCache: null,
     frameAnalysisRulesFilter: 'triggered',
     frameAnalysisModelsCache: null,
@@ -129,9 +125,6 @@ const state = {
     activeCameraRequestBusy: false,
     thresholdsRevision:   null,
 
-    // Номер набора кадров, по которому строится «картинка» анализа
-    // (пометка решающего замера в панели правил). После отмены тройного
-    // голосования всегда 0 или 1.
     pictureRun: 0,
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
@@ -139,11 +132,6 @@ const state = {
     mainCamAnalysisKey:   null,
     livePullTimer:        null,
 
-    // Синхронизация «сначала монитор, потом UI»: версия публикации анализа,
-    // визуальные результаты которой (цвет корпуса на линии, карточки правил,
-    // превью) ждут показа кадра с обрисовкой правил на главной камере.
-    // Пока pendingAnalysisVersion не null, эти элементы держат предыдущее
-    // состояние и переключаются одним кадром вместе с обрисовкой.
     pendingAnalysisVersion: null,
     pendingFlushTimer:      null,
     lastLineStatus:         null,
@@ -199,13 +187,11 @@ const els = {
     distributorDiagnostics: $('distributor-diagnostics'),
     controlError:      $('control-error'),
 
-
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),
     statsService:         $('stats-service'),
 
     historyCards:     $('history-cards'),
-
     statsPanel:       $('stats-panel'),
 
     statTotal:        $('stat-total'),
@@ -230,10 +216,6 @@ const els = {
     jogHwDist2:       $('jog-hw-dist2'),
 
     frameAnalysisPanelNew: $('frame-analysis-panel'),
-    // Алиас для diagnostics.js: updateFrameAnalysisStatus и
-    // showPendingSelectedFrameAnalysis проверяют els.frameAnalysisPanel.
-    // Без алиаса они всегда выходили рано, и полная панель анализа
-    // Анализ кадра обрабатывается в diagnostics.js / frame-analysis.js
     frameAnalysisPanel: $('frame-analysis-panel'),
 
     btnStart:         $('btn-start'),
@@ -263,70 +245,60 @@ const els = {
     galleryModeRaw:   $('gallery-mode-raw'),
 };
 
-// ─── Double buffering ────────────────────────────────────────
+// ─── Double buffering — защищён от гонок счётчиком —──────────
 
 const mainBuffer = new Image();
+let _mainBufferSeq = 0;
+let _mainBufferExpectedSeq = 0;
 let mainBufferLoading = false;
 let mainBufferRequestRole = null;
 let mainBufferRequestView = null;
 let mainBufferRequestVersion = null;
 
 mainBuffer.addEventListener('load', () => {
-    const pullMode = (
-        state.mainCamMode === 'pull'
-        || state.mainCamMode === 'live-pull'
-    );
+    const pullMode = (state.mainCamMode === 'pull' || state.mainCamMode === 'live-pull');
+    const mySeq = mainBuffer._seq || 0;
+    // Если пришёл не последний запрос — игнорируем (гонка быстрой смены камеры)
+    if (mySeq !== _mainBufferExpectedSeq) {
+        mainBufferLoading = false;
+        if (state.mainCamMode === 'pull' && typeof maybeRequestMainFrame === 'function') {
+            setTimeout(maybeRequestMainFrame, 5);
+        }
+        return;
+    }
     const requestIsCurrent = (
         pullMode
         && mainBufferRequestRole === state.currentCamera
         && mainBufferRequestView === state.mode
-        && (
-            state.mainCamMode === 'live-pull'
-            || mainBufferRequestVersion === state.currentVersion
-        )
+        && (state.mainCamMode === 'live-pull' || mainBufferRequestVersion === state.currentVersion)
     );
     if (requestIsCurrent) {
         els.mainCamera.src = mainBuffer.src;
     }
     mainBufferLoading = false;
 
-    // Кадр с обрисовкой правил показан на главной камере: только теперь
-    // применяем отложенные визуальные результаты анализа — цвет корпуса
-    // на линии, карточки правил и превью. Деталь под камерами и на линии
-    // появляется синхронно («сначала монитор, потом UI»).
-    if (
-        requestIsCurrent
-        && state.pendingAnalysisVersion !== null
-        && typeof flushPendingAnalysis === 'function'
-    ) {
+    if (requestIsCurrent && state.pendingAnalysisVersion !== null && typeof flushPendingAnalysis === 'function') {
         flushPendingAnalysis();
     }
 
-    if (
-        state.mainCamMode === 'live-pull'
-        && typeof scheduleNextLiveFrame === 'function'
-    ) {
+    if (state.mainCamMode === 'live-pull' && typeof scheduleNextLiveFrame === 'function') {
         scheduleNextLiveFrame(requestIsCurrent ? LIVE_CAM_MIN_GAP : 1);
-    } else if (
-        state.mainCamMode === 'pull'
-        && !requestIsCurrent
-        && typeof maybeRequestMainFrame === 'function'
-    ) {
+    } else if (state.mainCamMode === 'pull' && !requestIsCurrent && typeof maybeRequestMainFrame === 'function') {
         maybeRequestMainFrame();
     }
 });
 
 mainBuffer.addEventListener('error', () => {
+    // Если ошибка, но это уже не актуальный запрос — просто отпускаем загрузку
+    const mySeq = mainBuffer._seq || 0;
+    if (mySeq !== _mainBufferExpectedSeq) {
+        mainBufferLoading = false;
+        return;
+    }
     mainBufferLoading = false;
-    if (
-        state.mainCamMode === 'live-pull'
-        && typeof scheduleNextLiveFrame === 'function'
-    ) {
+    if (state.mainCamMode === 'live-pull' && typeof scheduleNextLiveFrame === 'function') {
         scheduleNextLiveFrame(60);
-    } else if (
-        state.mainCamMode === 'pull'
-        && typeof maybeRequestMainFrame === 'function'
-    ) {
+    } else if (state.mainCamMode === 'pull' && typeof maybeRequestMainFrame === 'function') {
         setTimeout(maybeRequestMainFrame, 60);
     }
 });
@@ -337,36 +309,25 @@ async function api(path, options = {}, controlFeedback = false) {
     try {
         const res = await fetch(path, options);
         const ct = res.headers.get('content-type') || '';
-        const payload = ct.includes('json')
-            ? await res.json()
-            : await res.text();
+        const payload = ct.includes('json') ? await res.json() : await res.text();
         if (!res.ok) {
-            const message = payload && payload.error
-                ? payload.error
-                : `${res.status}`;
+            const message = payload && payload.error ? payload.error : `${res.status}`;
             throw new Error(message);
         }
         return payload;
     } catch (err) {
         console.warn(`[API] ${path}:`, err.message);
-        if (controlFeedback) {
-            showControlError(err.message || `Ошибка запроса ${path}`);
-        }
+        if (controlFeedback) showControlError(err.message || `Ошибка запроса ${path}`);
         return null;
     }
 }
 
 const apiGet = (path) => api(path);
-const apiPost = (path, feedback = false) => api(
-    path,
-    {method: 'POST'},
-    feedback,
-);
-
+const apiPost = (path, feedback = false) => api(path, {method: 'POST'}, feedback);
 async function apiPostJson(path, payload, feedback = false) {
     return api(path, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload || {}),
     }, feedback);
 }
@@ -376,7 +337,6 @@ function showControlError(message) {
     setIfChanged(els.controlError, message || 'Неизвестная ошибка');
     els.controlError.classList.remove('is-hidden');
 }
-
 function clearControlError() {
     if (!els.controlError) return;
     els.controlError.classList.add('is-hidden');
@@ -392,51 +352,22 @@ function animateUiElement(el, className = 'ui-value-change') {
     el.classList.add(className);
     setTimeout(() => el.classList.remove(className), 260);
 }
-
-function normalizeOperatorText(value) {
-    return String(value).replace(/\u2116\s*/g, '#');
-}
-
+function normalizeOperatorText(value) { return String(value).replace(/\u2116\s*/g, '#'); }
 function setIfChanged(el, value) {
     if (!el) return;
     const text = normalizeOperatorText(value);
     if (el.textContent === text) return;
     el.textContent = text;
-    if (
-        el.classList.contains('stats-value')
-        || el.classList.contains('axis-state')
-        || el.classList.contains('state-label')
-    ) {
+    if (el.classList.contains('stats-value') || el.classList.contains('axis-state') || el.classList.contains('state-label')) {
         animateUiElement(el);
     }
 }
-
-function cameraRoleLabel(role) {
-    return CAMERA_ROLE_LABELS[role] || role || '—';
-}
-
-function lineStateLabel(value) {
-    return LINE_STATE_LABELS[String(value || '').toUpperCase()] || value || '—';
-}
-
-function axisStateLabel(value) {
-    return AXIS_STATE_LABELS[String(value || '').toUpperCase()] || value || '—';
-}
-
-function categoryLabel(value) {
-    return CATEGORY_LABELS[String(value || '').toUpperCase()] || value || '—';
-}
-
-function formatFrameRate(value) {
-    const number = Number(value || 0).toFixed(1).replace('.', ',');
-    return `${number} КАДР/С`;
-}
-
-function distributorTargetLabel(value) {
-    if (!value || value === '-') return '—';
-    return categoryLabel(value);
-}
-
+function cameraRoleLabel(role) { return CAMERA_ROLE_LABELS[role] || role || '—'; }
+function lineStateLabel(value) { return LINE_STATE_LABELS[String(value || '').toUpperCase()] || value || '—'; }
+function axisStateLabel(value) { return AXIS_STATE_LABELS[String(value || '').toUpperCase()] || value || '—'; }
+function categoryLabel(value) { return CATEGORY_LABELS[String(value || '').toUpperCase()] || value || '—'; }
+function formatFrameRate(value) { const n = Number(value || 0).toFixed(1).replace('.', ','); return `${n} КАДР/С`; }
+function distributorTargetLabel(value) { if (!value || value === '-') return '—'; return categoryLabel(value); }
 function distributorActionLabel(value) {
     if (!value || value === '-') return '—';
     return String(value)
@@ -461,7 +392,6 @@ function distributorActionLabel(value) {
         .replace('CLEANUP', 'ОЧИСТКА')
         .replace('EMERGENCY STOP', 'АВАРИЙНАЯ ОСТАНОВКА');
 }
-
 function jogActionLabel(value) {
     if (!value || value === '-') return '—';
     const text = String(value);
@@ -469,24 +399,41 @@ function jogActionLabel(value) {
     if (text === 'HOLD LEFT') return 'ДВИЖЕНИЕ ВЛЕВО';
     if (text.startsWith('ERR:')) return `ОШИБКА:${text.slice(4)}`;
     if (text.startsWith('STOP:')) {
-        if (text.includes('heartbeat timeout')) {
-            return 'ОСТАНОВЛЕНО: ПОТЕРЯ СИГНАЛА УДЕРЖАНИЯ';
-        }
+        if (text.includes('heartbeat timeout')) return 'ОСТАНОВЛЕНО: ПОТЕРЯ СИГНАЛА УДЕРЖАНИЯ';
         return 'ОСТАНОВЛЕНО';
     }
     return text.replace('UI ONLY', 'ДЕМО-РЕЖИМ');
 }
 
+// Немедленный статус — отменяет запланированный тик и делает внеплановый запрос
+let _statusLoopTimer = null;
+let _statusImmediatePending = false;
+
 function requestImmediateStatus() {
-    setTimeout(fetchStatus, 30);
+    if (_statusImmediatePending) return;
+    _statusImmediatePending = true;
+    if (_statusLoopTimer) { clearTimeout(_statusLoopTimer); _statusLoopTimer = null; }
+    setTimeout(async () => {
+        _statusImmediatePending = false;
+        await fetchStatus();
+        scheduleNextStatusTick();
+    }, 10);
+}
+
+function scheduleNextStatusTick() {
+    if (_statusLoopTimer) clearTimeout(_statusLoopTimer);
+    const next = getStatusInterval();
+    _statusLoopTimer = setTimeout(async () => {
+        _statusLoopTimer = null;
+        await fetchStatus();
+        scheduleNextStatusTick();
+    }, next);
+    state.statusInterval = _statusLoopTimer;
 }
 
 async function sendActiveCameraIfChanged(role) {
     if (!role || state.offline) return;
-    if (
-        state.lastSentActiveCamera === role
-        && !state.activeCameraRequestBusy
-    ) return;
+    if (state.lastSentActiveCamera === role && !state.activeCameraRequestBusy) return;
     state.pendingActiveCamera = role;
     if (state.activeCameraRequestBusy) return;
 
@@ -495,26 +442,15 @@ async function sendActiveCameraIfChanged(role) {
         while (state.pendingActiveCamera) {
             const target = state.pendingActiveCamera;
             state.pendingActiveCamera = null;
-            const result = await apiPost(
-                `/api/active_camera/${encodeURIComponent(target)}`
-            );
-            if (result) {
-                state.lastSentActiveCamera = target;
-            } else {
-                state.lastSentActiveCamera = null;
-            }
+            const result = await apiPost(`/api/active_camera/${encodeURIComponent(target)}`);
+            if (result) state.lastSentActiveCamera = target;
+            else state.lastSentActiveCamera = null;
         }
     } finally {
         state.activeCameraRequestBusy = false;
     }
-    if (
-        !state.offline
-        && state.currentCamera
-        && state.lastSentActiveCamera !== state.currentCamera
-    ) {
-        setTimeout(() => {
-            sendActiveCameraIfChanged(state.currentCamera);
-        }, 500);
+    if (!state.offline && state.currentCamera && state.lastSentActiveCamera !== state.currentCamera) {
+        setTimeout(() => sendActiveCameraIfChanged(state.currentCamera), 400);
     }
 }
 
@@ -522,11 +458,7 @@ async function sendActiveCameraIfChanged(role) {
 
 function getStatusInterval() {
     const s = state.lineState;
-    if (
-        state.controlPending
-        || state.distributorDiagnosticPending
-        || state.distributorDiagnosticBackendBusy
-    ) return STATUS_INTERVAL_MOTION;
+    if (state.controlPending || state.distributorDiagnosticPending || state.distributorDiagnosticBackendBusy) return STATUS_INTERVAL_MOTION;
     if (s === 'RUNNING' || s === 'PAUSED' || s === 'STOPPING') return STATUS_INTERVAL_FAST;
     if (state.serverExitRequested) return STATUS_INTERVAL_FAST;
     if (state.jogActive) return STATUS_INTERVAL_FAST;
@@ -534,7 +466,19 @@ function getStatusInterval() {
 }
 
 function startStatusPolling() {
-    if (state.statusInterval) clearInterval(state.statusInterval);
-    state.statusInterval = setInterval(fetchStatus, getStatusInterval());
+    if (_statusLoopTimer) clearTimeout(_statusLoopTimer);
+    if (state.statusInterval) {
+        try { clearInterval(state.statusInterval); } catch (_) {}
+        try { clearTimeout(state.statusInterval); } catch (_) {}
+    }
+    scheduleNextStatusTick();
 }
 
+function stopStatusPolling() {
+    if (_statusLoopTimer) { clearTimeout(_statusLoopTimer); _statusLoopTimer = null; }
+    if (state.statusInterval) {
+        try { clearInterval(state.statusInterval); } catch (_) {}
+        try { clearTimeout(state.statusInterval); } catch (_) {}
+        state.statusInterval = null;
+    }
+}
