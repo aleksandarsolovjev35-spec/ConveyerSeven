@@ -20,9 +20,11 @@
     color: var(--text-dim);
     font-size: 9px;
     font-weight: 700;
-    letter-spacing: 0.8px;
+    letter-spacing: 0.6px;
     text-transform: uppercase;
-    flex: 0 0 112px;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .history-cards {
@@ -120,6 +122,6 @@
 
 @media (max-height: 500px) {
     .history { height: 42px; }
-    .history-title { flex-basis: 96px; font-size: 8px; }
+    .history-title { font-size: 8px; }
 }
 
