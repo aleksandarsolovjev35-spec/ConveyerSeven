@@ -49,7 +49,7 @@ class FakeDecision:
         self._results = rule_results
 
     def evaluate_all_detailed(self, vision_results, frames=None):
-        # Один вызов = один прогон (после отмены тройного голосования)
+        # Один вызов = один прогон
         self.calls = getattr(self, "calls", 0) + 1
         return [MockRuleResult(r) for r in self._results]
 

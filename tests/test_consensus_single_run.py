@@ -1,9 +1,8 @@
-"""Тесты одиночного прогона инспекции (тройное голосование 2 из 3 убрано).
+"""Тесты одиночного прогона инспекции.
 
-Проверяют, что после отмены тройного голосования вспомогательные функции
-``inspection.consensus`` работают с ровно одним прогоном:
-INSPECTION_RUNS == 1, CONSENSUS_MIN_VOTES == 1, evidence — единственный
-прогон, run_cards — один элемент, а старые многопрогоновые входы
+Проверяют, что вспомогательные функции ``inspection.consensus`` работают с ровно 
+одним прогоном: INSPECTION_RUNS == 1, CONSENSUS_MIN_VOTES == 1, evidence — 
+единственный прогон, run_cards — один элемент, а старые многопрогоновые входы
 отклоняются.
 """
 
@@ -73,7 +72,7 @@ class CombineRuleResultsTest(unittest.TestCase):
         self.assertEqual(meta["rules"], {})
 
     def test_rejects_multi_run_input(self):
-        # Защитный тест: данные от старого «тройного голосования» должны
+        # Защитный тест: многопрогоновые данные должны
         # отклоняться, а не молча обрабатываться.
         r1 = _rule("window_geometry", False)
         r2 = _rule("window_geometry", True)
