@@ -134,9 +134,6 @@ class ThresholdLoader:
         *OMISSION_BOUNDARY_PARAMETER_KEYS,
         *TOP_PARAMETER_KEYS,
     )
-    # Сохранено для обратной совместимости: жёсткого «списка разрешённых
-    # ключей» больше нет, дополнительные пороги в файле разрешены.
-    ALLOWED_KEYS = {*REQUIRED_KEYS, "disabled_rules"}
 
     def __init__(self, path: str = "thresholds.json"):
         self.path = path

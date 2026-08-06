@@ -19,7 +19,6 @@ class OmissionBoundaryMixin:
     TARGET_CLASS = ""
     FAMILY = ""
     DRAWING_TYPE = ""
-    PANEL_LABEL = ""
 
     def check(self, vision_results: dict, **kwargs) -> RuleResult:
         if not self.enabled:

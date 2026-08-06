@@ -334,14 +334,6 @@ class PartArchive:
 
         return result
 
-    @property
-    def archive_base_path(self) -> str:
-        return os.path.join(
-            self.root_folder,
-            self.date_folder,
-            self.batch_id,
-        )
-
     # Compression
 
     def compress(self, delete_original: bool = True) -> str | None:

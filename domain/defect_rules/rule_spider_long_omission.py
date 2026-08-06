@@ -10,4 +10,3 @@ class SpiderLongOmissionRule(OmissionBoundaryMixin, BaseRule):
     TARGET_CLASS = "omission-long"
     FAMILY = "long"
     DRAWING_TYPE = "long_omission_item"
-    PANEL_LABEL = "long_omission"

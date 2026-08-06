@@ -42,11 +42,6 @@ class LiveCaptureGate:
         self._pause_depth = 0
         self._active_reads = 0
 
-    @property
-    def paused(self) -> bool:
-        with self._condition:
-            return self._pause_depth > 0
-
     def pause(self, timeout: float = LIVE_PAUSE_DRAIN_TIMEOUT) -> bool:
         """Запретить live-чтения и дождаться завершения начатых.
 
@@ -215,20 +210,6 @@ class LivePreview:
 
     def reset_pause(self):
         self.gate.reset()
-
-    @contextlib.contextmanager
-    def paused(self, timeout: float = LIVE_PAUSE_DRAIN_TIMEOUT):
-        """Остановить live-чтения на время статического этапа."""
-        if not self.pause(timeout):
-            # pause() уже снял свою неудачную паузу.
-            raise RuntimeError(
-                "Live-просмотр не освободил камеры за "
-                f"{timeout}s; статическая инспекция отменена"
-            )
-        try:
-            yield
-        finally:
-            self.resume()
 
     def clear_overlays(self):
         """Убрать геометрию правил перед показом движущихся кадров.

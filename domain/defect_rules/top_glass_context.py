@@ -152,15 +152,6 @@ def build_top_glass_context(detections, confidence):
     }
 
 
-def max_overlap_pixels(source, references):
-    best = 0
-    for reference in references:
-        overlap = overlap_mask(source, reference)
-        if overlap is not None:
-            best = max(best, int(np.count_nonzero(overlap)))
-    return best
-
-
 def _select_contact_references(contacts, platform_bbox):
     valid = [contact for contact in contacts if mask_points(contact) is not None]
     if len(valid) < EXPECTED_CONTACTS:

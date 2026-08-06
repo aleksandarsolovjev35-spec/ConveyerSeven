@@ -163,7 +163,6 @@ class UIServer:
 
         self._server_thread: threading.Thread | None = None
         self._uvicorn_server: uvicorn.Server | None = None
-        self._server_loop = None
 
     # Public API
 
@@ -554,7 +553,6 @@ class UIServer:
         # Явно создаём SelectorEventLoop: одной смены policy недостаточно для
         # некоторых сочетаний Python 3.11 + WebView2 + uvicorn.
         loop = asyncio.SelectorEventLoop()
-        self._server_loop = loop
         asyncio.set_event_loop(loop)
         loop.set_exception_handler(self._quiet_connection_reset_handler)
         try:
@@ -564,7 +562,6 @@ class UIServer:
                 loop.run_until_complete(loop.shutdown_asyncgens())
             finally:
                 loop.close()
-                self._server_loop = None
 
     def start_server(self, host="127.0.0.1", port=8000):
         self._configure_windows_event_loop_policy()

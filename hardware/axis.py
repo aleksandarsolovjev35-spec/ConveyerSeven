@@ -134,15 +134,6 @@ class Axis:
             )
         return position
 
-    @property
-    def is_moving(self) -> bool:
-        moving = self.read_status()["moving"]
-        if moving is None:
-            raise RuntimeError(
-                f"Axis {self.axis_id}: controller reply has no motion state"
-            )
-        return moving == 1
-
     def wait_stop(self, timeout: float = 10.0, progress_callback=None):
         start = time.time()
         while True:
