@@ -33,9 +33,8 @@ INPUT_ROLE_PARAMETER_KEYS = tuple(
 LONG_CONTACT_PARAMETER_NAMES = (
     "spider_contacts_long_min_confidence",
     "spider_contacts_long_expected_count",
-    "spider_contacts_long_line_deviation_ratio",
-    "spider_contacts_long_max_level_slope",
-    "spider_contacts_long_omission_tilt_ratio_max",
+    "spider_contacts_long_damper_open_max_px",
+    "spider_contacts_long_gap_dev_max_px",
     "spider_contacts_long_inscribed_rect_width_px",
     "spider_contacts_long_inscribed_rect_height_px",
     "spider_contacts_long_y_filter_ratio",
@@ -43,8 +42,7 @@ LONG_CONTACT_PARAMETER_NAMES = (
 SHORT_CONTACT_PARAMETER_NAMES = (
     "spider_contacts_short_min_confidence",
     "spider_contacts_short_expected_count",
-    "spider_contacts_short_level_deviation_ratio",
-    "spider_contacts_short_omission_tilt_ratio_max",
+    "spider_contacts_short_damper_open_max_px",
     "spider_contacts_short_inscribed_rect_width_px",
     "spider_contacts_short_inscribed_rect_height_px",
     "spider_contacts_short_area_absolute_min",
@@ -64,6 +62,7 @@ OMISSION_BOUNDARY_SUFFIXES = (
     "allowed_thickness_px",
     "excess_component_min_px",
     "top_line_max_residual_px",
+    "top_line_min_inlier_ratio",
 )
 OMISSION_BOUNDARY_ROLE_KEYS = tuple(
     f"{role}.spider_{family}_omission_{suffix}"
@@ -300,6 +299,16 @@ class ThresholdLoader:
             if type(component_min) is not int or component_min < 1:
                 raise ValueError(
                     f"{prefix}excess_component_min_px должен быть целым >= 1"
+                )
+            ratio_min = data[prefix + "top_line_min_inlier_ratio"]
+            if (
+                type(ratio_min) not in (int, float)
+                or not math.isfinite(float(ratio_min))
+                or not 0.0 < float(ratio_min) <= 1.0
+            ):
+                raise ValueError(
+                    f"{prefix}top_line_min_inlier_ratio должен быть числом "
+                    "> 0 и <= 1"
                 )
 
         for key in cls.TOP_PARAMETER_KEYS:
@@ -538,14 +547,11 @@ PARAM_LABELS = {
     "spider_contacts_long_expected_count": (
         "Ожидаемое число длинных контактов, шт."
     ),
-    "spider_contacts_long_line_deviation_ratio": (
-        "Допуск отклонения центров от линии, доля высоты"
+    "spider_contacts_long_damper_open_max_px": (
+        "Макс. перепад заслонки по ряду, px"
     ),
-    "spider_contacts_long_max_level_slope": (
-        "Макс. наклон линии центров, px/px"
-    ),
-    "spider_contacts_long_omission_tilt_ratio_max": (
-        "Макс. наклон к линии пропуска, доля высоты"
+    "spider_contacts_long_gap_dev_max_px": (
+        "Макс. разброс расстояний до пропуска, px"
     ),
     "spider_contacts_long_inscribed_rect_width_px": (
         "Эталон длинного контакта: ширина, px"
@@ -564,11 +570,8 @@ PARAM_LABELS = {
     "spider_contacts_short_expected_count": (
         "Фиксированное число коротких контактов, шт."
     ),
-    "spider_contacts_short_level_deviation_ratio": (
-        "Допуск разности уровней контактов, доля высоты"
-    ),
-    "spider_contacts_short_omission_tilt_ratio_max": (
-        "Макс. наклон к линии пропуска, доля высоты"
+    "spider_contacts_short_damper_open_max_px": (
+        "Макс. открытие заслонки, px"
     ),
     "spider_contacts_short_inscribed_rect_width_px": (
         "Эталон короткого контакта: ширина, px"
@@ -596,6 +599,9 @@ PARAM_LABELS = {
     "spider_long_omission_top_line_max_residual_px": (
         "Макс. остаточное отклонение верхней линии, px"
     ),
+    "spider_long_omission_top_line_min_inlier_ratio": (
+        "Мин. доля точек верхней линии в допуске, доля"
+    ),
     "spider_short_omission_min_confidence": (
         "Мин. уверенность короткой полосы пропуска"
     ),
@@ -607,6 +613,9 @@ PARAM_LABELS = {
     ),
     "spider_short_omission_top_line_max_residual_px": (
         "Макс. остаточное отклонение верхней линии, px"
+    ),
+    "spider_short_omission_top_line_min_inlier_ratio": (
+        "Мин. доля точек верхней линии в допуске, доля"
     ),
 
     # ── TOP: контакты ─────────────────────────────────────────────────
@@ -736,17 +745,16 @@ PARAM_DESCRIPTIONS = {
     "spider_contacts_long_expected_count": (
         "Число длинных контактов в контролируемом ряду."
     ),
-    "spider_contacts_long_line_deviation_ratio": (
-        "Допуск отклонения центров вписанных эталонов от линии: "
-        "медианная высота контакта × этот коэффициент."
+    "spider_contacts_long_damper_open_max_px": (
+        "«Заслонка» — линия через центры вписанных эталонов. Перепад её "
+        "высоты относительно опорной линии пропуска на размахе ряда не "
+        "должен превышать это значение; наклон всей детали на замер не "
+        "влияет."
     ),
-    "spider_contacts_long_max_level_slope": (
-        "Максимальный модуль наклона линии центров вписанных эталонов "
-        "в координатах px/px."
-    ),
-    "spider_contacts_long_omission_tilt_ratio_max": (
-        "Максимальная разность тренда расстояний длинных контактов до "
-        "верхней линии пропуска, нормированная на медианную высоту контакта."
+    "spider_contacts_long_gap_dev_max_px": (
+        "«Стены» — перпендикуляры от центров контактов к опорной линии "
+        "пропуска. Отклонение длины любой стены от медианной не должно "
+        "превышать это значение; ловит одиночный торчащий контакт."
     ),
     "spider_contacts_long_inscribed_rect_width_px": (
         "Ширина прямоугольника, который обязан целиком поместиться в маску "
@@ -767,13 +775,11 @@ PARAM_DESCRIPTIONS = {
         "Контрольная геометрия реализована строго для пары контактов, "
         "поэтому значение фиксировано: 2."
     ),
-    "spider_contacts_short_level_deviation_ratio": (
-        "Допуск разности уровней пары: медианная высота контактов × этот "
-        "коэффициент."
-    ),
-    "spider_contacts_short_omission_tilt_ratio_max": (
-        "Максимальная разность расстояний двух коротких контактов до верхней "
-        "линии пропуска, нормированная на медианную высоту контакта."
+    "spider_contacts_short_damper_open_max_px": (
+        "«Заслонка» — отрезок между центрами вписанных эталонов, «стены» — "
+        "перпендикуляры от центров к опорной линии пропуска. Открытие "
+        "заслонки (разница длин стен, px) не должно превышать это значение; "
+        "наклон всей детали на замер не влияет."
     ),
     "spider_contacts_short_inscribed_rect_width_px": (
         "Ширина прямоугольника, который обязан целиком поместиться в маску "
@@ -805,7 +811,13 @@ PARAM_DESCRIPTIONS = {
     ),
     "spider_long_omission_top_line_max_residual_px": (
         "Максимальный остаток точек верхнего контура относительно устойчивой "
-        "опорной линии; превышение делает измерение невалидным."
+        "опорной линии. Точка считается «у линии», если её остаток не "
+        "превышает это значение."
+    ),
+    "spider_long_omission_top_line_min_inlier_ratio": (
+        "Минимальная доля точек верхнего контура, обязанных лежать «у "
+        "линии» (в пределах макс. остатка); меньшая доля делает измерение "
+        "невалидным. Единичные зубцы маски на замер не влияют."
     ),
     "spider_short_omission_min_confidence": (
         "Минимальная уверенность YOLO для короткой полосы пропуска. Этот порог также "
@@ -821,7 +833,13 @@ PARAM_DESCRIPTIONS = {
     ),
     "spider_short_omission_top_line_max_residual_px": (
         "Максимальный остаток точек верхнего контура относительно устойчивой "
-        "опорной линии; превышение делает измерение невалидным."
+        "опорной линии. Точка считается «у линии», если её остаток не "
+        "превышает это значение."
+    ),
+    "spider_short_omission_top_line_min_inlier_ratio": (
+        "Минимальная доля точек верхнего контура, обязанных лежать «у "
+        "линии» (в пределах макс. остатка); меньшая доля делает измерение "
+        "невалидным. Единичные зубцы маски на замер не влияют."
     ),
     "top_contacts_min_confidence": (
         "Минимальная уверенность YOLO для контактов. Этот общий порог также "
@@ -940,13 +958,11 @@ SUFFIX_LABELS = {
     "bottom_px_max": "B: макс., px",
     "center_zone_ratio": "Ширина центральной зоны, доля",
     "overlap_min_px": "Мин. число общих пикселей, px",
-    "line_deviation_ratio": "Допуск отклонения от линии, доля",
-    "max_level_slope": "Макс. наклон уровня, px/px",
-    "omission_tilt_ratio_max": "Макс. наклон к линии пропуска, доля",
+    "damper_open_max_px": "Макс. открытие заслонки, px",
+    "gap_dev_max_px": "Макс. разброс расстояний, px",
     "inscribed_rect_width_px": "Ширина вписываемого прямоугольника, px",
     "inscribed_rect_height_px": "Высота вписываемого прямоугольника, px",
     "y_filter_ratio": "Допуск фильтра по Y, доля",
-    "level_deviation_ratio": "Допуск отклонения уровня, доля",
     "area_absolute_min": "Мин. площадь, px²",
     "allowed_thickness_px": "Допустимая толщина, px",
     "excess_component_min_px": "Мин. число пикселей в компоненте, px",
@@ -1019,9 +1035,8 @@ PARAMETER_DISPLAY_ORDER = (
     "input_window_sinks_overlap_min_px",
     "spider_contacts_long_min_confidence",
     "spider_contacts_long_expected_count",
-    "spider_contacts_long_line_deviation_ratio",
-    "spider_contacts_long_max_level_slope",
-    "spider_contacts_long_omission_tilt_ratio_max",
+    "spider_contacts_long_damper_open_max_px",
+    "spider_contacts_long_gap_dev_max_px",
     "spider_contacts_long_inscribed_rect_width_px",
     "spider_contacts_long_inscribed_rect_height_px",
     "spider_contacts_long_y_filter_ratio",
@@ -1029,10 +1044,10 @@ PARAMETER_DISPLAY_ORDER = (
     "spider_long_omission_allowed_thickness_px",
     "spider_long_omission_excess_component_min_px",
     "spider_long_omission_top_line_max_residual_px",
+    "spider_long_omission_top_line_min_inlier_ratio",
     "spider_contacts_short_min_confidence",
     "spider_contacts_short_expected_count",
-    "spider_contacts_short_level_deviation_ratio",
-    "spider_contacts_short_omission_tilt_ratio_max",
+    "spider_contacts_short_damper_open_max_px",
     "spider_contacts_short_inscribed_rect_width_px",
     "spider_contacts_short_inscribed_rect_height_px",
     "spider_contacts_short_area_absolute_min",
@@ -1041,6 +1056,7 @@ PARAMETER_DISPLAY_ORDER = (
     "spider_short_omission_allowed_thickness_px",
     "spider_short_omission_excess_component_min_px",
     "spider_short_omission_top_line_max_residual_px",
+    "spider_short_omission_top_line_min_inlier_ratio",
     "top_contacts_min_confidence",
     "top_contacts_expected_count",
     "top_contacts_platform_min_confidence",
@@ -1134,7 +1150,7 @@ def _param_meta(key: str, value) -> dict:
     # Нормированные пороги.
     elif key.endswith("_min_confidence"):
         meta.update({"step": 0.01, "min": 0, "max": 1})
-    elif key.endswith("_center_zone_ratio"):
+    elif key.endswith("_center_zone_ratio") or key.endswith("_inlier_ratio"):
         meta.update({"step": 0.01, "min": 0.01, "max": 1})
     elif key.endswith("_inner_ratio"):
         meta.update({"step": 0.01, "min": 0, "max": 1})

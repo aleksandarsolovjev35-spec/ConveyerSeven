@@ -131,7 +131,8 @@ def build_demo_frame_analysis():
                     "verdict": "отклонение · контакт вне допуска",
                     "metrics": [
                         metric("Найдено контактов, шт", "5", "5", True, "found"),
-                        metric("Макс. откл. от линии, px", "8.0", "5.0", False, "line_tolerance_px"),
+                        metric("Заслонка: перепад, px", "8.0", "5.0", False, "damper_open_max_px"),
+                        metric("Стены: разброс, px", "2.1", "4.0", True, "gap_dev_max_px"),
                         *contacts,
                     ],
                 }]],

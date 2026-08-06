@@ -23,6 +23,7 @@ REGION_MISSING_MARKERS = (
     # omission (long/short)
     "no_detections", "missing_or_invalid_mask", "mask_too_small",
     "no_valid_omission", "no_valid_omission_top_line",
+    "omission_reference_too_short",
     # платформа / контакты сверху
     "no_valid_platform", "invalid_platform_bbox",
     "invalid_platform_orientation", "invalid_contact_masks",
