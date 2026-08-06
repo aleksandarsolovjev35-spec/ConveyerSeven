@@ -63,28 +63,6 @@ async function fetchStatus() {
         state.frameVersions = {...status.frame_versions};
     }
 
-    // Число прогонов текущей стадии: включает переключение кадров на
-    // главной камере по клику (0 — переключение недоступно).
-    if (typeof status.frame_runs === 'number') {
-        const available = Math.max(0, Math.floor(status.frame_runs));
-        if (available !== state.runFramesAvailable) {
-            // Первый показ всегда начинается с первого фактически снятого
-            // кадра. Не выбираем evidence/picture_run автоматически: это
-            // может быть третий прогон и ломает хронологический порядок.
-            if (state.runFramesAvailable === 0 && available > 0) {
-                state.viewRun = 1;
-            } else if (available === 0) {
-                state.viewRun = 0;
-            } else if (state.viewRun > available) {
-                state.viewRun = 1;
-            }
-            state.runFramesAvailable = available;
-            if (typeof updateRunCycleAvailability === 'function') {
-                updateRunCycleAvailability();
-            }
-        }
-    }
-
     // Пороги правил подтягиваются из thresholds.json автоматически: когда
     // backend перечитал файл и увеличил revision, обновляем панель.
     if (typeof status.thresholds_revision === 'number') {
@@ -98,10 +76,23 @@ async function fetchStatus() {
         state.thresholdsRevision = status.thresholds_revision;
     }
 
-    if (typeof status.frame_version === 'number') {
-        state.currentVersion = status.frame_version;
+    const incomingVersion = (
+        typeof status.frame_version === 'number'
+            ? status.frame_version
+            : null
+    );
+    // Публикация нового визуального содержимого (кадры, обрисовка правил,
+    // цвет корпусов). После изменений в сервере версия растёт только при
+    // реально новом содержимом, поэтому это и есть момент «анализ готов».
+    const newPublishArrived = (
+        incomingVersion !== null
+        && incomingVersion !== state.lastSeenVersion
+    );
+
+    if (incomingVersion !== null) {
+        state.currentVersion = incomingVersion;
         if (
-            state.currentVersion !== state.lastSeenVersion
+            newPublishArrived
             && state.mainCamMode === 'pull'
             && !state.splashActive
         ) {
@@ -109,8 +100,28 @@ async function fetchStatus() {
         }
     }
 
+    // Синхронизация «сначала монитор, потом UI»: кадры с обрисовкой правил
+    // уже готовы на сервере, но на экране их ещё нет (их надо запросить и
+    // показать). Держим визуальные результаты анализа — цвет корпуса на
+    // линии, карточки правил, превью — на предыдущем состоянии и применяем
+    // единым кадром, когда кадр с обрисовкой появится на главной камере.
+    const lineStatusPayload = status.line_status || {};
+    const liveInfo = lineStatusPayload.live || {};
+    const staticPublish = (
+        newPublishArrived
+        && incomingVersion > 0
+        && !state.splashActive
+        && !liveInfo.streaming
+        && state.mainCamMode === 'pull'
+    );
+    if (staticPublish) {
+        state.pendingAnalysisVersion = incomingVersion;
+        armPendingFlushFallback();
+    }
+    state.lastLineStatus = lineStatusPayload;
+
     const oldState = state.lineState;
-    updateLineStatus(status.line_status || {});
+    updateLineStatus(lineStatusPayload);
     updateRecentParts(status.recent_parts || []);
     updateMode(status.mode || 'RULES');
 
@@ -198,11 +209,15 @@ function updateLineStatus(ls) {
     setIfChanged(els.statInline, `${inLine} / 8`);
 
     const process = ls.process || {};
+    // Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), панели
+    // анализа держат предыдущий результат — они переключатся вместе с
+    // цветом корпуса на линии в flushPendingAnalysis().
+    const pendingAnalysis = state.pendingAnalysisVersion !== null;
     _updateDistributorRoute(ls);
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
     updateSelectedAnalysisStatus(ls);
-    if (typeof updateNewFrameAnalysisStatus === 'function') {
+    if (!pendingAnalysis && typeof updateNewFrameAnalysisStatus === 'function') {
         updateNewFrameAnalysisStatus(ls);
     }
 
@@ -268,6 +283,12 @@ function updateLineStatus(ls) {
 
 const _lineTokens = new Map(); // partId -> {el, position, category}
 let _lineSyncDone = false;
+
+// Последний применённый (показанный) снимок линии: [{id, position, category}].
+// Пока ждём кадр с обрисовкой правил (pendingAnalysisVersion), категории и
+// появление новых корпусов берутся из этого снимка: линия и камеры
+// обновляются одним кадром («сначала монитор, потом UI»).
+let _appliedLineParts = [];
 
 // Длительность одного шага линии: по ней же движутся маркеры деталей,
 // поэтому сдвиг выглядит синхронным с реальным конвейером.
@@ -489,11 +510,28 @@ function updateLineCells(lineParts, process = {}) {
     });
 
     // Чего хотим видеть: partId -> позиция и категория.
+    // Синхронизация «сначала монитор, потом UI»: пока кадр с обрисовкой
+    // правил не показан на главной камере (pendingAnalysisVersion), корпус
+    // на линии сохраняет предыдущую категорию, а новые корпуса не появляются
+    // вовсе. Так деталь под камерами и на линии появляется одновременно.
+    const pendingAnalysis = state.pendingAnalysisVersion !== null;
+    const appliedById = new Map(
+        _appliedLineParts.map(part => [part.id, part.category]),
+    );
     const wanted = new Map();
     for (const part of lineParts || []) {
-        wanted.set(Number(part.id), {
+        const id = Number(part.id);
+        if (pendingAnalysis && !appliedById.has(id)) {
+            // Новый корпус этого шага: ждём кадр анализа под камерами.
+            continue;
+        }
+        let category = (part.category || '').toUpperCase();
+        if (pendingAnalysis && appliedById.has(id)) {
+            category = appliedById.get(id);
+        }
+        wanted.set(id, {
             position: Math.max(0, Math.min(Number(part.position) || 0, 7)),
-            category: (part.category || '').toUpperCase(),
+            category,
         });
     }
 
@@ -579,6 +617,57 @@ function updateLineCells(lineParts, process = {}) {
         token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }
 
+    if (!pendingAnalysis) {
+        _appliedLineParts = (lineParts || []).map(part => ({
+            id: Number(part.id),
+            position: Math.max(
+                0,
+                Math.min(Number(part.position) || 0, 7),
+            ),
+            category: (part.category || '').toUpperCase(),
+        }));
+    }
+
     _updateLineGates(lineParts, process);
     _lineSyncDone = true;
+}
+
+// ─── Синхронизация «сначала монитор, потом UI» ─────────────────────────
+// Публикация анализа приходит в /api/status мгновенно, а кадр с обрисовкой
+// правил — отдельным запросом /frame. Чтобы цвет корпуса на линии не менялся
+// раньше обрисовки под камерами, визуальные результаты анализа (цвет
+// корпусов, карточки правил, превью) удерживаются до показа кадра на
+// главной камере и применяются одним махом в flushPendingAnalysis().
+
+const PENDING_VISUAL_TIMEOUT_MS = 1500;
+
+function armPendingFlushFallback() {
+    if (state.pendingFlushTimer) clearTimeout(state.pendingFlushTimer);
+    state.pendingFlushTimer = setTimeout(() => {
+        state.pendingFlushTimer = null;
+        flushPendingAnalysis();
+    }, PENDING_VISUAL_TIMEOUT_MS);
+}
+
+function flushPendingAnalysis() {
+    if (state.pendingAnalysisVersion === null) return;
+    state.pendingAnalysisVersion = null;
+    if (state.pendingFlushTimer) {
+        clearTimeout(state.pendingFlushTimer);
+        state.pendingFlushTimer = null;
+    }
+    // Кадр с обрисовкой уже показан: применяем самый свежий снимок статуса.
+    const ls = state.lastLineStatus;
+    if (ls) {
+        updateLineCells(ls.line_parts || [], ls.process || {});
+        if (typeof updateNewFrameAnalysisStatus === 'function') {
+            updateNewFrameAnalysisStatus(ls);
+        }
+        if (typeof updateFrameAnalysisStatus === 'function') {
+            updateFrameAnalysisStatus(ls);
+        }
+    }
+    if (typeof refreshPreviewStrip === 'function') {
+        refreshPreviewStrip();
+    }
 }

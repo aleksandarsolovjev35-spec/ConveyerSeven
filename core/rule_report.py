@@ -8,7 +8,7 @@
 
 # Названия порогов для анализа кадра: (правило, ключ метрики) -> понятный
 # оператору label (как в панели «Пороги правил»). UI показывает порог
-# рядом с названием правила и три замера по прогонам под ним.
+# рядом с названием правила и замер под ним.
 # Новый блок анализа кадра полностью повторяет блок порогов правил:
 #   Геометрия входного окна
 #     B после перекладины: макс., px [Значение]
@@ -1082,10 +1082,10 @@ def _threshold_conclusion(
 
 
 def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
-    """Извлечь детали голосования для правила из consensus.
-    
-    Возвращает структуру с явными голосами по прогонам, evidence run,
-    agreement scores для отображения в UI.
+    """Извлечь детали прогона для правила из consensus.
+
+    Возвращает структуру с результатом прогона, evidence run для
+    отображения в UI (при одном прогоне голоса — 1/0).
     """
     if not isinstance(consensus, dict):
         return None
@@ -1405,10 +1405,10 @@ def build_rule_report_row(result) -> dict:
         triggered, human_cause, threshold_breaches,
     )
 
-    # Три замера по прогонам для анализа кадра: значение каждой метрики
-    # в каждом из трёх прогонов с порогом. Метрики помечаются понятными
-    # названиями порогов (METRIC_PARAM_LABELS), как в панели «Пороги
-    # правил»; без сопоставления остаётся название самой метрики.
+    # Единственный замер для анализа кадра: значение метрики с порогом.
+    # Метрики помечаются понятными названиями порогов (METRIC_PARAM_LABELS),
+    # как в панели «Пороги правил»; без сопоставления остаётся название
+    # самой метрики.
     import copy
     run_cards = copy.deepcopy(consensus.get("run_cards") or [])
     for cards in run_cards:
@@ -1438,14 +1438,14 @@ def build_rule_report_row(result) -> dict:
         "detail_lines": detail_lines,
         "summary_lines": summary_lines,
         "summary_cards": summary_cards,
-        # Три замера порога по прогонам (для анализа кадра).
+        # Замер порога (для анализа кадра).
         "run_cards": run_cards,
         # Статус области по прогонам (для fail-closed дефектов).
         "run_status": copy.deepcopy(run_status),
         # Значения, не прошедшие проверку, их пороги и итог для HMI.
         "threshold_breaches": threshold_breaches,
         "threshold_conclusion": threshold_conclusion,
-        # Детали голосования для UI анализа кадра.
+        # Детали прогона для UI анализа кадра.
         "vote_details": _extract_vote_details(consensus, rule_name),
         "part_absent": part_absent,
         "decisive": bool(part_absent or triggered or skipped),

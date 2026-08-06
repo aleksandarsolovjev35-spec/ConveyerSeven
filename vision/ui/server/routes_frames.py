@@ -22,8 +22,7 @@ def setup_frame_routes(app, server):
             mode if mode in ("RAW", "RULES") else server.mode
         )
         size_kind = "preview" if preview else "main"
-        # Номер прогона 1..3 (кадры трёх прогонов голосования 2 из 3);
-        # вне диапазона — текущий кадр.
+        # Номер набора текущей стадии (1); вне диапазона — текущий кадр.
         if run is not None and not (1 <= run <= server.get_frame_count()):
             run = None
         jpeg = server._get_or_render(role, actual_mode, size_kind, run)

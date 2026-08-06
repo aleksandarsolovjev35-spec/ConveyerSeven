@@ -77,13 +77,11 @@ class UIServer:
 
     def __init__(self):
         self.frames: dict         = {}
-        # Три набора кадров текущей стадии (по одному на прогон голосования
-        # 2 из 3): UI переключает прогон на главной камере по клику.
-        # Каждый элемент — dict {role: кадр}. Пусто — переключение недоступно.
+        # Набор кадров текущей стадии (один элемент — dict {role: кадр}).
+        # Структура сохранена для совместимости с /frame?run=1.
         self.run_frames: list = []
-        # Правила, посчитанные по каждому прогону (run_cards): для кадра
-        # run=N разметка строится по правилам именно этого прогона, чтобы
-        # оверлей совпадал с кадром. Каждый элемент — список строк отчёта.
+        # Правила стадии: кадр размечается drawings этих правил, чтобы
+        # оверлей совпадал с кадром. Один элемент — список строк отчёта.
         self.run_rule_results: list = []
         self.vision_results: dict = {}
         self.rule_results: list   = []
@@ -166,6 +164,33 @@ class UIServer:
 
     # Public API
 
+    @staticmethod
+    def _same_frames(left: dict, right: dict) -> bool:
+        """Кадры считаются одинаковыми, если это те же объекты массивов.
+
+        Сравнение по значению запрещено: ``array == array`` возвращает массив,
+        а ``bool()`` на нём падает. Объектной идентичности достаточно:
+        визуально кадр меняется только тогда, когда пришёл новый массив
+        (те же массивы в REVIEW/PUBLISH не должны перерисовывать UI).
+        """
+        if left is right:
+            return True
+        if left.keys() != right.keys():
+            return False
+        return all(left[role] is right[role] for role in left)
+
+    @staticmethod
+    def _same_run_frames(left: list, right: list) -> bool:
+        """Наборы кадров прогонов сравниваются по объектам массивов."""
+        if left is right:
+            return True
+        if len(left) != len(right):
+            return False
+        return all(
+            UIServer._same_frames(a, b)
+            for a, b in zip(left, right)
+        )
+
     def update(
         self,
         frames=None,
@@ -174,38 +199,81 @@ class UIServer:
         line_status=None,
         recent_parts=None,
         run_frames=None,
+        run_rule_results=None,
     ):
+        """Атомарно опубликовать снимок: кадры + результаты + статус линии.
+
+        Версия ``_cache_version`` (в UI — ``frame_version``) растёт только
+        когда реально изменилось визуальное содержимое (кадры, разметка,
+        правила). Повторные публикации тех же массивов (REVIEW/PUBLISH)
+        кэш не трогают: иначе фронтенд лишний раз перезапрашивал бы кадры,
+        а «появление обрисовки правил» разъезжалось бы с цветом корпуса
+        на линии.
+        """
         with self.lock:
             should_invalidate = False
             stream_overlay_changed = False
             if run_frames is not None:
                 # None — не трогаем (например, обычный тик статуса); пустой
-                # список — очищаем (анализ завершён); список из трёх —
+                # список — очищаем (анализ завершён); непустой список —
                 # заменяем кадры прогонов текущей стадии.
-                self.run_frames = [
+                incoming_run_frames = [
                     dict(item)
                     for item in run_frames
                     if isinstance(item, dict)
                 ]
-                # Оверлеи прогонов сбрасываем: кадры новые, старые правила
-                # к ним не относятся (см. _get_or_render по run).
-                self.run_rule_results = []
-                should_invalidate = True
+                if not self._same_run_frames(
+                    self.run_frames, incoming_run_frames,
+                ):
+                    self.run_frames = incoming_run_frames
+                    # Кадры прогонов новые: правила старых прогонов к ним
+                    # не относятся (см. _get_or_render по run). Заполняются
+                    # тем же вызовом (run_rule_results) ниже.
+                    self.run_rule_results = []
+                    should_invalidate = True
+            if run_rule_results is not None:
+                incoming_run_rules = [
+                    list(rows) if isinstance(rows, (list, tuple)) else []
+                    for rows in run_rule_results
+                ]
+                try:
+                    run_rules_changed = (
+                        self.run_rule_results != incoming_run_rules
+                    )
+                except Exception:
+                    # Правила прогонов могут нести numpy-значения в details:
+                    # сравнение ненадёжно, консервативно считаем «изменилось».
+                    run_rules_changed = True
+                if run_rules_changed:
+                    self.run_rule_results = incoming_run_rules
+                    should_invalidate = True
             if frames is not None:
                 for role, frame in frames.items():
-                    self.frames[role] = frame
-                    self._latest_frames_ver[role] = (
-                        self._latest_frames_ver.get(role, 0) + 1
-                    )
-                should_invalidate = True
+                    if self.frames.get(role) is not frame:
+                        self.frames[role] = frame
+                        self._latest_frames_ver[role] = (
+                            self._latest_frames_ver.get(role, 0) + 1
+                        )
+                        should_invalidate = True
             if vision_results is not None:
-                self.vision_results = vision_results
-                should_invalidate = True
-                stream_overlay_changed = True
+                # Тот же объект (in-place обновления внутри шага) — контент
+                # не менялся с прошлой публикации.
+                if self.vision_results is not vision_results:
+                    self.vision_results = vision_results
+                    should_invalidate = True
+                    stream_overlay_changed = True
             if rule_results is not None:
-                self.rule_results = list(rule_results)
-                should_invalidate = True
-                stream_overlay_changed = True
+                new_rules = list(rule_results)
+                try:
+                    rules_changed = self.rule_results != new_rules
+                except Exception:
+                    # В details/drawings могут попасть массивы: сравнение
+                    # значений ненадёжно, консервативно считаем «изменилось».
+                    rules_changed = True
+                if rules_changed:
+                    self.rule_results = new_rules
+                    should_invalidate = True
+                    stream_overlay_changed = True
             if line_status is not None:
                 self.line_status = line_status
                 self._apply_custom_threshold_labels(line_status)
@@ -220,7 +288,7 @@ class UIServer:
     def _apply_custom_threshold_labels(self, line_status: dict) -> None:
         """Подставить ручные названия порогов (_label.*) в анализ кадра.
 
-        Каждое правило несёт ``run_cards`` — три замера по прогонам с
+        Каждое правило несёт ``run_cards`` — замеры по прогонам с
         ключами метрик. Для метрик, у которых есть ручное название в
         thresholds.json (``_label.<параметр>``), заменяем встроенный перевод
         на пользовательский, как и в панели «Пороги правил».
@@ -600,28 +668,8 @@ class UIServer:
     # Stream helpers
 
     def get_frame_count(self) -> int:
-        """Число доступных прогонов (кадров) текущей стадии: 0 или 3."""
+        """Число наборов кадров текущей стадии: 0 или 1."""
         return len(self.run_frames)
-
-    def set_run_rule_results(self, rows_by_run) -> None:
-        """Сохранить правила по прогонам для согласованной разметки.
-
-        ``rows_by_run`` — список из трёх элементов (по одному на прогон);
-        каждый — список строк отчёта правил, посчитанных по этому прогону.
-        Кадр ``run=N`` рендерится с оверлеем именно этого прогона.
-        """
-        if not isinstance(rows_by_run, (list, tuple)) or not rows_by_run:
-            return
-        with self.lock:
-            self.run_rule_results = [
-                list(rows) if isinstance(rows, (list, tuple)) else []
-                for rows in rows_by_run
-            ]
-            # Правила приходят сразу после кадров. Инвалидируем уже
-            # начавшийся рендер, иначе первый запрос мог закэшировать кадр
-            # без разметки, а параллельный запрос — устаревшую разметку.
-            self._jpeg_cache.clear()
-            self._cache_version += 1
 
     def get_frame_version(self, role: str) -> int:
         with self.lock:
@@ -694,9 +742,8 @@ class UIServer:
     # Rendering & caching (pull)
 
     def _get_or_render(self, role, mode, size_kind, run=None):
-        """Кадр камеры (JPEG). ``run`` — номер прогона 1..3 текущей стадии:
-        кадр того же ракурса, снятый в этом прогоне голосования 2 из 3.
-        Без ``run`` (или вне диапазона) — текущий кадр (evidence).
+        """Кадр камеры (JPEG). ``run`` — номер набора текущей стадии (1).
+        Без ``run`` (или вне диапазона) — текущий кадр.
         """
         cache_key = (role, mode, size_kind, run or 0)
         with self.lock:

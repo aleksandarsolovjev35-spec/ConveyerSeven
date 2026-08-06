@@ -20,16 +20,19 @@ const FA_RULE_NAMES = {
 function faNewVoteSummary(vote) {
     if (!vote) return {className: 'ok', text: '—'};
     const total = Number(vote.total_runs) || 3;
+    // Тройное голосование убрано: при одном прогоне счётчик не показываем.
+    const single = total <= 1;
+    const count = (value) => single ? '' : ' · ' + (value ?? 0) + '/' + total;
     if (vote.decision === 'empty') {
-        return {className: 'warn', text: 'ПУСТО · ' + (vote.empty_votes ?? vote.triggered_votes ?? 0) + '/' + total};
+        return {className: 'warn', text: 'ПУСТО' + count(vote.empty_votes ?? vote.triggered_votes)};
     }
     if (vote.decision === 'present') {
-        return {className: 'ok', text: 'КОРПУС · ' + (vote.present_votes ?? vote.normal_votes ?? 0) + '/' + total};
+        return {className: 'ok', text: 'КОРПУС' + count(vote.present_votes ?? vote.normal_votes)};
     }
     if (vote.decision === 'triggered') {
-        return {className: 'bad', text: 'СРАБОТАЛО · ' + (vote.triggered_votes ?? 0) + '/' + total};
+        return {className: 'bad', text: 'СРАБОТАЛО' + count(vote.triggered_votes)};
     }
-    return {className: 'ok', text: 'НОРМА · ' + (vote.normal_votes ?? 0) + '/' + total};
+    return {className: 'ok', text: 'НОРМА' + count(vote.normal_votes)};
 }
 
 function faNewFormatValue(v) {
@@ -189,53 +192,23 @@ function renderNewFrameAnalysis(report) {
             limit.textContent = faNewFormatLimit(thr);
             row.appendChild(limit);
 
-            // Три замера
+            // Замер порога (единственный прогон)
             const runs = thr.runs || [];
-            for (let i = 0; i < 3; i++) {
-                const run = runs.length > i ? runs[i] : null;
-                const meas = document.createElement('span');
-                const isBad = run && run.ok === false;
-                const isOk = run && run.ok === true;
-                const isPic = pictureRun && (i + 1) === pictureRun;
+            const run = runs.length ? runs[0] : null;
+            const meas = document.createElement('span');
+            const isBad = run && run.ok === false;
+            const isOk = run && run.ok === true;
+            const isPic = pictureRun === 1;
 
-                meas.className = 'fa-new-meas' +
-                    (isBad ? ' is-bad' : '') +
-                    (isOk ? ' is-ok' : '') +
-                    (isPic ? ' is-pic' : '');
+            meas.className = 'fa-new-meas' +
+                (isBad ? ' is-bad' : '') +
+                (isOk ? ' is-ok' : '') +
+                (isPic ? ' is-pic' : '');
 
-                const runLabel = document.createElement('span');
-                runLabel.className = 'fa-new-run-label';
-                runLabel.textContent = 'П' + (i + 1);
-                meas.appendChild(runLabel);
-
-                const val = document.createTextNode(
-                    ' ' + faNewFormatValue(run ? run.value : null),
-                );
-                meas.appendChild(val);
-
-                meas.dataset.run = String(i + 1);
-                meas.setAttribute('role', 'button');
-                meas.tabIndex = 0;
-                meas.title = 'Прогон ' + (i + 1) + ' — показать кадр';
-
-                row.appendChild(meas);
-            }
+            meas.textContent = faNewFormatValue(run ? run.value : null);
+            row.appendChild(meas);
 
             tbody.appendChild(row);
-        });
-    }
-
-    // Клик по замеру → переключить прогон на главной камере
-    if (!tbody.dataset.clickBound) {
-        tbody.dataset.clickBound = '1';
-        tbody.addEventListener('click', (event) => {
-            const chip = event.target.closest('.fa-new-meas[data-run]');
-            if (!chip) return;
-            const run = Number(chip.dataset.run);
-            if (!run) return;
-            if (typeof setMainCameraRun === 'function') {
-                setMainCameraRun(run);
-            }
         });
     }
 }
