@@ -202,7 +202,9 @@ function updateLineStatus(ls) {
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
     updateSelectedAnalysisStatus(ls);
-    updateFrameAnalysisStatus(ls);
+    if (typeof updateNewFrameAnalysisStatus === 'function') {
+        updateNewFrameAnalysisStatus(ls);
+    }
 
     const d1State = ls.dist1_state || 'IDLE';
     els.dist1State.className =

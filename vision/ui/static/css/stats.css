@@ -27,7 +27,7 @@
 .stats-panel .defects-section,
 .stats-panel .stats-service,
 .stats-panel .distributor-panel,
-.stats-panel .frame-analysis-panel,
+
 .stats-panel .jog-panel,
 .stats-panel .thresholds-panel,
 .stats-panel .thresholds-tabs,
@@ -40,7 +40,6 @@
 .stats-panel .defects-section::-webkit-scrollbar,
 .stats-panel .stats-service::-webkit-scrollbar,
 .stats-panel .distributor-panel::-webkit-scrollbar,
-.stats-panel .frame-analysis-panel::-webkit-scrollbar,
 .stats-panel .jog-panel::-webkit-scrollbar,
 .stats-panel .thresholds-panel::-webkit-scrollbar,
 .stats-panel .thresholds-tabs::-webkit-scrollbar,
@@ -94,24 +93,7 @@
     margin-top: 5px;
 }
 
-/* frame-analysis-panel полностью переписан в blocks.css — как блок порогов правил.
-   Здесь оставляем только заглушку чтобы не ломать порядок, реальные стили в blocks.css */
-.frame-analysis-panel {
-    /* наследуется из blocks.css */
-}
 
-.frame-analysis-empty { display: none; }
-/* These selectors belong to the pre-card fallback only.  The current
-   analysis card intentionally reuses ``frame-analysis-item`` and must stay
-   visible; otherwise the browser hides the whole rule card before its
-   ``is-active`` state can be applied. */
-#frame-analysis-rules-scroll .frame-analysis-list,
-#frame-analysis-rules-scroll .frame-analysis-item,
-#frame-analysis-rules-scroll .frame-analysis-header,
-#frame-analysis-rules-scroll .frame-analysis-reason,
-#frame-analysis-rules-scroll .frame-analysis-group,
-#frame-analysis-models-scroll .frame-analysis-list,
-#frame-analysis-models-scroll .frame-analysis-item { display: none; }
 
 .stats-title {
     grid-column: 1 / -1;

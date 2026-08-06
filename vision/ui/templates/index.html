@@ -201,36 +201,13 @@
                     </div>
                 </section>
 
-                <section id="frame-analysis-panel" class="frame-analysis-panel ui-collapse is-collapsed" data-ui-block="frame-analysis">
-                    <div class="fa-head">
-                        <span id="frame-analysis-title" class="fa-title">АНАЛИЗ КАДРА</span>
-                        <span id="frame-analysis-context" class="fa-context"></span>
-                        <span id="frame-analysis-verdict" class="fa-verdict">—</span>
-                        <span id="frame-analysis-message" class="is-hidden">—</span>
+                <section id="frame-analysis-panel" class="frame-analysis-panel-new ui-collapse is-collapsed" data-ui-block="frame-analysis">
+                    <div class="fa-new-head">
+                        <span id="fa-new-verdict" class="fa-new-verdict">—</span>
+                        <span id="fa-new-context" class="fa-new-context"></span>
                     </div>
-                    <div id="frame-analysis-picture" class="fa-picture is-hidden"></div>
-                    <div class="fa-toolbar">
-                        <h3 id="frame-analysis-rules-title" class="fa-rules-title">ПРАВИЛА</h3>
-                        <div class="fa-filter" role="group" aria-label="Фильтр правил">
-                            <button type="button" id="frame-analysis-filter-triggered" class="fa-filter-btn is-active" aria-pressed="true">СРАБОТАВШИЕ</button>
-                            <button type="button" id="frame-analysis-filter-all" class="fa-filter-btn" aria-pressed="false">ВСЕ</button>
-                        </div>
-                    </div>
-                    <!-- Новый блок анализа кадра — как блок порогов правил: вкладки правил + карточка с порогами и тремя замерами -->
-                    <div id="frame-analysis-body" class="fa-body">
-                        <div id="frame-analysis-tabs" class="fa-tabs" role="tablist" aria-label="Правила камеры"></div>
-                        <div class="fa-cards-wrap">
-                            <div id="frame-analysis-cards" class="fa-cards"></div>
-                            <div id="frame-analysis-scroll-track" class="fa-scroll-track" aria-label="Прокрутка анализа" tabindex="0">
-                                <div class="fa-scroll-thumb"></div>
-                            </div>
-                        </div>
-                    </div>
-                    <!-- Legacy контейнеры для совместимости старых модулей, скрыты -->
-                    <div id="frame-analysis-rules-scroll" class="is-hidden"><div id="frame-analysis-rules"></div></div>
-                    <div id="frame-analysis-models-scroll" class="is-hidden">
-                        <button type="button" id="frame-analysis-models-toggle" class="fa-models-toggle" aria-expanded="false">МОДЕЛИ</button>
-                        <div id="frame-analysis-models" class="frame-analysis-list-collapsed"></div>
+                    <div id="fa-new-body" class="fa-new-body">
+                        <div id="fa-new-tbody" class="fa-new-tbody"></div>
                     </div>
                 </section>
 
@@ -312,6 +289,7 @@
     <script src="/static/js/controls.js?v=34"></script>
     <script src="/static/js/thresholds.js?v=15"></script>
     <script src="/static/js/cameras.js?v=35"></script>
+    <script src="/static/js/frame-analysis.js?v=1"></script>
     <script src="/static/js/jog.js?v=34"></script>
     <script src="/static/js/history.js?v=31"></script>
     <script src="/static/js/bootstrap.js?v=34"></script>
