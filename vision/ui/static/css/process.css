@@ -429,18 +429,7 @@
     border-color: var(--bad);
 }
 
-/* === Process phase label (under line) === */
-.process-phase-label {
-    position: absolute;
-    right: 6px;
-    top: -2px;
-    font: 700 8.2px var(--font-mono);
-    color: #7f96ad;
-    opacity: 0.75;
-    pointer-events: none;
-    white-space: nowrap;
-    letter-spacing: 0.5px;
-}
+
 
 /* ─── Вход / Выход линии (порталы-туннели) ───────────────────────
    Ворота всегда непрозрачные: маркеры деталей въезжают из-под ВХОДА
@@ -494,6 +483,5 @@
 .axis-route b,
 .dist-route { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line-token { overflow: hidden; padding: 0 10px 0 3px; text-overflow: ellipsis; white-space: nowrap; }
-.process-phase-label { position: static; max-width: 100%; margin-top: 3px; overflow: hidden; text-align: right; text-overflow: ellipsis; }
 .axis-route span { flex: 1 1 auto; }
 .axis-route b, .dist-route { display: block; }
