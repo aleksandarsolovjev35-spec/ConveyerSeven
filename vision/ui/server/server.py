@@ -103,6 +103,8 @@ class UIServer:
 
         self.active_camera_role: str | None = None
 
+        self.on_active_camera_changed: callable | None = None
+
         self.on_start:  callable | None = None
         self.on_stop:   callable | None = None
         self.on_pause:  callable | None = None
@@ -264,7 +266,15 @@ class UIServer:
         with self.lock:
             if not role or role not in self.frames:
                 return False
+            if self.active_camera_role == role:
+                return True
             self.active_camera_role = role
+        cb = self.on_active_camera_changed
+        if cb is not None:
+            try:
+                cb(role)
+            except Exception as exc:
+                print(f"[UI] on_active_camera_changed error: {exc}")
         return True
 
     # ─── Пороги правил ─────────────────────────────────────────

@@ -31,6 +31,7 @@ class LiveMonitor:
         self.vision_rule_diagnostic_callback = None
         self.selected_model_analysis_callback = None
         self.selected_model_release_callback = None
+        self.active_camera_callback = None
 
         # JOG callbacks
         self.jog_enter_callback = None
@@ -134,6 +135,11 @@ class LiveMonitor:
         )
         self.server.on_selected_model_release = (
             lambda: self._invoke(self.selected_model_release_callback)
+        )
+        self.server.on_active_camera_changed = (
+            lambda role: self._invoke_args(
+                self.active_camera_callback, role,
+            )
         )
 
         # JOG

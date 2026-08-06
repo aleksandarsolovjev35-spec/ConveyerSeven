@@ -501,6 +501,9 @@ def main():
                 monitor.selected_model_release_callback = (
                     cycle.diagnostic_release_selected_camera
                 )
+                monitor.active_camera_callback = (
+                    lambda _role: cycle._refresh_monitor()
+                )
 
                 monitor.jog_enter_callback = cycle.enter_jog
                 monitor.jog_exit_callback = cycle.exit_jog

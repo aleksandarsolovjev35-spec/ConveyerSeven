@@ -101,10 +101,7 @@ const state = {
     jogStartPromise:     null,
     distributorDiagnosticPending: false,
     distributorDiagnosticBackendBusy: false,
-    selectedAnalysisPending: false,
-    selectedAnalysisActive: false,
-    selectedAnalysisRole: null,
-    lastFrameAnalysisRenderKey: null,
+
     liveFps:              0.0,
     liveStreaming:        false,
     liveStatic:           false,
@@ -123,9 +120,6 @@ const state = {
     // (evidence, выбранный сервером), 1..3 — выбранный оператором прогон.
     viewRun: 0,
     runFramesAvailable: 0,
-    frameAnalysisRulesCache: null,
-    // Фильтр списка правил в анализе: 'triggered' | 'all'.
-    frameAnalysisRulesFilter: 'triggered',
     mainCamMode:          'pull',
     mainCamStreamRole:    null,
     mainCamStreamView:    null,
@@ -183,23 +177,7 @@ const els = {
     distributorDiagnostics: $('distributor-diagnostics'),
     controlError:      $('control-error'),
 
-    frameAnalysisPanel:   $('frame-analysis-panel'),
-    frameAnalysisTitle:   $('frame-analysis-title'),
-    frameAnalysisVerdict: $('frame-analysis-verdict'),
-    frameAnalysisContext: $('frame-analysis-context'),
-    frameAnalysisMessage: $('frame-analysis-message'),
-    frameAnalysisPicture: $('frame-analysis-picture'),
-    frameAnalysisRulesTitle:  $('frame-analysis-rules-title'),
-    // Legacy ids (hidden containers for compat)
-    frameAnalysisRules:   $('frame-analysis-rules'),
-    frameAnalysisRulesScroll: $('frame-analysis-rules-scroll'),
-    frameAnalysisFilterTriggered: $('frame-analysis-filter-triggered'),
-    frameAnalysisFilterAll: $('frame-analysis-filter-all'),
-    // New analysis block as thresholds
-    frameAnalysisBody:    $('frame-analysis-body'),
-    frameAnalysisTabs:    $('frame-analysis-tabs'),
-    frameAnalysisCards:   $('frame-analysis-cards'),
-    frameAnalysisScrollTrack: $('frame-analysis-scroll-track'),
+
     statsSummary:         $('stats-summary'),
     statsBody:            $('stats-body'),
     statsService:         $('stats-service'),
@@ -228,6 +206,8 @@ const els = {
     jogHwConveyor:    $('jog-hw-conveyor'),
     jogHwDist1:       $('jog-hw-dist1'),
     jogHwDist2:       $('jog-hw-dist2'),
+
+    frameAnalysisPanelNew: $('frame-analysis-panel'),
 
     btnStart:         $('btn-start'),
     btnPause:         $('btn-pause'),
@@ -386,8 +366,6 @@ function setIfChanged(el, value) {
         el.classList.contains('stats-value')
         || el.classList.contains('axis-state')
         || el.classList.contains('state-label')
-        || el.classList.contains('frame-analysis-verdict')
-        || el.id === 'frame-analysis-verdict'
     ) {
         animateUiElement(el);
     }
