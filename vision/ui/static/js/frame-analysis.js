@@ -1,15 +1,8 @@
-// frame-analysis.js — компактный анализ кадра.
-//
-// Структура панели: правило → общие замеры правила → блоки объектов.
-// Правило «один объект — один блок со всеми замерами, касающимися его»:
-// метрики с одинаковым полем object (Окно #N, Контакт #N, Раковина #N,
-// Стекло #N …) собираются в один блок; метрики без object (агрегаты и
-// пороги правила целиком) остаются в общем списке под заголовком правила.
-//
-// Анти-мигание: при одинаковом содержимом отчёта DOM не перестраивается
-// (только вердикт, контекст и статистика корпусов обновляются точечно),
-// панель не схлопывается при временно пустых данных между шагами, а
-// позиция прокрутки сохраняется при перерисовке того же корпуса.
+// frame-analysis.js — переработанный анализ кадра
+// - без лишних обводок и кликабельности
+// - с кастомным ползунком как в порогах правил
+// - защита от гонок: версионирование рендеров, стабильная прокрутка,
+//   идемпотентные обновления DOM
 'use strict';
 
 const FA_RULE_NAMES = {
@@ -28,26 +21,24 @@ const FA_RULE_NAMES = {
     glass_on_contacts: 'Стекло на контактах',
 };
 
-// Ключ последнего отрисованного отчёта и контекста прокрутки.
+// ——— состояние ———
 let _faLastKey = null;
 let _faLastScrollContext = null;
 let _faLastStatsKey = null;
+let _faRenderSeq = 0;
+let _faScrollBound = false;
+let _faDragState = null;
+let _faRafSync = 0;
 
+// ——— утилиты ———
 function faNewVoteSummary(vote) {
     if (!vote) return {className: 'ok', text: '—'};
-    const total = Number(vote.total_runs) || 3;
-    // Тройное голосование убрано: при одном прогоне счётчик не показываем.
+    const total = Number(vote.total_runs) || 1;
     const single = total <= 1;
-    const count = (value) => single ? '' : ' · ' + (value ?? 0) + '/' + total;
-    if (vote.decision === 'empty') {
-        return {className: 'warn', text: 'ПУСТО' + count(vote.empty_votes ?? vote.triggered_votes)};
-    }
-    if (vote.decision === 'present') {
-        return {className: 'ok', text: 'КОРПУС' + count(vote.present_votes ?? vote.normal_votes)};
-    }
-    if (vote.decision === 'triggered') {
-        return {className: 'bad', text: 'СРАБОТАЛО' + count(vote.triggered_votes)};
-    }
+    const count = (v) => single ? '' : ' · ' + (v ?? 0) + '/' + total;
+    if (vote.decision === 'empty') return {className: 'warn', text: 'ПУСТО' + count(vote.empty_votes ?? vote.triggered_votes)};
+    if (vote.decision === 'present') return {className: 'ok', text: 'КОРПУС' + count(vote.present_votes ?? vote.normal_votes)};
+    if (vote.decision === 'triggered') return {className: 'bad', text: 'СРАБОТАЛО' + count(vote.triggered_votes)};
     return {className: 'ok', text: 'НОРМА' + count(vote.normal_votes)};
 }
 
@@ -63,47 +54,7 @@ function faNewFormatLimit(metric) {
     return '—';
 }
 
-function faNewCollectThresholds(runCards) {
-    // Собираем все уникальные пороги по всем прогонам.
-    // key: metric_key (или label если нет key), value: {label, limit, runs: [val_or_null, ...]}
-    const map = new Map();
-    const runs = Array.isArray(runCards) ? runCards : [];
-    runs.forEach((cards, runIndex) => {
-        const list = Array.isArray(cards) ? cards : [];
-        for (const card of list) {
-            const metrics = Array.isArray(card.metrics) ? card.metrics : [];
-            for (const m of metrics) {
-                const key = m.key || m.label;
-                if (!key) continue;
-                if (!map.has(key)) {
-                    map.set(key, {
-                        label: m.label || m.key || '—',
-                        key: m.key || null,
-                        limit: m.limit || null,
-                        limit_raw: m.limit_raw,
-                        runs: runs.map(() => null),
-                    });
-                }
-                const entry = map.get(key);
-                if (m.limit != null && m.limit !== '') entry.limit = m.limit;
-                if (m.limit_raw !== undefined) entry.limit_raw = m.limit_raw;
-                if (m.label) entry.label = m.label;
-                entry.runs[runIndex] = {
-                    value: m.value != null ? m.value : null,
-                    ok: m.ok == null ? null : !!m.ok,
-                    value_raw: typeof m.value_raw === 'number' ? m.value_raw : null,
-                };
-            }
-        }
-    });
-    return map;
-}
-
-// ─── Группировка замеров: общие + блоки объектов ─────────────
-
 function faNewCollectGroups(runCards) {
-    // Возвращает {general: [row, ...], objects: [{name, rows: [row, ...]}, ...]}.
-    // Строка: {label, limit, value, ok}.
     const generalMap = new Map();
     const objectsMap = new Map();
     const runs = Array.isArray(runCards) ? runCards : [];
@@ -127,8 +78,6 @@ function faNewCollectGroups(runCards) {
                     if (generalMap.has(key)) continue;
                     generalMap.set(key, row);
                 } else {
-                    // Роль в ключе группы: у разных камер одинаковые номера
-                    // объектов не смешиваются.
                     const groupKey = role + '::' + objectName;
                     let group = objectsMap.get(groupKey);
                     if (!group) {
@@ -151,30 +100,23 @@ function faNewCollectGroups(runCards) {
 }
 
 function faNewObjectStatus(rows) {
-    let hasBad = false;
-    let hasOk = false;
-    let measured = false;
+    let hasBad = false, hasOk = false, measured = false;
     for (const row of rows) {
         if (row.ok == null) continue;
         measured = true;
-        if (row.ok) hasOk = true;
-        else hasBad = true;
+        if (row.ok) hasOk = true; else hasBad = true;
     }
     if (hasBad) return {cls: 'bad', text: 'ОТКЛОНЕНИЕ'};
     if (measured && hasOk) return {cls: 'ok', text: 'В НОРМЕ'};
     return {cls: 'muted', text: '—'};
 }
 
-// Внутри блока объекта префикс «Окно #1: » в подписи не нужен —
-// объект уже назван в заголовке блока.
 function faNewStripObjectPrefix(label) {
     return String(label).replace(
         /^(?:Окно|Контакт|Раковина|Стекло|Shell|Glass)\s*#\d+(?:\s*\([^)]*\))?(?:\s*→\s*(?:контакт\s*)?#\d+)?\s*:\s*/i,
         '',
     );
 }
-
-// ─── Ключ отчёта (анти-мигание) ──────────────────────────────
 
 function faNewReportKey(report) {
     try {
@@ -187,42 +129,33 @@ function faNewReportKey(report) {
             picture_run: report.picture_run,
             rules: report.rules,
         });
-    } catch (error) {
+    } catch (_) {
         return [report.kind, report.role, report.stage, report.part_id, report.updated_at].join('|');
     }
 }
 
-// Вердикт: по отсутствию корпуса, по категории корпуса на линии
-// (ГОДНОЕ / БРАК / ОЧИСТКА) и по сработавшим правилам.
 function faNewVerdict(report, ls) {
     const rules = Array.isArray(report.rules) ? report.rules : [];
     const absent = rules.find(r => r && r.part_absent === true);
     if (absent) return {cls: 'warn', text: 'КОРПУС НЕ ОБНАРУЖЕН'};
-
     const triggered = rules.filter(r => r && r.triggered === true);
-
     let category = null;
     if (ls && report.part_id != null) {
         const parts = Array.isArray(ls.line_parts) ? ls.line_parts : [];
         const part = parts.find(p => Number(p.id) === Number(report.part_id));
         if (part) category = String(part.category || '').toUpperCase();
     }
-
     if (category === 'CLEANUP') return {cls: 'warn', text: 'ОЧИСТКА'};
     if (triggered.length) {
         const names = triggered.map(r => FA_RULE_NAMES[r.name] || r.name).join(', ');
         return {cls: 'bad', text: 'БРАК: ' + names};
     }
     if (category === 'BAD') return {cls: 'bad', text: 'БРАК'};
-    if (rules.some(r => r && r.skipped === true)) {
-        return {cls: 'warn', text: 'ЕСТЬ ПРОПУЩЕННЫЕ ПРАВИЛА'};
-    }
+    if (rules.some(r => r && r.skipped === true)) return {cls: 'warn', text: 'ЕСТЬ ПРОПУЩЕННЫЕ ПРАВИЛА'};
     if (category === 'GOOD') return {cls: 'ok', text: 'ГОДНОЕ'};
     return {cls: 'ok', text: 'ГОДНО'};
 }
 
-// Статистика корпусов (всего / годные / брак / очистка): обновляется
-// точечно, без пересборки DOM.
 function faNewUpdateStats(ls) {
     const totalEl = document.getElementById('fa-new-stat-total');
     if (!totalEl) return;
@@ -239,64 +172,184 @@ function faNewUpdateStats(ls) {
     setIfChanged(document.getElementById('fa-new-stat-cleanup'), cleanup);
 }
 
-// ─── Построение строк и блоков ───────────────────────────────
+// ——— ползунок ———
+function faGetScrollEls() {
+    return {
+        scroll: document.getElementById('fa-new-scroll'),
+        track: document.getElementById('fa-new-scroll-track'),
+        thumb: document.getElementById('fa-new-scroll-thumb'),
+        body: document.getElementById('fa-new-body'),
+        tbody: document.getElementById('fa-new-tbody'),
+    };
+}
 
-function faNewBuildRow(row, isPic) {
+function faSyncScroll() {
+    const {scroll, track, thumb} = faGetScrollEls();
+    if (!scroll || !track || !thumb) return;
+    const maxScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    if (maxScroll <= 0) {
+        track.classList.add('is-idle');
+        thumb.style.top = '0px';
+        if (scroll.scrollTop !== 0) scroll.scrollTop = 0;
+        return;
+    }
+    track.classList.remove('is-idle');
+    const trackH = track.clientHeight || 80;
+    const ratio = scroll.clientHeight / Math.max(1, scroll.scrollHeight);
+    const thumbH = Math.max(22, Math.min(Math.round(trackH * 0.55), Math.round(trackH * ratio)));
+    const maxThumbTop = Math.max(0, trackH - thumbH);
+    const top = maxScroll > 0 ? (scroll.scrollTop / maxScroll) * maxThumbTop : 0;
+    thumb.style.height = thumbH + 'px';
+    thumb.style.top = top + 'px';
+}
+
+function faOnScroll() {
+    if (_faRafSync) cancelAnimationFrame(_faRafSync);
+    _faRafSync = requestAnimationFrame(() => {
+        _faRafSync = 0;
+        faSyncScroll();
+    });
+}
+
+function faClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function faInitScrollHandlers() {
+    if (_faScrollBound) return;
+    const {scroll, track, thumb} = faGetScrollEls();
+    if (!scroll || !track || !thumb) return;
+    _faScrollBound = true;
+
+    scroll.addEventListener('scroll', faOnScroll, {passive: true});
+
+    // Клик по дорожке — быстрый переход
+    track.addEventListener('mousedown', (e) => {
+        if (e.target === thumb) return;
+        if (track.classList.contains('is-idle')) return;
+        const rect = track.getBoundingClientRect();
+        const maxScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+        if (maxScroll <= 0) return;
+        const trackH = track.clientHeight;
+        const thumbH = thumb.offsetHeight || 22;
+        const maxThumbTop = Math.max(0, trackH - thumbH);
+        const clickY = e.clientY - rect.top;
+        const desiredTop = faClamp(clickY - thumbH / 2, 0, maxThumbTop);
+        thumb.style.top = desiredTop + 'px';
+        scroll.scrollTop = maxThumbTop > 0 ? (desiredTop / maxThumbTop) * maxScroll : 0;
+    });
+
+    // Перетаскивание бегунка
+    thumb.addEventListener('mousedown', (e) => {
+        if (track.classList.contains('is-idle')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const trackH = track.clientHeight;
+        const thumbH = thumb.offsetHeight || 22;
+        const maxScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+        const maxThumbTop = Math.max(0, trackH - thumbH);
+        const startTop = parseFloat(thumb.style.top) || 0;
+        _faDragState = {scroll, track, thumb, startY: e.clientY, startTop, maxScroll, maxThumbTop};
+        track.classList.add('is-dragging');
+        const onMove = (ev) => {
+            if (!_faDragState) return;
+            const {scroll: sc, thumb: th, startY, startTop: st, maxScroll: ms, maxThumbTop: mt} = _faDragState;
+            const dy = ev.clientY - startY;
+            const nt = faClamp(st + dy, 0, mt);
+            th.style.top = nt + 'px';
+            if (mt > 0 && ms > 0) sc.scrollTop = (nt / mt) * ms;
+        };
+        const onUp = () => {
+            if (!_faDragState) return;
+            const {track: tr} = _faDragState;
+            tr.classList.remove('is-dragging');
+            _faDragState = null;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+
+    // Колесо на дорожке — прокрутка контента
+    track.addEventListener('wheel', (e) => {
+        if (track.classList.contains('is-idle')) return;
+        e.preventDefault();
+        scroll.scrollTop += e.deltaY;
+    }, {passive: false});
+
+    // Клавиатура — стрелками
+    track.addEventListener('keydown', (e) => {
+        if (track.classList.contains('is-idle')) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); scroll.scrollTop += 40; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); scroll.scrollTop -= 40; }
+        if (e.key === 'PageDown') { e.preventDefault(); scroll.scrollTop += scroll.clientHeight * 0.8; }
+        if (e.key === 'PageUp') { e.preventDefault(); scroll.scrollTop -= scroll.clientHeight * 0.8; }
+        if (e.key === 'Home') { e.preventDefault(); scroll.scrollTop = 0; }
+        if (e.key === 'End') { e.preventDefault(); scroll.scrollTop = scroll.scrollHeight; }
+    });
+
+    window.addEventListener('resize', () => faOnScroll());
+}
+
+// ——— построение DOM ———
+function faNewBuildRow(row) {
     const rowEl = document.createElement('div');
     rowEl.className = 'fa-new-thr-row';
 
     const label = document.createElement('span');
     label.className = 'fa-new-thr-label';
     label.textContent = row.label;
+    label.title = row.label;
     rowEl.appendChild(label);
 
     const limit = document.createElement('span');
     limit.className = 'fa-new-thr-limit';
     limit.textContent = row.limit;
+    limit.title = row.limit;
     rowEl.appendChild(limit);
 
     const meas = document.createElement('span');
     meas.className = 'fa-new-meas' +
         (row.ok === false ? ' is-bad' : '') +
-        (row.ok === true ? ' is-ok' : '') +
-        (isPic ? ' is-pic' : '');
+        (row.ok === true ? ' is-ok' : '');
     meas.textContent = row.value;
+    meas.title = row.value;
+    // не кликабельно: никакого cursor pointer, никаких обработчиков
     rowEl.appendChild(meas);
     return rowEl;
 }
 
 function renderNewFrameAnalysis(report, ls) {
-    const panel = document.getElementById('frame-analysis-panel');
-    const tbody = document.getElementById('fa-new-tbody');
-    if (!panel || !tbody) return;
+    _faRenderSeq += 1;
+    const thisSeq = _faRenderSeq;
 
-    // Статистика корпусов обновляется всегда, но без пересборки DOM.
+    const panel = document.getElementById('frame-analysis-panel');
+    const scroll = document.getElementById('fa-new-scroll');
+    const tbody = document.getElementById('fa-new-tbody');
+    if (!panel || !scroll || !tbody) return;
+
+    faInitScrollHandlers();
     faNewUpdateStats(ls);
 
     const available = report.available === true;
     if (!available) {
-        if (!panel.classList.contains('is-collapsed')) {
-            panel.classList.add('is-collapsed');
-        }
-        tbody.replaceChildren();
+        if (!panel.classList.contains('is-collapsed')) panel.classList.add('is-collapsed');
+        // очищаем только если был контент
+        if (tbody.children.length) tbody.replaceChildren();
         _faLastKey = null;
         _faLastScrollContext = null;
+        requestAnimationFrame(() => faSyncScroll());
         return;
     }
-    if (panel.classList.contains('is-collapsed')) {
-        panel.classList.remove('is-collapsed');
-    }
+    if (panel.classList.contains('is-collapsed')) panel.classList.remove('is-collapsed');
 
     const rules = Array.isArray(report.rules) ? report.rules : [];
 
-    // Вердикт и контекст — точечные обновления.
+    // вердикт + контекст — точечно
     const verdictEl = document.getElementById('fa-new-verdict');
     if (verdictEl) {
         const verdict = faNewVerdict(report, ls);
-        const verdictCls = 'fa-new-verdict ' + verdict.cls;
-        if (verdictEl.className !== verdictCls) {
-            verdictEl.className = verdictCls;
-        }
+        const cls = 'fa-new-verdict ' + verdict.cls;
+        if (verdictEl.className !== cls) verdictEl.className = cls;
         setIfChanged(verdictEl, verdict.text);
     }
     const contextEl = document.getElementById('fa-new-context');
@@ -304,59 +357,51 @@ function renderNewFrameAnalysis(report, ls) {
         const parts = [];
         const stage = String(report.stage || '').toUpperCase();
         if (stage) parts.push(stage);
-        if (report.role) {
-            parts.push(typeof cameraRoleLabel === 'function'
-                ? cameraRoleLabel(report.role)
-                : report.role);
-        }
+        if (report.role) parts.push(typeof cameraRoleLabel === 'function' ? cameraRoleLabel(report.role) : report.role);
         if (report.part_id != null) parts.push('КОРПУС #' + report.part_id);
         setIfChanged(contextEl, parts.join(' · '));
     }
 
-    // Содержимое не изменилось — DOM не трогаем (анти-мигание).
     const key = faNewReportKey(report);
     if (key === _faLastKey && tbody.children.length) {
+        // контент тот же — не трогаем DOM, но синхронизируем скролл на всякий случай
+        requestAnimationFrame(() => faSyncScroll());
         return;
     }
-    _faLastKey = key;
-    tbody.replaceChildren();
 
-    const scrollEl = document.getElementById('fa-new-body');
-    const keepScroll = scrollEl ? scrollEl.scrollTop : 0;
+    // Сохраняем прокрутку перед перестроением
+    const keepScroll = scroll.scrollTop;
     const scrollContext = String(report.stage || '') + '|' + (report.part_id == null ? '' : report.part_id);
     const resetScroll = _faLastScrollContext !== null && _faLastScrollContext !== scrollContext;
 
-    // Данных ещё нет (между шагами или другая камера): панель остаётся
-    // раскрытой с плейсхолдером, а не мигает схлопыванием/раскрытием.
+    _faLastKey = key;
+
     if (!rules.length) {
+        tbody.replaceChildren();
         const emptyRow = document.createElement('div');
         emptyRow.className = 'fa-new-empty';
         emptyRow.textContent = 'Ожидание результатов анализа…';
         tbody.appendChild(emptyRow);
+        if (thisSeq === _faRenderSeq) scroll.scrollTop = 0;
+        requestAnimationFrame(() => faSyncScroll());
+        _faLastScrollContext = scrollContext;
         return;
     }
 
-    const frag = (typeof document.createDocumentFragment === 'function')
-        ? document.createDocumentFragment()
-        : null;
-    const put = frag ? (el) => frag.appendChild(el) : (el) => tbody.appendChild(el);
-
-    // Сортировка: сработавшие → пропущенные → нормальные
+    // Собираем фрагмент вне DOM для стабильности
+    const frag = document.createDocumentFragment();
     const sorted = [...rules].sort((a, b) => {
         const order = r => r.part_absent ? 0 : (r.triggered ? 1 : (r.skipped ? 2 : 3));
         return order(a) - order(b);
     });
 
-    const pictureRun = Number(report.picture_run) || 0;
-    const isPic = pictureRun === 1;
-
     for (const rule of sorted) {
-        // Заголовок правила
         const ruleHead = document.createElement('div');
         ruleHead.className = 'fa-new-rule-head' + (rule.triggered || rule.part_absent ? ' triggered' : '');
         const ruleName = document.createElement('span');
         ruleName.className = 'fa-new-rule-name';
         ruleName.textContent = FA_RULE_NAMES[rule.name] || rule.name;
+        ruleName.title = FA_RULE_NAMES[rule.name] || rule.name;
         ruleHead.appendChild(ruleName);
 
         const vote = faNewVoteSummary(rule.vote_details);
@@ -364,33 +409,29 @@ function renderNewFrameAnalysis(report, ls) {
         badge.className = 'fa-new-rule-badge ' + vote.className;
         badge.textContent = vote.text;
         ruleHead.appendChild(badge);
-
-        put(ruleHead);
+        frag.appendChild(ruleHead);
 
         if (rule.part_absent) {
             const emptyRow = document.createElement('div');
             emptyRow.className = 'fa-new-empty';
             emptyRow.textContent = 'КОРПУС НЕ ОБНАРУЖЕН — измерения недоступны';
-            put(emptyRow);
+            frag.appendChild(emptyRow);
             continue;
         }
 
-        // Пороги и замеры этого правила, сгруппированные по объектам.
         const groups = faNewCollectGroups(rule.run_cards);
         if (!groups.general.length && !groups.objects.length) {
             const emptyRow = document.createElement('div');
             emptyRow.className = 'fa-new-empty';
             emptyRow.textContent = rule.skipped ? 'Нет измерений' : 'Нет данных порогов';
-            put(emptyRow);
+            frag.appendChild(emptyRow);
             continue;
         }
 
-        // Общие замеры правила (без привязки к объекту)
         for (const row of groups.general) {
-            put(faNewBuildRow(row, isPic));
+            frag.appendChild(faNewBuildRow(row));
         }
 
-        // Один объект — один блок со всеми его замерами
         for (const object of groups.objects) {
             const block = document.createElement('div');
             block.className = 'fa-new-obj-block';
@@ -400,6 +441,7 @@ function renderNewFrameAnalysis(report, ls) {
             const name = document.createElement('span');
             name.className = 'fa-new-obj-name';
             name.textContent = object.name;
+            name.title = object.name;
             head.appendChild(name);
 
             const status = faNewObjectStatus(object.rows);
@@ -410,42 +452,39 @@ function renderNewFrameAnalysis(report, ls) {
             block.appendChild(head);
 
             for (const row of object.rows) {
-                const rowEl = faNewBuildRow(row, isPic);
+                const rowEl = faNewBuildRow(row);
                 const labelEl = rowEl.children[0];
-                if (labelEl) {
-                    labelEl.textContent = faNewStripObjectPrefix(row.label);
-                }
+                if (labelEl) labelEl.textContent = faNewStripObjectPrefix(row.label);
                 block.appendChild(rowEl);
             }
-            put(block);
+            frag.appendChild(block);
         }
     }
 
-    if (frag) {
-        tbody.appendChild(frag);
-    }
-    if (scrollEl) {
-        scrollEl.scrollTop = resetScroll ? 0 : keepScroll;
-    }
+    // Проверяем, что рендер всё ещё актуален (защита от гонки быстрых статусов)
+    if (thisSeq !== _faRenderSeq) return;
+
+    tbody.replaceChildren(frag);
+
+    // Восстанавливаем прокрутку
+    if (resetScroll) scroll.scrollTop = 0;
+    else scroll.scrollTop = keepScroll;
+
     _faLastScrollContext = scrollContext;
+    requestAnimationFrame(() => faSyncScroll());
 }
 
-// Хук в существующий updateFrameAnalysisStatus
 function updateNewFrameAnalysisStatus(ls) {
     const report = ls.frame_analysis || {};
     renderNewFrameAnalysis(report, ls);
 }
 
-// Совместимость с тестами и legacy-вызовами: полной панели в HTML нет,
-// вызов должен безопасно завершаться.
-function renderFrameAnalysisPanel() {
-    return null;
-}
+function renderFrameAnalysisPanel() { return null; }
 
-// Экспорт
 if (typeof window !== 'undefined') {
     window.renderNewFrameAnalysis = renderNewFrameAnalysis;
     window.updateNewFrameAnalysisStatus = updateNewFrameAnalysisStatus;
     window.FA_RULE_NAMES = FA_RULE_NAMES;
     window.renderFrameAnalysisPanel = renderFrameAnalysisPanel;
+    window.faSyncScroll = faSyncScroll;
 }

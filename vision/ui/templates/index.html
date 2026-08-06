@@ -5,18 +5,18 @@
 <head>
     <meta charset="UTF-8">
     <title>Роботехнический комплекс конвейерного типа 7</title>
-    <link rel="stylesheet" href="/static/css/base.css?v=32">
-    <link rel="stylesheet" href="/static/css/blocks.css?v=18">
-    <link rel="stylesheet" href="/static/css/camera.css?v=33">
-    <link rel="stylesheet" href="/static/css/axis.css?v=32">
-    <link rel="stylesheet" href="/static/css/history-strip.css?v=32">
-    <link rel="stylesheet" href="/static/css/stats.css?v=42">
-    <link rel="stylesheet" href="/static/css/jog.css?v=30">
-    <link rel="stylesheet" href="/static/css/controls.css?v=30">
-    <link rel="stylesheet" href="/static/css/gallery.css?v=30">
-    <link rel="stylesheet" href="/static/css/process.css?v=37">
-    <link rel="stylesheet" href="/static/css/motion.css?v=32">
-    <link rel="stylesheet" href="/static/css/thresholds.css?v=17">
+    <link rel="stylesheet" href="/static/css/base.css?v=33">
+    <link rel="stylesheet" href="/static/css/blocks.css?v=22">
+    <link rel="stylesheet" href="/static/css/camera.css?v=34">
+    <link rel="stylesheet" href="/static/css/axis.css?v=33">
+    <link rel="stylesheet" href="/static/css/history-strip.css?v=33">
+    <link rel="stylesheet" href="/static/css/stats.css?v=43">
+    <link rel="stylesheet" href="/static/css/jog.css?v=31">
+    <link rel="stylesheet" href="/static/css/controls.css?v=31">
+    <link rel="stylesheet" href="/static/css/gallery.css?v=31">
+    <link rel="stylesheet" href="/static/css/process.css?v=38">
+    <link rel="stylesheet" href="/static/css/motion.css?v=33">
+    <link rel="stylesheet" href="/static/css/thresholds.css?v=18">
 </head>
 <body>
 
@@ -207,7 +207,12 @@
                         <span id="fa-new-context" class="fa-new-context"></span>
                     </div>
                     <div id="fa-new-body" class="fa-new-body">
-                        <div id="fa-new-tbody" class="fa-new-tbody"></div>
+                        <div id="fa-new-scroll" class="fa-new-scroll">
+                            <div id="fa-new-tbody" class="fa-new-tbody"></div>
+                        </div>
+                        <div id="fa-new-scroll-track" class="fa-new-scroll-track is-idle" aria-label="Прокрутка анализа кадра" title="Прокрутка анализа кадра" tabindex="0">
+                            <div id="fa-new-scroll-thumb" class="fa-new-scroll-thumb"></div>
+                        </div>
                     </div>
                     <!-- Статистика по корпусам: всего / годные / брак / очистка.
                          Обновляется точечно и не перестраивает список замеров. -->
@@ -289,16 +294,16 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=39"></script>
-    <script src="/static/js/boot.js?v=30"></script>
-    <script src="/static/js/diagnostics.js?v=46"></script>
-    <script src="/static/js/status.js?v=36"></script>
-    <script src="/static/js/controls.js?v=34"></script>
-    <script src="/static/js/thresholds.js?v=15"></script>
-    <script src="/static/js/cameras.js?v=35"></script>
-    <script src="/static/js/frame-analysis.js?v=2"></script>
-    <script src="/static/js/jog.js?v=34"></script>
-    <script src="/static/js/history.js?v=31"></script>
-    <script src="/static/js/bootstrap.js?v=34"></script>
+    <script src="/static/js/core.js?v=42"></script>
+    <script src="/static/js/boot.js?v=31"></script>
+    <script src="/static/js/diagnostics.js?v=47"></script>
+    <script src="/static/js/status.js?v=38"></script>
+    <script src="/static/js/controls.js?v=35"></script>
+    <script src="/static/js/thresholds.js?v=16"></script>
+    <script src="/static/js/cameras.js?v=36"></script>
+    <script src="/static/js/frame-analysis.js?v=10"></script>
+    <script src="/static/js/jog.js?v=35"></script>
+    <script src="/static/js/history.js?v=32"></script>
+    <script src="/static/js/bootstrap.js?v=35"></script>
 </body>
 </html>
