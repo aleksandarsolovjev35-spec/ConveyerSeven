@@ -233,7 +233,7 @@ const els = {
     // Алиас для diagnostics.js: updateFrameAnalysisStatus и
     // showPendingSelectedFrameAnalysis проверяют els.frameAnalysisPanel.
     // Без алиаса они всегда выходили рано, и полная панель анализа
-    // (rule-summary.js) не отрабатывала.
+    // Анализ кадра обрабатывается в diagnostics.js / frame-analysis.js
     frameAnalysisPanel: $('frame-analysis-panel'),
 
     btnStart:         $('btn-start'),

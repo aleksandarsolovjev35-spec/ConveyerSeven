@@ -1,5 +1,7 @@
 # PythonProjectTransporterSeven
 
+> **Текущее состояние (2026-08-06):** проект на ветке `arena/019fd6cf-conveyerseven` (коммит `c2a913d`, PR #74). Перешёл на одиночный прогон (`INSPECTION_RUNS = 1`), атомарную публикацию UI (`frame_version` по реальным изменениям), удалён мёртвый UI-код (`rule-summary.js` и ссылки в `index.html`/`harness.mjs`). Синтаксически чист (`py_compile` — 0 ошибок). **Блокеры запуска:** отсутствуют `weights/` (модели `.pt`), не установлены зависимости (`requirements.txt`), `calibration.json` содержит шаблонные значения (железо не валидировано).
+
 Рабочий проект конвейера с семью камерами, YOLO-моделями, defect rules, Conveyor и двухосевым распределителем.
 
 ## Установка Windows
