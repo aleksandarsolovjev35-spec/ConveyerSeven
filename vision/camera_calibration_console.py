@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import inspect
 import json
 import os
 import subprocess
@@ -35,17 +36,20 @@ PREVIEW_MAX_WIDTH = 960
 NEAR_BLACK_MEAN_MAX = 5.0
 NEAR_BLACK_P99_MAX = 12.0
 PROBE_READ_INTERVAL = 0.03
-# Сканирование должно давать камере столько же времени на старт, сколько
-# даёт production-preflight, иначе мастер объявит исправную камеру
-# отсутствующей и не соберёт комплект 7/7.
-SCAN_PROBE_ATTEMPTS = _env_int("CAMERA_SCAN_PROBE_ATTEMPTS", 60, minimum=1)
+# Бюджет на старт камеры при сканировании: 30 × 0.03 ≈ 0.9 c на попытку.
+# Этого хватает, чтобы UVC-драйвер построил граф и отдал первый кадр;
+# на очень медленном железе бюджет поднимается через
+# CAMERA_SCAN_PROBE_ATTEMPTS. Меньший бюджет — быстрее отбраковка
+# камер, которые открылись, но не отдают кадр.
+SCAN_PROBE_ATTEMPTS = _env_int("CAMERA_SCAN_PROBE_ATTEMPTS", 30, minimum=1)
 PREVIEW_PROBE_ATTEMPTS = 10
 # Разовый отказ резервирования полосы на USB-хабе лечится пересозданием
 # VideoCapture, а не увеличением таймаута чтения. Без повторных попыток
 # исправная камера случайно выпадала из сканирования, и мастер находил
-# то 5, то 6 камер из семи на одном и том же железе.
-SCAN_OPEN_ATTEMPTS = _env_int("CAMERA_SCAN_OPEN_ATTEMPTS", 3, minimum=1)
-SCAN_RETRY_DELAY = _env_float("CAMERA_SCAN_RETRY_DELAY", 0.4, minimum=0.0)
+# то 5, то 6 камер из семи на одном и том же железе. Двух попыток
+# достаточно: третья на мёртвой камере лишь растягивает поиск.
+SCAN_OPEN_ATTEMPTS = _env_int("CAMERA_SCAN_OPEN_ATTEMPTS", 2, minimum=1)
+SCAN_RETRY_DELAY = _env_float("CAMERA_SCAN_RETRY_DELAY", 0.25, minimum=0.0)
 
 ROLE_ORDER = (
     "INPUT_LEFT",
@@ -70,31 +74,64 @@ ROLE_LABELS = {
 }
 
 
-def _open_capture(camera_id: int):
-    """Открыть камеру, перебирая backend-ы в том же порядке, что и runtime.
+def _open_capture(camera_id: int, backend=None):
+    """Открыть камеру конкретным backend-ом (None — системный по умолчанию).
 
-    Мастер обязан находить ровно те камеры, которые потом откроет
-    CameraManager. Если здесь остаётся только DirectShow, а рабочая
-    камера отвечает лишь под Media Foundation, оператор соберёт mapping,
-    который упадёт на первом же запуске линии.
+    Перебор backend-ов выполняется в ``_probe_camera``: мастер пробует
+    каждый backend до первого валидного кадра, ровно как production.
+    Здесь один backend — один ``cv2.VideoCapture``.
     """
-    last = None
-    for backend in _camera_backends():
-        capture = None
-        try:
-            capture = (
-                cv2.VideoCapture(camera_id)
-                if backend is None
-                else cv2.VideoCapture(camera_id, backend)
-            )
-        except Exception as exc:
-            print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
-            continue
-        if capture is not None and capture.isOpened():
-            return capture
-        _safe_release(capture)
-        last = capture
-    return last
+    try:
+        if backend is None:
+            return cv2.VideoCapture(camera_id)
+        return cv2.VideoCapture(camera_id, backend)
+    except Exception as exc:
+        print(f"[CAMERA CALIBRATION] Camera {camera_id}: {exc}")
+        return None
+
+
+def _backend_label(backend) -> str:
+    if backend is None:
+        return "default"
+    for name in (
+        "CAP_DSHOW",
+        "CAP_MSMF",
+        "CAP_V4L2",
+        "CAP_AVFOUNDATION",
+        "CAP_GSTREAMER",
+        "CAP_ANY",
+    ):
+        if getattr(cv2, name, None) == backend:
+            return name.replace("CAP_", "")
+    return str(backend)
+
+
+def _factory_supports_backend(factory) -> bool:
+    """Понять, принимает ли фабрика backend вторым аргументом.
+
+    Тесты передают простую ``lambda camera_id``; ломать их сигнатуру
+    перебором backend-ов нельзя. Та же проверка, что в CameraManager.
+    """
+    try:
+        signature = inspect.signature(factory)
+    except (TypeError, ValueError):
+        return False
+    parameters = list(signature.parameters.values())
+    if any(
+        parameter.kind is inspect.Parameter.VAR_POSITIONAL
+        for parameter in parameters
+    ):
+        return True
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    return len(positional) >= 2
 
 
 def _configure_capture(capture):
@@ -152,7 +189,14 @@ def _safe_release(capture) -> None:
 
 
 def _probe_camera(camera_id: int, factory, *, keep: bool = False):
-    """Проверить камеру с повторными открытиями.
+    """Проверить камеру с повторными открытиями и перебором backend-ов.
+
+    Порядок backend-ов тот же, что в runtime (CameraManager): мастер
+    обязан находить ровно те камеры, которые потом откроет линия.
+    Открытие само по себе ни о чём не говорит — известна пара DirectShow
+    против Media Foundation, когда устройство открывается под одним API
+    и молчит под другим. Поэтому перебор идёт до первого *валидного
+    кадра*, а не до первого ``isOpened()``.
 
     Каждая попытка — это полное пересоздание VideoCapture: разовая
     неудача резервирования изохронной полосы на USB контроллере лечится
@@ -165,43 +209,55 @@ def _probe_camera(camera_id: int, factory, *, keep: bool = False):
     предпросмотра), иначе освобождается здесь же.
     """
 
+    factory_takes_backend = _factory_supports_backend(factory)
+    backends = _camera_backends() if factory_takes_backend else (None,)
+    if not backends:
+        backends = (None,)
     last_error = "устройство не открылось"
-    for attempt in range(1, SCAN_OPEN_ATTEMPTS + 1):
-        capture = None
-        engaged_driver = False
-        try:
-            capture = factory(camera_id)
-            if capture is None or not capture.isOpened():
-                last_error = "устройство не открылось"
-            else:
-                engaged_driver = True
-                _configure_capture(capture)
-                _frame, error = _probe_capture(capture)
-                if error is None:
-                    if attempt > 1:
-                        print(
-                            f"[CAMERA CALIBRATION] Camera {camera_id}: OK "
-                            f"с попытки {attempt}"
-                        )
-                    if keep:
-                        opened, capture = capture, None
-                        return opened, None
-                    return None, None
-                last_error = error
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-        finally:
-            _safe_release(capture)
-        if (
-            engaged_driver
-            and attempt < SCAN_OPEN_ATTEMPTS
-            and SCAN_RETRY_DELAY
-        ):
-            # Драйверу нужно время отпустить устройство перед повтором.
-            time.sleep(SCAN_RETRY_DELAY)
+    attempts_total = 0
+    for backend in backends:
+        for attempt in range(1, SCAN_OPEN_ATTEMPTS + 1):
+            attempts_total += 1
+            capture = None
+            engaged_driver = False
+            try:
+                capture = (
+                    factory(camera_id, backend)
+                    if factory_takes_backend
+                    else factory(camera_id)
+                )
+                if capture is None or not capture.isOpened():
+                    last_error = "устройство не открылось"
+                else:
+                    engaged_driver = True
+                    _configure_capture(capture)
+                    _frame, error = _probe_capture(capture)
+                    if error is None:
+                        if attempts_total > 1:
+                            print(
+                                f"[CAMERA CALIBRATION] Camera {camera_id}: OK "
+                                f"с попытки {attempts_total} "
+                                f"[{_backend_label(backend)}]"
+                            )
+                        if keep:
+                            opened, capture = capture, None
+                            return opened, None
+                        return None, None
+                    last_error = error
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                _safe_release(capture)
+            if (
+                engaged_driver
+                and attempt < SCAN_OPEN_ATTEMPTS
+                and SCAN_RETRY_DELAY
+            ):
+                # Драйверу нужно время отпустить устройство перед повтором.
+                time.sleep(SCAN_RETRY_DELAY)
     print(
         f"[CAMERA CALIBRATION] Camera {camera_id}: не отвечает "
-        f"за {SCAN_OPEN_ATTEMPTS} поп. ({last_error})"
+        f"за {len(backends) * SCAN_OPEN_ATTEMPTS} поп. ({last_error})"
     )
     return None, last_error
 
@@ -215,15 +271,35 @@ def _scan_working_cameras(max_tested, factory):
     Результат детерминирован: список ID, которые отвечают в production-
     формате, будучи предоставленными сами себе. Это ответ на вопрос
     "сколько камер исправны вообще", а не "кто успел первым".
+
+    Возвращает ``(working, failures)``: список исправных ID и словарь
+    ``{camera_id: причина}`` для неисправных — оператору показывается
+    поимённый список того, что именно чинить.
     """
 
     working = []
+    failures = {}
     for camera_id in range(int(max_tested)):
         _capture, error = _probe_camera(camera_id, factory)
         if error is None:
             working.append(camera_id)
             print(f"[CAMERA CALIBRATION] Camera {camera_id}: OK")
-    return working
+        else:
+            failures[camera_id] = error
+    return working, failures
+
+
+def _format_scan_failures(failures: dict, limit: int = 8) -> str:
+    """Короткая построчная сводка причин отказа для оператора."""
+    if not failures:
+        return ""
+    lines = []
+    for camera_id, error in sorted(failures.items()):
+        if len(lines) >= limit:
+            lines.append(f"… и ещё {len(failures) - limit} камер")
+            break
+        lines.append(f"Camera ID {camera_id}: {error}")
+    return "\n".join(lines)
 
 
 def _open_preview_pool(working, required_count, factory):
@@ -235,20 +311,51 @@ def _open_preview_pool(working, required_count, factory):
     недоступна и линии — об этом сообщается отдельно, потому что это
     симптом нехватки пропускной способности USB-контроллера, а не
     поломки устройства.
+
+    Открытие идёт волнами по три камеры, как в production-префлайте
+    (CAMERA_OPEN_CONCURRENCY=3): семь одновременно стартующих устройств
+    наперегонки запрашивают изохронную полосу, и часть из них зря
+    выпадала из набора. Волнами набор собирается быстрее, чем по одной,
+    и без повторной гонки за USB.
     """
 
     pool = {}
     lost = {}
-    for camera_id in list(working)[: int(required_count)]:
+    candidates = list(working)[: int(required_count)]
+    wave_size = max(1, min(3, len(candidates) or 1))
+    results_lock = threading.Lock()
+
+    def _open_one(camera_id):
         capture, error = _probe_camera(camera_id, factory, keep=True)
-        if capture is not None:
-            pool[camera_id] = capture
-        else:
-            lost[camera_id] = error
-            print(
-                f"[CAMERA CALIBRATION] Camera {camera_id}: потеряна при "
-                f"одновременном открытии набора ({error})"
+        with results_lock:
+            results[camera_id] = (capture, error)
+
+    for start in range(0, len(candidates), wave_size):
+        wave = candidates[start : start + wave_size]
+        results = {}
+        threads = [
+            threading.Thread(
+                target=_open_one,
+                args=(camera_id,),
+                daemon=True,
+                name=f"calibration-open-{camera_id}",
             )
+            for camera_id in wave
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for camera_id in wave:
+            capture, error = results[camera_id]
+            if capture is not None:
+                pool[camera_id] = capture
+            else:
+                lost[camera_id] = error
+                print(
+                    f"[CAMERA CALIBRATION] Camera {camera_id}: потеряна при "
+                    f"одновременном открытии набора ({error})"
+                )
     return pool, lost
 
 
@@ -327,6 +434,7 @@ class CameraCalibrationApi:
         pool = {}
         lost = {}
         working = []
+        failures = {}
         scan_error = None
         try:
             factory = self.capture_factory
@@ -334,7 +442,7 @@ class CameraCalibrationApi:
                 f"[CAMERA CALIBRATION] Фаза 1: изолированная проверка "
                 f"Camera ID 0..{self.scan_limit - 1}"
             )
-            working = _scan_working_cameras(self.scan_limit, factory)
+            working, failures = _scan_working_cameras(self.scan_limit, factory)
             print(
                 f"[CAMERA CALIBRATION] Фаза 1: исправны {len(working)}/"
                 f"{len(ROLE_ORDER)}: {working}"
@@ -369,6 +477,7 @@ class CameraCalibrationApi:
                 # Камера не отвечает даже наедине с шиной: проблема в
                 # подключении/питании/драйвере, а не в конкуренции за USB.
                 found = len(working)
+                details = _format_scan_failures(failures)
                 self.status = "ERROR"
                 self.error = (
                     f"Найдено исправных камер: {found}/{len(ROLE_ORDER)} "
@@ -376,12 +485,14 @@ class CameraCalibrationApi:
                     "даже без конкуренции за USB: проверьте подключение, "
                     "питание, свободна ли она от других программ и режим "
                     "1280x720 MJPG. Исправьте и нажмите ПОВТОРИТЬ ПОИСК."
+                    + (f"\n\n{details}" if details else "")
                 )
                 self._release_all_captures_locked(keep_available=True)
             elif lost:
                 # Поодиночке исправны, вместе не влезли: классическая
                 # нехватка пропускной способности одного USB-контроллера.
                 found = len(pool)
+                details = _format_scan_failures(lost)
                 self.status = "ERROR"
                 self.error = (
                     f"Одновременно открылось {found}/{len(ROLE_ORDER)}. "
@@ -390,6 +501,7 @@ class CameraCalibrationApi:
                     "USB-контроллера. Разведите камеры по разным корневым "
                     "хабам/контроллерам, убедитесь что все работают в MJPG "
                     "(а не YUY2), затем нажмите ПОВТОРИТЬ ПОИСК."
+                    + (f"\n\n{details}" if details else "")
                 )
                 self._release_all_captures_locked(keep_available=True)
             else:

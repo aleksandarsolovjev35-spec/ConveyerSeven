@@ -448,6 +448,7 @@ button {
     border-color: var(--bad);
     background: var(--bad-bg);
     color: var(--bad);
+    white-space: pre-line;
 }
 
 .saved-message {
