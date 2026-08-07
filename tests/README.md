@@ -89,7 +89,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 node tests/frontend/test_sync_gate.mjs
 node tests/frontend/test_single_run_ui.mjs
 node tests/frontend/test_thresholds_visibility.mjs
-node tests/frontend/test_line_state_legend.mjs
+node tests/frontend/test_line_state_display.mjs
 node tests/frontend/test_dead_code.mjs
 ```
 
@@ -104,8 +104,8 @@ node tests/frontend/test_dead_code.mjs
   без номера прогона.
 - `test_thresholds_visibility.mjs` — пороги доступны в JOG до анализа и
   исчезают сразу при запуске и на всё время анализа выбранного стоп-кадра.
-- `test_line_state_legend.mjs` — HMI содержит все семь состояний линии;
-  при очередном статусе активным становится ровно соответствующий пункт.
+- `test_line_state_display.mjs` — блок «СОСТОЯНИЕ ЛЕНТЫ» показывает
+  операторское название каждого из семи состояний, а не внутреннюю фазу шага.
 - `test_dead_code.mjs` — удалённые функции/состояние отсутствуют в рантайме
   и в исходниках (хоткей N, run-cyclable, fa-run-status, set_run_rule_results
   и т.п.).

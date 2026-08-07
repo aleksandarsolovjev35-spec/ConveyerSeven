@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
     <link rel="stylesheet" href="/static/css/controls.css?v=32">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
-    <link rel="stylesheet" href="/static/css/process.css?v=43">
+    <link rel="stylesheet" href="/static/css/process.css?v=42">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=20">
     <link rel="stylesheet" href="/static/css/archive.css?v=1">
@@ -102,16 +102,6 @@
                         <span class="stage-position">+8 · СБРОС</span>
                     </div>
                     </div>
-                    <div id="line-state-legend" class="line-state-legend" role="list" aria-label="Состояния ленты">
-                        <span class="line-state-legend-title">СОСТОЯНИЯ ЛЕНТЫ</span>
-                        <span class="line-state-item is-active" data-line-state="IDLE" role="listitem" aria-current="true">ГОТОВА К ПУСКУ</span>
-                        <span class="line-state-item" data-line-state="RUNNING" role="listitem">РАБОТАЕТ</span>
-                        <span class="line-state-item" data-line-state="PAUSED" role="listitem">ПАУЗА</span>
-                        <span class="line-state-item" data-line-state="STOPPING" role="listitem">ОСТАНОВКА</span>
-                        <span class="line-state-item" data-line-state="STOPPED" role="listitem">ОСТАНОВЛЕНА</span>
-                        <span class="line-state-item" data-line-state="FAULT" role="listitem">АВАРИЯ</span>
-                        <span class="line-state-item" data-line-state="OFFLINE" role="listitem">НЕТ СВЯЗИ</span>
-                    </div>
                 </section>
                 <div class="bottom-strip-row">
                     <div class="history" data-ui-block="history-strip">
@@ -122,7 +112,7 @@
                     </div>
                     <div class="process-phase-panel" data-ui-block="process-phase">
                         <div class="process-phase-title">СОСТОЯНИЕ ЛЕНТЫ</div>
-                        <div id="process-phase-label" class="process-phase-label">ОЖИДАНИЕ ПУСКА</div>
+                        <div id="process-phase-label" class="process-phase-label" data-line-state="IDLE">ГОТОВА К ПУСКУ</div>
                     </div>
                 </div>
             </section>
@@ -359,10 +349,10 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=43"></script>
+    <script src="/static/js/core.js?v=42"></script>
     <script src="/static/js/boot.js?v=31"></script>
     <script src="/static/js/diagnostics.js?v=48"></script>
-    <script src="/static/js/status.js?v=43"></script>
+    <script src="/static/js/status.js?v=44"></script>
     <script src="/static/js/controls.js?v=35"></script>
     <script src="/static/js/thresholds.js?v=18"></script>
     <script src="/static/js/cameras.js?v=36"></script>

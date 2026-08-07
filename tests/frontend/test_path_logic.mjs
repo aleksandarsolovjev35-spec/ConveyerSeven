@@ -58,6 +58,7 @@ const body = `
     state.splashActive = false;
     state.bootDone = true;
     state.lineState = 'RUNNING';
+    updateProcessPhaseLabel(state.lineState);
     state.pendingAnalysisVersion = null;
     state.pendingFlushTimer = null;
 
@@ -162,8 +163,8 @@ const body = `
     assert(!belt.classList._set.has('moving'), 'belt stops after confirmation');
     assert(token10.style.left === '250px',
         'confirmed position does not advance token a second time: ' + token10.style.left);
-    assert(__els['process-phase-label'].textContent === 'СТОЯНКА',
-        'confirmed phase is not shown as moving');
+    assert(__els['process-phase-label'].textContent === 'РАБОТАЕТ',
+        'internal confirmed phase does not replace the line state');
     updateLineCells([part(10, 5, 'BAD')], proc('SETTLE'));
     assert(token10.style.left === '250px',
         'token does not jump back after confirmed phase: ' + token10.style.left);
