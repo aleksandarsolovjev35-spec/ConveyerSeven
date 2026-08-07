@@ -127,6 +127,38 @@ class LongDamperTest(unittest.TestCase):
         role = self._role(_long_vision([0, 0, 3, 0, 0]))
         self.assertFalse(role["triggered"])
 
+    def test_adjacent_damper_metric_max_of_four(self):
+        """Мера скачка = максимум из 4 соседних заслонок |d_{i+1} − d_i|.
+
+        Два соседних контакта подняты на +6: старый gap_dev от медианы
+        размазывал бы (каждый отклонён на 3), а соседняя заслонка
+        ловит полный перепад 6 px.
+        """
+        role = self._role(_long_vision([0, 0, 6, 6, 0]))
+        self.assertTrue(role["triggered"])
+        self.assertAlmostEqual(role["damper_open_px"], 6.0, places=1)
+        self.assertTrue(role["damper_fail"])
+
+    def test_adjacent_damper_all_four_open_below_threshold_passes(self):
+        """Все четыре соседние заслонки ≤ порога — ряд проходит."""
+        # Плавный подъём 3 px на каждый сосед: каждая заслонка = 3 px.
+        role = self._role(_long_vision([0, 3, 6, 9, 12]))
+        self.assertFalse(role["triggered"])
+        self.assertAlmostEqual(role["damper_open_px"], 3.0, places=1)
+
+    def test_adjacent_damper_single_step_caught(self):
+        """Одиночная ступенька 8 px между соседями — брак (порог 5)."""
+        role = self._role(_long_vision([0, 0, 8, 8, 8]))
+        self.assertTrue(role["triggered"])
+        self.assertAlmostEqual(role["damper_open_px"], 8.0, places=1)
+        # Ступенька между контактами 2 и 3: стены d1..d2 ниже d3..d5.
+        # Отклонение от медианы (8): у контактов 1-2 = -8, у 3-5 = 0.
+        deviations = [g["deviation_px"] for g in role["gaps"]]
+        self.assertAlmostEqual(deviations[0], -8.0, places=1)
+        self.assertAlmostEqual(deviations[1], -8.0, places=1)
+        for index in (2, 3, 4):
+            self.assertAlmostEqual(deviations[index], 0.0, places=1)
+
     def test_whole_part_tilt_ignored(self):
         """Контакты наклонены 24 px/800 px, полоса omission — так же.
 
