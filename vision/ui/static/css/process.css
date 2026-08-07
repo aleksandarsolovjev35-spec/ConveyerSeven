@@ -161,6 +161,10 @@
     font: 700 13px var(--font-mono);
     color: var(--text-muted);
     pointer-events: none;
+    transition: opacity var(--t-fast) var(--ease);
+}
+.production-line-cells .line-cell.line-cell-chute.chute-occupied .chute-symbol {
+    opacity: 0;
 }
 .production-line-cells .line-cell.line-cell-chute.chute-bad {
     border-color: var(--bad);
@@ -523,6 +527,12 @@
     box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--warn);
 }
 .line-token.token-dropping::after { content: "▼"; color: inherit; opacity: 0.85; }
+
+/* В лотке маркер находится над символом ячейки. Символ скрывается
+   классом chute-occupied, поэтому две стрелки и две рамки не смешиваются. */
+.line-token.token-in-chute {
+    z-index: 6;
+}
 
 /* === Human-readable defect cause (simple & bold) === */
 .frame-analysis-item.has-human-cause .frame-analysis-human-cause,

@@ -103,9 +103,11 @@ const body = `
     const token9b = findToken(9);
     assert(token9b, 'token #9 still present');
     assert(token9b.classList._set.has('token-dropping'), 'dropping token marked');
+    assert(token9b.classList._set.has('token-in-chute'), 'dropping token is marked in chute');
     assert(token9b.style.opacity === '0.65', 'dropping token has explicit drop opacity');
     assert(token9b.style.left === '400px', 'token slid into chute +8: ' + token9b.style.left);
     assert(cell8.classList._set.has('chute-bad'), 'chute stays BAD while dropping');
+    assert(cell8.classList._set.has('chute-occupied'), 'chute hides its base symbol while occupied');
 
     // ── 3. Деталь ушла: маркер гаснет в лотке, а не выкатывается за линию ──
     updateLineCells([], proc('SETTLE'));
@@ -113,6 +115,18 @@ const body = `
     assert(token9c, 'token #9 still in DOM until fade completes');
     assert(token9c.style.opacity === '0', 'dropped token fades in place');
     assert(token9c.style.left === '400px', 'dropped token does not roll past the chute');
+    assert(cell8.classList._set.has('chute-occupied'), 'chute remains covered during fade');
+
+    // Если следующий сброс пришёл до окончания fade-out, старый маркер
+    // удаляется перед входом нового: в +8 не складываются два корпуса.
+    updateLineCells([part(11, 7, 'BAD', { dropping: true })], proc('CONVEYOR_MOVING'));
+    const token11 = findToken(11);
+    assert(token11 && token11.classList._set.has('token-in-chute'),
+        'next dropping token enters chute');
+    assert(!findToken(9), 'previous chute token removed before next entry');
+    const chuteTokens = lineCells.children.filter(child => child.dataset.partId
+        && child.style.left === '400px');
+    assert(chuteTokens.length === 1, 'only one token occupies chute: ' + chuteTokens.length);
 
     // ── 4. Годный на +7: придержания нет, ворота показывают проход ──
     updateLineCells([part(4, 7, 'GOOD')], proc('ROUTE_CHECK', { positions: [7] }));
