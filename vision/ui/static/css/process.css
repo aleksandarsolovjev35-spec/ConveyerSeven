@@ -283,7 +283,9 @@
     grid-column: auto;
     grid-row: auto;
     /* Отдельный блок-карточка, как панель распределителя и пороги
-       правил: собственная подложка, рамка и скругление. */
+       правил: собственная подложка, рамка и скругление.
+       Опущен ниже — прижат к низу колонки, пустое пространство
+       заполняет блок порогов. */
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -292,6 +294,7 @@
     overflow: visible;
     gap: 6px;
     box-shadow: none;
+    margin-top: auto;
 }
 .jog-panel-embedded .jog-header {
     border-bottom: 0;
@@ -314,8 +317,6 @@
     width: 27px;
     height: 27px;
 }
-.jog-panel-embedded .jog-action { margin-top: 3px; }
-.jog-panel-embedded .jog-hint { margin-top: 3px; }
 
 .control-error {
     margin: 4px 0;
