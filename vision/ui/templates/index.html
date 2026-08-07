@@ -14,7 +14,7 @@
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
     <link rel="stylesheet" href="/static/css/controls.css?v=32">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
-    <link rel="stylesheet" href="/static/css/process.css?v=42">
+    <link rel="stylesheet" href="/static/css/process.css?v=43">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=20">
     <link rel="stylesheet" href="/static/css/archive.css?v=1">
@@ -101,6 +101,16 @@
                         <span class="stage-position">+7 · СОРТИРОВКА</span>
                         <span class="stage-position">+8 · СБРОС</span>
                     </div>
+                    </div>
+                    <div id="line-state-legend" class="line-state-legend" role="list" aria-label="Состояния ленты">
+                        <span class="line-state-legend-title">СОСТОЯНИЯ ЛЕНТЫ</span>
+                        <span class="line-state-item is-active" data-line-state="IDLE" role="listitem" aria-current="true">ГОТОВА К ПУСКУ</span>
+                        <span class="line-state-item" data-line-state="RUNNING" role="listitem">РАБОТАЕТ</span>
+                        <span class="line-state-item" data-line-state="PAUSED" role="listitem">ПАУЗА</span>
+                        <span class="line-state-item" data-line-state="STOPPING" role="listitem">ОСТАНОВКА</span>
+                        <span class="line-state-item" data-line-state="STOPPED" role="listitem">ОСТАНОВЛЕНА</span>
+                        <span class="line-state-item" data-line-state="FAULT" role="listitem">АВАРИЯ</span>
+                        <span class="line-state-item" data-line-state="OFFLINE" role="listitem">НЕТ СВЯЗИ</span>
                     </div>
                 </section>
                 <div class="bottom-strip-row">
@@ -201,7 +211,7 @@
                     <div id="thresholds-body" class="thresholds-body"></div>
                     <div class="thresholds-actions">
                         <span id="thresholds-status" class="thresholds-status"></span>
-                        <button id="thresholds-reset" class="btn btn-sm" disabled>НА DIST2</button>
+                        <button id="thresholds-reset" class="btn btn-sm" disabled>ОТМЕНИТЬ</button>
                         <button id="thresholds-save" class="btn btn-sm btn-thresholds-save" disabled>СОХРАНИТЬ</button>
                     </div>
                 </section>
@@ -349,12 +359,12 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=42"></script>
+    <script src="/static/js/core.js?v=43"></script>
     <script src="/static/js/boot.js?v=31"></script>
-    <script src="/static/js/diagnostics.js?v=47"></script>
-    <script src="/static/js/status.js?v=42"></script>
+    <script src="/static/js/diagnostics.js?v=48"></script>
+    <script src="/static/js/status.js?v=43"></script>
     <script src="/static/js/controls.js?v=35"></script>
-    <script src="/static/js/thresholds.js?v=17"></script>
+    <script src="/static/js/thresholds.js?v=18"></script>
     <script src="/static/js/cameras.js?v=36"></script>
     <script src="/static/js/frame-analysis.js?v=10"></script>
     <script src="/static/js/jog.js?v=35"></script>

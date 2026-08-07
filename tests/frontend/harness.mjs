@@ -88,7 +88,7 @@ const UI_IDS = [
     'stats-summary', 'stats-body', 'stats-service', 'history-cards',
     'stats-panel', 'stat-total', 'stat-good', 'stat-bad', 'stat-cleanup',
     'stat-inline', 'stat-empty', 'line-cells', 'process-phase-label',
-    'defects-section', 'defects-title', 'defects-list', 'jog-panel',
+    'line-state-legend', 'defects-section', 'defects-title', 'defects-list', 'jog-panel',
     'jog-last-action', 'jog-hw-serial', 'jog-hw-cameras', 'jog-hw-conveyor',
     'jog-hw-dist1', 'jog-hw-dist2', 'frame-analysis-panel',
     'archive-settings-open', 'archive-settings-group', 'archive-settings-modal', 'archive-settings-close',
@@ -228,6 +228,15 @@ export function loadUI(sandbox) {
         const code = fs.readFileSync(path.join(ROOT, 'vision/ui/static/js', file), 'utf8');
         vm.runInContext(code, sandbox, { filename: file });
     }
+}
+
+// `thresholds.js` намеренно не входит в обычный набор: большинству
+// фронтенд-тестов не нужен его DOM. Подключаем его адресно там, где
+// проверяется сама панель порогов.
+export function loadThresholds(sandbox) {
+    const file = 'thresholds.js';
+    const code = fs.readFileSync(path.join(ROOT, 'vision/ui/static/js', file), 'utf8');
+    vm.runInContext(code, sandbox, { filename: file });
 }
 
 // ─── Заглушки функций из незагруженных модулей ────────────────

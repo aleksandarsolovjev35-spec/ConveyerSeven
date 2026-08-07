@@ -135,6 +135,7 @@ function markUiOffline() {
     els.main.classList.add('ui-offline');
     setIfChanged(els.stateLabel, lineStateLabel('OFFLINE'));
     if (els.stateSection) els.stateSection.className = 'state-section state-box-offline';
+    updateLineStateLegend('OFFLINE');
     showControlError('Нет связи с backend. Все команды заблокированы.');
     releaseJogHoldBestEffort('backend offline');
     applyButtonsForState('OFFLINE', true, {});
@@ -149,6 +150,18 @@ function markUiOffline() {
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
+function updateLineStateLegend(lineState) {
+    const legend = els.lineStateLegend || document.getElementById('line-state-legend');
+    if (!legend) return;
+    const activeState = String(lineState || '').toUpperCase();
+    legend.dataset.currentState = activeState || '';
+    legend.querySelectorAll('[data-line-state]').forEach(item => {
+        const active = item.dataset.lineState === activeState;
+        item.classList.toggle('is-active', active);
+        item.setAttribute('aria-current', active ? 'true' : 'false');
+    });
+}
+
 function updateLineStatus(ls) {
     const lineState = ls.state || 'IDLE';
     const exitRequested = !!ls.exit_requested;
@@ -161,6 +174,7 @@ function updateLineStatus(ls) {
     if (els.stateIndicator) els.stateIndicator.className = `state-dot state-${lineState.toLowerCase()}`;
     if (els.stateSection) els.stateSection.className = `state-section state-box-${lineState.toLowerCase()}`;
     setIfChanged(els.stateLabel, lineStateLabel(lineState));
+    updateLineStateLegend(lineState);
     setIfChanged(els.metricStep, ls.step || 0);
 
     state.backendControls = ls.controls || {};
