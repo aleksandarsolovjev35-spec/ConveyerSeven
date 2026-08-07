@@ -1529,13 +1529,29 @@ class ProductionCycle:
             self.distributor.mark_pass(part.id)
             self._pending_drop = None
 
+    def _next_part_will_drop(self) -> bool:
+        """Падает ли следующая деталь в тот же канал без паузы.
+
+        Если сразу после текущей к сортировке (+7) уже подъехала ещё одна
+        деталь на сброс (BAD/CLEANUP), заслонку можно не закрывать: детали
+        одной категории, идущие подряд, обслуживаются одним открытием
+        лопасти, а не открытие-закрытие на каждую.
+        """
+        for p in self.parts:
+            if p is self._pending_drop:
+                continue
+            if p.step_created + self.OFFSET_REJECT == self.current_step:
+                return p.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
+        return False
+
     def _execute_drop(self):
         part = self._pending_drop
         if part is None:
             return
 
         category = part.route_category
-        self.distributor.drop_and_close(part.id, category)
+        keep_open = self._next_part_will_drop()
+        self.distributor.drop_and_close(part.id, category, keep_open=keep_open)
 
         if category == CATEGORY_BAD:
             self.bad_count += 1

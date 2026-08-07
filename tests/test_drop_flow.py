@@ -123,15 +123,19 @@ def _presence(empty):
 
 
 class FakeInspector:
-    """Первый вход — деталь; последующие входы — пустые лотки."""
+    """Входы из present_steps дают деталь, остальные — пустые лотки."""
 
     INPUT_ROLES = ("INPUT_LEFT", "INPUT_RIGHT")
     SPIDER_ROLES = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN",
                     "SPIDER_OUT", "TOP")
 
-    def __init__(self, spider_defects=(), spider_rule_names=None):
+    def __init__(self, spider_defects=(), spider_rule_names=None,
+                 present_steps=(1,), part_spider_defects=None):
         self.spider_defects = list(spider_defects)
         self.spider_rule_names = spider_rule_names
+        self.present_steps = set(present_steps)
+        # Дефекты конкретной детали по номеру входа; иначе spider_defects.
+        self.part_spider_defects = part_spider_defects or {}
         self.input_calls = 0
         self.spider_calls = 0
 
@@ -177,13 +181,14 @@ class FakeInspector:
                                 force_bad=False):
         self.input_calls += 1
         frames = frame_runs[0]
-        return self._input_result(frames, self.input_calls == 1)
+        return self._input_result(frames, self.input_calls in self.present_steps)
 
     def inspect_spider_consensus(self, part_id, step, frame_runs,
                                  force_bad=False):
         self.spider_calls += 1
         frames = frame_runs[0]
-        names = self.spider_rule_names or self.spider_defects
+        defects = self.part_spider_defects.get(part_id, self.spider_defects)
+        names = self.spider_rule_names or defects
         rules = [
             RuleResult(
                 name, True,
@@ -197,7 +202,7 @@ class FakeInspector:
         ]
         return InspectionResult(
             stage="spider",
-            defects=self.spider_defects,
+            defects=defects,
             vision_results={role: [] for role in self.SPIDER_ROLES},
             rule_results=rules,
             annotated={},
@@ -228,7 +233,8 @@ class FakeArchive:
 
 
 class DropFlowTest(unittest.TestCase):
-    def make_cycle(self, spider_defects=(), archive=None):
+    def make_cycle(self, spider_defects=(), archive=None, present_steps=(1,),
+                   part_spider_defects=None):
         self.log = []
         dist = Distributor(
             FakeAxis("dist1", self.log),
@@ -238,7 +244,11 @@ class DropFlowTest(unittest.TestCase):
             dist2_cleanup_position=DIST2_CLEANUP,
             drop_time=0.0,
         )
-        inspector = FakeInspector(spider_defects=spider_defects)
+        inspector = FakeInspector(
+            spider_defects=spider_defects,
+            present_steps=present_steps,
+            part_spider_defects=part_spider_defects,
+        )
         cycle = ProductionCycle(
             conveyor=FakeConveyor(self.log),
             cameras=FakeCameras(),
@@ -430,6 +440,88 @@ class DropFlowTest(unittest.TestCase):
         self.assertIsNotNone(cycle._pending_drop)
         # Счётчик брака не накручен: сброс физически не подтверждён.
         self.assertEqual(cycle.bad_count, 0)
+
+    def test_three_bad_parts_single_flap_cycle(self):
+        """Три брака подряд: DIST2 уходит в канал один раз, лопасть
+        открывается один раз на всю серию и закрывается в конце."""
+        cycle = self.make_cycle(
+            spider_defects=["contacts_long"],
+            present_steps=(1, 2, 3),
+        )
+        for _ in range(11):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.bad_count, 3)
+        self.assertEqual(cycle.good_count, 0)
+        # Одно открытие + одно закрытие лопасти на три сброса.
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0)],
+        )
+        # Направляющая переехала в БРАК один раз и не возвращалась.
+        self.assertEqual(dist.dist2.calls, [("move", DIST2_BAD)])
+        self.assertEqual(dist.dist1_state, "IDLE")
+        self.assertEqual(dist.dist2_state, "READY")
+        self.assertEqual(cycle.parts, [])
+
+    def test_three_good_parts_no_distributor_motion(self):
+        """Три годных подряд: распределитель не двигается вообще."""
+        cycle = self.make_cycle(
+            spider_defects=[],
+            present_steps=(1, 2, 3),
+        )
+        for _ in range(11):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.good_count, 3)
+        self.assertEqual(cycle.bad_count, 0)
+        self.assertEqual(dist.dist1.calls, [])
+        self.assertEqual(dist.dist2.calls, [])
+        self.assertEqual(cycle.parts, [])
+
+    def test_good_part_between_drops_closes_flap(self):
+        """БРАК-ГОДНОЕ-БРАК: лопасть закрывается, чтобы годное проехало."""
+        cycle = self.make_cycle(
+            spider_defects=["contacts_long"],
+            present_steps=(1, 2, 3),
+            part_spider_defects={2: []},
+        )
+        for _ in range(11):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.bad_count, 2)
+        self.assertEqual(cycle.good_count, 1)
+        # Два независимых сброса: открытие-закрытие на каждый.
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0),
+             ("move", DIST1_OPEN), ("move", 0)],
+        )
+        # Канал БРАК один: вторая деталь в него же, годная проходит мимо.
+        self.assertEqual(dist.dist2.calls, [("move", DIST2_BAD)])
+        self.assertEqual(cycle.parts, [])
+
+    def test_cleanup_run_keeps_channel_open(self):
+        """Две ОЧИСТКИ подряд: канал один, лопасть открывается один раз."""
+        cycle = self.make_cycle(
+            spider_defects=["glass"],
+            present_steps=(1, 2),
+        )
+        for _ in range(10):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.cleanup_count, 2)
+        self.assertEqual(cycle.bad_count, 0)
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0)],
+        )
+        self.assertEqual(dist.dist2.calls, [("move", DIST2_CLEANUP)])
+        self.assertEqual(cycle.parts, [])
 
     def test_unknown_part_forced_bad_at_reject(self):
         cycle = self.make_cycle(spider_defects=["contacts_long"])

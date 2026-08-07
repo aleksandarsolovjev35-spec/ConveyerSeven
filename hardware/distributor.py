@@ -8,6 +8,11 @@ class Distributor:
 
     DIST1 (axis 0) — заслонка сброса: IDLE->OPEN->CLOSED
     DIST2 (axis 1) — направляющая: BAD / CLEANUP позиции
+
+    Лишних движений не делает: DIST2 не переезжает повторно в канал, в
+    котором уже стоит, а DIST1 остаётся открытой между деталями одной
+    категории, идущими подряд (drop_and_close(keep_open=True) — одно
+    открытие на всю серию сбросов).
     """
 
     def __init__(
@@ -142,8 +147,13 @@ class Distributor:
         self.last_action = f"PART #{part_id} -> PASS"
         self._notify()
 
-    def drop_and_close(self, part_id: int, category: str):
-        """Ждать падения детали и закрыть заслонку."""
+    def drop_and_close(self, part_id: int, category: str, keep_open: bool = False):
+        """Ждать падения детали и закрыть заслонку.
+
+        ``keep_open=True`` — сразу за этой деталью в тот же канал падает ещё
+        одна: заслонка остаётся открытой, чтобы не делать лишних движений
+        между деталями одной категории, идущими подряд.
+        """
         if category not in (CATEGORY_BAD, CATEGORY_CLEANUP):
             raise ValueError(f"Unsupported drop category: {category}")
         self._check_cancelled()
@@ -153,8 +163,11 @@ class Distributor:
         time.sleep(self.drop_time)
         self._check_cancelled()
 
-        self._close_dist1()
-        self.last_action = f"PART #{part_id} -> {category} DONE"
+        if keep_open:
+            self.last_action = f"PART #{part_id} -> {category} (NEXT DROP)"
+        else:
+            self._close_dist1()
+            self.last_action = f"PART #{part_id} -> {category} DONE"
         self._notify()
 
     def reset_target(self):
@@ -180,6 +193,12 @@ class Distributor:
             target = self.dist2_cleanup_position
 
         self._check_cancelled()
+        if self._dist2_position == target:
+            # Уже в нужном канале: ось не переезжает повторно между деталями
+            # одной категории, идущими подряд.
+            print(f"[DIST2] {category} already at POS={target}")
+            return
+
         self.dist2_state = "MOVING"
         self._notify()
 
@@ -201,6 +220,11 @@ class Distributor:
     def _open_dist1(self):
         """Перевести DIST1 прямо в OPEN без повторного homing."""
         self._check_cancelled()
+        if self._dist1_position == self.dist1_open_position:
+            # Лопасть уже открыта (серия сбросов одной категории).
+            print("[DIST1] already OPEN")
+            return
+
         self.dist1_state = "OPENING"
         self._notify()
 
@@ -226,6 +250,10 @@ class Distributor:
     def _close_dist1(self):
         """Перевести DIST1 прямо в HOME=0 без повторного homing."""
         self._check_cancelled()
+        if self._dist1_position == 0:
+            print("[DIST1] already HOME")
+            return
+
         self.dist1_state = "CLOSING"
         self._notify()
 

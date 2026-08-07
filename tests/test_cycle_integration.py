@@ -83,9 +83,12 @@ class FakeDistributor:
     def mark_pass(self, part_id):
         self.status["last_distributor_action"] = f"PASS #{part_id}"
 
-    def drop_and_close(self, part_id, category):
+    def drop_and_close(self, part_id, category, keep_open=False):
         self.drops.append((part_id, category))
         self.status["dist2_target"] = "-"
+        self.status["last_distributor_action"] = (
+            f"DROP #{part_id} {'KEEP_OPEN' if keep_open else ''}".rstrip()
+        )
 
     def reset_target(self):
         self.status["dist2_target"] = "-"
