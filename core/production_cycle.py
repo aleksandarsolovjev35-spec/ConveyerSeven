@@ -21,6 +21,7 @@ from inspection.consensus import (
     select_picture_run,
     summarize_model_health,
 )
+from inspection.result import InspectionResult
 from domain.part import (
     Part,
     CATEGORY_GOOD,
@@ -155,6 +156,10 @@ class ProductionCycle:
         # Первый шаг после пуска: сначала контроль того, что уже стоит под
         # камерами, и только потом движение ленты.
         self._await_initial_inspection = False
+
+        # Фоновая проверка наличия детали (InputPartPresence)
+        self._background_presence_thread = None
+        self._background_presence_result = None
 
     # Process telemetry
 
@@ -484,6 +489,53 @@ class ProductionCycle:
             and not self._selected_analysis_active
             and not (self.jog is not None and self.jog.busy)
         )
+
+    def _run_background_presence_check(self):
+        """Проверка наличия детали по последнему лайв-изображению.
+
+        Выполняется в отдельном потоке сразу после остановки ленты, пока
+        основной цикл ждёт затухания вибраций (SETTLE). Это позволяет
+        мгновенно определить пустой лоток и пропустить полноценный захват
+        кадров для этой позиции.
+        """
+        try:
+            # Даем лайв-просмотру время обновить хотя бы один кадр после
+            # физической остановки ленты. 150мс — это 2-3 такта FPS_AUX.
+            time.sleep(0.15)
+
+            if not self.monitor or not self.monitor.server:
+                return
+
+            with self.monitor.server.lock:
+                # Берем последние кадры из монитора (лайв-поток).
+                # Нас интересует только входная группа.
+                frames = {
+                    role: self.monitor.server.frames[role].copy()
+                    for role in self.inspector.INPUT_ROLES
+                    if role in self.monitor.server.frames
+                }
+
+            if len(frames) < len(self.inspector.INPUT_ROLES):
+                return
+
+            # Выполняем быстрый прогон моделей и правила наличия
+            vision_results = self.inspector.vision.process_all(frames)
+            presence_result = self.inspector._evaluate_part_presence(vision_results)
+
+            # Сохраняем результат для основного цикла
+            health_with_run = [
+                {**h, "run": 1}
+                for h in (getattr(self.inspector.vision, "last_health", None) or [])
+            ]
+            self._background_presence_result = {
+                "is_empty": bool(presence_result.details.get("empty_tray")),
+                "frames": frames,
+                "vision_results": vision_results,
+                "presence_result": presence_result,
+                "model_health": summarize_model_health(health_with_run),
+            }
+        except Exception as exc:
+            print(f"[BG-PRESENCE] Ошибка фоновой проверки наличия: {exc}")
 
     def _set_diagnostic_running(self, kind: str, message: str):
         self._diagnostics = {
@@ -1008,6 +1060,19 @@ class ProductionCycle:
         self._last_rule_results = []
 
         pending_id = self._stage_motion()
+
+        # Фоновая проверка наличия: запускается сразу после wait_stop()
+        # внутри _stage_motion, чтобы работать параллельно с _stage_settle.
+        self._background_presence_result = None
+        self._background_presence_thread = None
+        if accept_input_for_this_step and not self._await_initial_inspection:
+            self._background_presence_thread = threading.Thread(
+                target=self._run_background_presence_check,
+                daemon=True,
+                name="background-presence-check",
+            )
+            self._background_presence_thread.start()
+
         self._stage_settle(pending_id)
         self._check_pause_barrier()
         frame_runs = self._stage_capture()
@@ -1093,7 +1158,21 @@ class ProductionCycle:
         расходует USB-полосу и создаёт ложные точки отказа.
         """
         roles = []
-        if self.sm.accepts_new_parts:
+
+        # Ожидаем завершения фоновой проверки, если она была запущена.
+        if self._background_presence_thread:
+            self._background_presence_thread.join(timeout=1.5)
+
+        input_needed = self.sm.accepts_new_parts
+        if input_needed and self._background_presence_result:
+            if self._background_presence_result["is_empty"]:
+                input_needed = False
+                print(
+                    f"[BG-PRESENCE] Step {self.current_step}: лоток пуст "
+                    "по live-кадру, захват INPUT пропущен"
+                )
+
+        if input_needed:
             roles.extend(self.inspector.INPUT_ROLES)
         if any(
             part.step_created + self.OFFSET_SPIDER == self.current_step
@@ -1367,6 +1446,47 @@ class ProductionCycle:
         """Обработать INPUT по свежему кадру."""
 
         candidate_id = self.part_counter + 1
+
+        # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
+        # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
+        if (
+            self._background_presence_result
+            and self._background_presence_result["is_empty"]
+        ):
+            res = self._background_presence_result
+            result = InspectionResult(
+                stage="input",
+                defects=[],
+                vision_results=res["vision_results"],
+                rule_results=[res["presence_result"]],
+                annotated={},
+                raw_frames=res["frames"],
+                raw_overlay_frames={},
+                is_empty_tray=True,
+                consensus={
+                    "runs": 1,
+                    "required_votes": 1,
+                    "evidence_run": 1,
+                    "part_presence": 1.0,
+                    "rules": {},
+                    "picture_run": 1,
+                    "picture_reason": "background_live_check",
+                },
+                model_health=res["model_health"],
+                run_frames=[res["frames"]],
+                run_rule_results=[[]],
+            )
+            self._record_frame_analysis("INPUT", None, result)
+            self.empty_count += 1
+            for role in self.inspector.INPUT_ROLES:
+                self._last_vision_results[role] = []
+            self._last_rule_results.extend(result.rule_results)
+            print(
+                f"[EMPTY] Step {self.current_step}: пустой лоток подтвержден "
+                "фоновым анализом (live)"
+            )
+            return result
+
         self._set_process(
             "INPUT_ANALYSIS",
             f"Вход: анализ кандидата #{candidate_id}",
