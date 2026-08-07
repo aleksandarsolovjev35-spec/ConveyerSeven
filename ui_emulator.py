@@ -1114,7 +1114,11 @@ class Emulator:
             return
         try:
             frames = self._generate_frames()
-            roles = ("INPUT_LEFT", "INPUT_RIGHT") if part["category"] != CATEGORY_CLEANUP else CAMERA_ORDER
+            # В реальной системе каждый корпус проходит обе стадии инспекции
+            # (вход +0: 2 камеры, контроль +4: 5 камер) — итого все 7 ролей.
+            # Эмулятор сохраняет все семь камер, чтобы галерея «Последних
+            # корпусов» у любой детали показывала полный набор изображений.
+            roles = CAMERA_ORDER
             stage_frames = {r: frames[r] for r in roles if r in frames}
             self.archive.store_frames(
                 part_id=part["id"], stage="input",

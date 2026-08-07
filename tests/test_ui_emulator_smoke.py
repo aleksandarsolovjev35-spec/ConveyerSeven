@@ -160,6 +160,14 @@ def main():
         rp = st3.get("recent_parts", [])
         check("recent parts present", len(rp) > 0, f"recent={len(rp)}")
 
+        # Archive gallery: each part stores all seven camera roles, so the
+        # "Последние корпуса" block shows a full set of images for every part.
+        if rp:
+            part_id = rp[-1]["id"]
+            ap = httpx.get(base + f"/api/archive/part/{part_id}").json()
+            roles = ap.get("roles", [])
+            check("archive part has 7 roles", len(roles) == 7, f"roles={len(roles)}")
+
         print("\n=== SUMMARY ===")
         if FAILURES:
             print("FAILURES:", FAILURES)
