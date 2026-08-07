@@ -181,8 +181,11 @@ function showSelectedAnalysisFrame(role) {
     state.mainCamStreamView = null;
     state.mainCamAnalysisKey = analysisKey;
     mainBufferLoading = false;
-    if (els.mainCamera) {
-        els.mainCamera.src = `/frame/${encodeURIComponent(role)}?mode=${encodeURIComponent(state.mode)}&v=${state.currentVersion}&analysis=1`;
+    const source = `/frame/${encodeURIComponent(role)}?mode=${encodeURIComponent(state.mode)}&v=${state.currentVersion}&analysis=1`;
+    if (typeof showMainCameraFrame === 'function') {
+        showMainCameraFrame(source, 'analysis');
+    } else if (els.mainCamera) {
+        els.mainCamera.src = source;
     }
 }
 

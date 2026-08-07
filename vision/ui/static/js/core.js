@@ -113,8 +113,14 @@ const state = {
     lastFrameAnalysisRenderKey: null,
 
     liveFps:              0.0,
+    // Backend сообщает целевой режим, но изображение меняется асинхронно.
+    // Бейдж использует displayedFrameKind — режим кадра, уже загруженного в
+    // главное окно, а не только состояние камеры на сервере.
     liveStreaming:        false,
     liveStatic:           false,
+    displayedFrameKind:   null, // 'live' | 'static' | 'analysis' | null
+    pendingDisplayKind:   null,
+    pendingDisplaySeq:    0,
     controlPending:       false,
     startPending:         false,
     backendControls:      {},
@@ -278,6 +284,26 @@ let mainBufferRequestRole = null;
 let mainBufferRequestView = null;
 let mainBufferRequestVersion = null;
 
+function showMainCameraFrame(source, kind) {
+    if (!els.mainCamera) return;
+    // Меняем показанный режим только когда именно этот src будет загружен
+    // главным <img>. Последний уже видимый кадр сохраняет честный бейдж.
+    state.pendingDisplayKind = kind;
+    state.pendingDisplaySeq += 1;
+    els.mainCamera.dataset.displaySeq = String(state.pendingDisplaySeq);
+    els.mainCamera.src = source;
+}
+
+if (els.mainCamera) {
+    els.mainCamera.addEventListener('load', () => {
+        const seq = Number(els.mainCamera.dataset.displaySeq || 0);
+        if (!seq || seq !== state.pendingDisplaySeq) return;
+        state.displayedFrameKind = state.pendingDisplayKind;
+        state.pendingDisplayKind = null;
+        if (typeof applyLiveBadge === 'function') applyLiveBadge(state.jogActive);
+    });
+}
+
 mainBuffer.addEventListener('load', () => {
     const pullMode = (state.mainCamMode === 'pull' || state.mainCamMode === 'live-pull');
     const mySeq = mainBuffer._seq || 0;
@@ -296,7 +322,10 @@ mainBuffer.addEventListener('load', () => {
         && (state.mainCamMode === 'live-pull' || mainBufferRequestVersion === state.currentVersion)
     );
     if (requestIsCurrent) {
-        els.mainCamera.src = mainBuffer.src;
+        showMainCameraFrame(
+            mainBuffer.src,
+            state.mainCamMode === 'live-pull' ? 'live' : 'static',
+        );
     }
     mainBufferLoading = false;
 
