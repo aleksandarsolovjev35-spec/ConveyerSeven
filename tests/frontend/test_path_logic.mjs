@@ -96,12 +96,14 @@ const body = `
     assert(token9prep.style.left === '350px', 'route preparation keeps token at +7');
     assert(token9prep.classList._set.has('token-hold'), 'route preparation keeps hold marker');
     assert(!token9prep.classList._set.has('token-dropping'), 'route preparation is not yet a visual drop');
+    assert(token9prep.style.opacity === '1', 'route preparation keeps token visible');
 
     // ── 2. Сброс: лента несёт корпус между +7 и +8 ──
     updateLineCells([part(9, 7, 'BAD', { dropping: true })], proc('CONVEYOR_MOVING', { positions: [0,1,2,3,4,5,6,7] }));
     const token9b = findToken(9);
     assert(token9b, 'token #9 still present');
     assert(token9b.classList._set.has('token-dropping'), 'dropping token marked');
+    assert(token9b.style.opacity === '0.65', 'dropping token has explicit drop opacity');
     assert(token9b.style.left === '400px', 'token slid into chute +8: ' + token9b.style.left);
     assert(cell8.classList._set.has('chute-bad'), 'chute stays BAD while dropping');
 

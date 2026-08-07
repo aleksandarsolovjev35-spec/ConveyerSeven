@@ -457,6 +457,11 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
+    // Gate labels do not depend on layout measurements. Update them before
+    // the geometry guard so a cold first render still shows the route while
+    // the browser is calculating the grid rectangles.
+    _updateLineGates(lineParts, process);
+
     const pendingAnalysis = state.pendingAnalysisVersion !== null;
     const appliedById = new Map(_appliedLineParts.map(part => [part.id, part.category]));
     const wanted = new Map();
@@ -535,6 +540,7 @@ function updateLineCells(lineParts, process = {}) {
         }
 
         const target = rects[targetPos] || rects[meta.position] || rects[0];
+        const targetOpacity = dropAnimationActive ? '0.65' : '1';
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
@@ -548,10 +554,13 @@ function updateLineCells(lineParts, process = {}) {
             if (_lineSyncDone) {
                 el.style.left = `${target.left - step}px`;
                 el.style.opacity = '0';
-                requestAnimationFrame(() => { el.style.left = `${target.left}px`; el.style.opacity = '1'; });
+                requestAnimationFrame(() => {
+                    el.style.left = `${target.left}px`;
+                    el.style.opacity = targetOpacity;
+                });
             } else {
                 el.style.left = `${target.left}px`;
-                el.style.opacity = '1';
+                el.style.opacity = targetOpacity;
             }
         } else {
             token.el.style.top = `${target.top}px`;
@@ -559,6 +568,7 @@ function updateLineCells(lineParts, process = {}) {
             token.el.style.height = `${target.height}px`;
             const targetLeft = `${target.left}px`;
             if (token.el.style.left !== targetLeft) token.el.style.left = targetLeft;
+            if (token.el.style.opacity !== '0') token.el.style.opacity = targetOpacity;
             token.position = targetPos;
         }
         // Backend marks a body as ``dropping`` as soon as the route is
@@ -588,7 +598,6 @@ function updateLineCells(lineParts, process = {}) {
         _appliedInLine = _appliedLineParts.length;
     }
 
-    _updateLineGates(lineParts, process);
     _lineSyncDone = true;
 }
 
