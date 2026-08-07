@@ -101,6 +101,23 @@ def main():
         check("dist1 key", "dist1_position" in ls)
         check("controls start off in RUNNING", ls.get("controls", {}).get("start") is not True)
 
+        # Корпус на +7 в шаге сброса должен быть помечен dropping, чтобы
+        # фронтенд увёз маркер в лоток +8 (а не держал его на +7 поверх
+        # следующего корпуса). Ждём появления dropping-флага.
+        saw_dropping = False
+        for _ in range(40):
+            lsx = httpx.get(base + "/api/status").json().get("line_status", {})
+            if any(p.get("dropping") for p in lsx.get("line_parts", [])):
+                saw_dropping = True
+                break
+            time.sleep(0.3)
+        check("drop marks dropping flag", saw_dropping, "")
+
+        # Первый шаг после пуска — INITIAL_INSPECTION: лента не движется,
+        # корпус инспектируется на входе (шаг остаётся прежним на первом
+        # контрольном шаге). Проверяем, что вскоре после старта шаг растёт.
+        time.sleep(1.0)
+
         # Frame serving
         r = httpx.get(base + "/frame/INPUT_LEFT")
         check("frame 200", r.status_code == 200, str(r.status_code))

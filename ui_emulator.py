@@ -354,6 +354,14 @@ class Emulator:
         self.empty = 0
         self.recent_parts = deque(maxlen=10)
         self._process = self._empty_process()
+        # Первый шаг после пуска — контроль корпуса под камерами без движения
+        # ленты (INITIAL_INSPECTION), как в реальном ProductionCycle.
+        self._await_initial_inspection = False
+        # Корпус на +7, который на следующем шаге пройдёт распределитель.
+        # Хранится как ссылка на объект детали (как в ProductionCycle), чтобы
+        # flag «dropping» держался весь шаг сброса, а не пересчитывался по
+        # позиции после инкремента шага (иначе маркер не уезжал бы в +8).
+        self._pending_drop_ref = None
 
         # Имитация распределителя
         self.dist1_position = 0
@@ -562,6 +570,9 @@ class Emulator:
         self._set_process("START_POSITIONING", "Возврат распределителя в рабочее положение")
         if not self.sm.request_start():
             return False
+        # Первый шаг после пуска — контроль уже стоящего под камерами корпуса
+        # без движения ленты (INITIAL_INSPECTION), как в ProductionCycle.
+        self._await_initial_inspection = True
         self._set_process("READY", "Цикл запущен")
         return True
 
@@ -915,6 +926,7 @@ class Emulator:
         return parts[0] if parts else None
 
     def _pending_drop(self):
+        """Корпус на +7, ожидающий сброса на следующем шаге ленты."""
         for part in self.parts:
             if self.current_step - part["step_created"] == OFFSET_REJECT:
                 return part
@@ -995,10 +1007,12 @@ class Emulator:
         in_line = len(parts_snapshot)
 
         line_parts = []
+        # Пока идёт шаг сброса, корпус на +7 остаётся помеченным dropping,
+        # чтобы фронтенд увёз маркер в лоток +8, а не держал его на +7.
+        pending = self._pending_drop_ref
         for part in parts_snapshot:
             position = min(max(self.current_step - part["step_created"], 0), OFFSET_REJECT)
-            pending = self._pending_drop()
-            dropping = pending is not None and pending["id"] == part["id"]
+            dropping = pending is not None and pending is part
             line_parts.append({
                 "id": part["id"],
                 "position": position,
@@ -1176,8 +1190,33 @@ class Emulator:
         """
         self._check_cancelled()
 
+        # Первый шаг после пуска: контроль уже стоящего под камерами корпуса
+        # без движения ленты (как INITIAL_INSPECTION в ProductionCycle).
+        if self._await_initial_inspection:
+            self._await_initial_inspection = False
+            self._set_process(
+                "INITIAL_INSPECTION",
+                "Контроль корпуса на входе: лента не движется",
+                positions=[OFFSET_INPUT, OFFSET_SPIDER],
+            )
+            frames = self._generate_frames()
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_settle)
+            new_part = self._spawn_input_part()
+            self._set_process(
+                "STEP_COMPLETE", "Начальная инспекция завершена",
+                part_id=(new_part["id"] if new_part else None),
+                positions=[OFFSET_INPUT],
+            )
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_capture)
+            return
+
         # 1. Маршрут корпуса на +7 до движения (перемещение заслонок).
+        # Запоминаем корпус-кандидат на сброс на весь шаг (как ProductionCycle
+        # хранит self._pending_drop): flag dropping держится до _execute_drop.
         pending = self._pending_drop()
+        self._pending_drop_ref = pending
         if pending:
             self._prepare_route(pending["category"])
             self._set_process(
@@ -1381,6 +1420,8 @@ class Emulator:
         self._archive_part(part)
         self._register_finished(part)
         self.parts.remove(part)
+        if self._pending_drop_ref is part:
+            self._pending_drop_ref = None
         print(f"[EMU] Корпус #{part['id']} передан: {category}")
 
     def _archive_part(self, part):
