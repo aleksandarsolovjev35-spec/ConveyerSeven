@@ -366,7 +366,14 @@ class SpiderContactsLongRule(BaseRule):
         damper_open_max_px,
         gap_dev_max_px,
     ):
-        """Опорная линия omission + перпендикуляры + линия центров.
+        """Опорная линия omission + стены + соседние заслонки.
+
+        Строит пять стен (перпендикуляры от центров эталонов к опорной
+        линии omission). Для каждой соседней пары контактов «заслонка» —
+        разница длин двух стен (|d_{i+1} − d_i|), как на короткой стороне.
+        Брак, если хотя бы одна из четырёх соседних заслонок открыта больше
+        ``damper_open_max_px`` — локальный скачок ряда. Общий наклон детали
+        на вердикт не влияет: он вычитается опорной линией.
 
         Возвращает ``status``: ok / fail (заслонка открыта или стены
         разъехались) / error (опорную не построить: нет omission линии
@@ -418,17 +425,31 @@ class SpiderContactsLongRule(BaseRule):
                 "distance_px": round(float(distance), 3),
             })
 
+        # ── Соседние заслонки: |d_{i+1} − d_i| для каждой пары соседей ──
+        # Как на короткой стороне, где пара — две стены и одна заслонка;
+        # здесь контактов пять, поэтому соседних заслонок четыре.
+        damper_open = 0.0
+        for left, right in zip(gaps, gaps[1:], strict=False):
+            damper_open = max(
+                damper_open,
+                abs(
+                    float(left["distance_px"])
+                    - float(right["distance_px"])
+                ),
+            )
+        damper_fail = damper_open > damper_open_max_px
+
+        # Отклонение каждой стены от медианы — оставлено информационно
+        # (какой именно контакт виновен), на вердикт не влияет.
         distances = [gap["distance_px"] for gap in gaps]
         median_distance = float(np.median(distances)) if distances else 0.0
         for gap in gaps:
             deviation = gap["distance_px"] - median_distance
             gap["deviation_px"] = round(float(deviation), 3)
-            gap["fail"] = bool(
-                abs(float(deviation)) > gap_dev_max_px
-            )
+            gap["fail"] = bool(damper_fail)
         deviations = [abs(gap["deviation_px"]) for gap in gaps]
         gap_dev = max(deviations) if deviations else 0.0
-        gap_fail = any(gap["fail"] for gap in gaps)
+        gap_fail = damper_fail
 
         center_x_start = min(xs) if xs else x_start
         center_x_end = max(xs) if xs else x_end
@@ -437,8 +458,6 @@ class SpiderContactsLongRule(BaseRule):
             np.asarray(xs, dtype=np.float64),
             np.asarray(ys, dtype=np.float64),
         )
-        damper_open = abs(float(slope_c) - float(slope_o)) * span
-        damper_fail = damper_open > damper_open_max_px
 
         straight = np.abs(
             np.asarray(ys, dtype=np.float64)
@@ -450,7 +469,7 @@ class SpiderContactsLongRule(BaseRule):
         }
 
         return {
-            "status": "fail" if (damper_fail or gap_fail) else "ok",
+            "status": "fail" if damper_fail else "ok",
             "reason": None,
             "damper_fail": bool(damper_fail),
             "gap_fail": bool(gap_fail),

@@ -89,6 +89,29 @@ class DistributorTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             dist.park_production()
 
+    def test_prepare_same_channel_no_repeat_moves(self):
+        dist = self.make()
+        dist.prepare(CATEGORY_BAD, part_id=1)
+        dist.drop_and_close(1, CATEGORY_BAD)
+        dist.prepare(CATEGORY_BAD, part_id=2)
+        # DIST2 не переезжает повторно в канал, в котором уже стоит;
+        # лопасть повторно открывается (она закрылась после первого сброса).
+        self.assertEqual(dist.dist2.calls, [("move", 80)])
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", 120), ("move", 0), ("move", 120)],
+        )
+
+    def test_drop_and_close_keep_open(self):
+        dist = self.make()
+        dist.prepare(CATEGORY_BAD, part_id=1)
+        dist.drop_and_close(1, CATEGORY_BAD, keep_open=True)
+        # Лопасть осталась открытой: следующая деталь той же категории.
+        self.assertEqual(dist.dist1.position, 120)
+        self.assertEqual(dist.dist1_state, "OPEN")
+        self.assertEqual(dist.dist1.calls, [("move", 120)])
+        self.assertIn("NEXT DROP", dist.last_action)
+
     def test_emergency_stop(self):
         dist = self.make()
         dist.emergency_stop()
