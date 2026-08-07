@@ -112,7 +112,7 @@
                     </div>
                     <div class="process-phase-panel" data-ui-block="process-phase">
                         <div class="process-phase-title">СОСТОЯНИЕ ЛЕНТЫ</div>
-                        <div id="process-phase-label" class="process-phase-label">ОЖИДАНИЕ ПУСКА</div>
+                        <div id="process-phase-label" class="process-phase-label" data-line-state="IDLE">ГОТОВА К ПУСКУ</div>
                     </div>
                 </div>
             </section>
@@ -201,7 +201,7 @@
                     <div id="thresholds-body" class="thresholds-body"></div>
                     <div class="thresholds-actions">
                         <span id="thresholds-status" class="thresholds-status"></span>
-                        <button id="thresholds-reset" class="btn btn-sm" disabled>НА DIST2</button>
+                        <button id="thresholds-reset" class="btn btn-sm" disabled>ОТМЕНИТЬ</button>
                         <button id="thresholds-save" class="btn btn-sm btn-thresholds-save" disabled>СОХРАНИТЬ</button>
                     </div>
                 </section>
@@ -351,10 +351,10 @@
 
     <script src="/static/js/core.js?v=42"></script>
     <script src="/static/js/boot.js?v=31"></script>
-    <script src="/static/js/diagnostics.js?v=47"></script>
-    <script src="/static/js/status.js?v=42"></script>
+    <script src="/static/js/diagnostics.js?v=48"></script>
+    <script src="/static/js/status.js?v=44"></script>
     <script src="/static/js/controls.js?v=35"></script>
-    <script src="/static/js/thresholds.js?v=17"></script>
+    <script src="/static/js/thresholds.js?v=18"></script>
     <script src="/static/js/cameras.js?v=36"></script>
     <script src="/static/js/frame-analysis.js?v=10"></script>
     <script src="/static/js/jog.js?v=35"></script>

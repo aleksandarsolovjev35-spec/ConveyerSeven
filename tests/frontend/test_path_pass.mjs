@@ -9,9 +9,9 @@
 //    лотка скрыт на время затухания;
 //  - если движения долго нет (линия остановилась) — гаснет на месте по
 //    запасному таймеру.
-// Дополнительно фиксируется подпись фазы ROUTE_PREPARE: подготовка
-// маршрута распределителя — не «ВЫХОД» (ветка была недостижимой) и held
-// детали серии рисуется так же, как у первой детали маршрута.
+// Блок «СОСТОЯНИЕ ЛЕНТЫ» показывает состояние автомата, а не внутреннюю
+// фазу ROUTE_PREPARE/ROUTE_CHECK. Held-детали серии рисуются так же, как у
+// первой детали маршрута.
 import { createSandbox, loadUI, installStubs, makeEl, runInSandbox } from './harness.mjs';
 
 const sandbox = createSandbox();
@@ -59,6 +59,7 @@ const body = `
     state.splashActive = false;
     state.bootDone = true;
     state.lineState = 'RUNNING';
+    updateProcessPhaseLabel(state.lineState);
     state.pendingAnalysisVersion = null;
     state.pendingFlushTimer = null;
 
@@ -106,13 +107,13 @@ const body = `
     __flushTimers();   // парк-таймер уже неактивен; удаление после проезда
     assert(!findToken(4), 'pass token removed after the animated pass');
 
-    // ── 4. Подписи фаз: подготовка маршрута — не «ВЫХОД» ──
+    // ── 4. Внутренняя фаза маршрута не подменяет состояние линии ──
     updateLineCells([], proc('ROUTE_PREPARE'));
-    assert(__els['process-phase-label'].textContent === 'ПОДГОТОВКА',
-        'ROUTE_PREPARE shows ПОДГОТОВКА: ' + __els['process-phase-label'].textContent);
+    assert(__els['process-phase-label'].textContent === 'РАБОТАЕТ',
+        'ROUTE_PREPARE keeps line state: ' + __els['process-phase-label'].textContent);
     updateLineCells([], proc('ROUTE_CHECK'));
-    assert(__els['process-phase-label'].textContent === 'ВЫХОД',
-        'route check of a pass still reads ВЫХОД: ' + __els['process-phase-label'].textContent);
+    assert(__els['process-phase-label'].textContent === 'РАБОТАЕТ',
+        'ROUTE_CHECK keeps line state: ' + __els['process-phase-label'].textContent);
 
     // ── 5. Деталь серии на +7 рисуется так же, как первая деталь маршрута ──
     updateLineCells([part(8, 7, 'CLEANUP', { held: true })], proc('ANALYSIS_REVIEW'));

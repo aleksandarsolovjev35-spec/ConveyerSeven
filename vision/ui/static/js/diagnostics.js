@@ -145,6 +145,9 @@ function setupSelectedFrameAnalysis() {
     els.analyzeSelectedFrame.addEventListener('click', async () => {
         if (els.analyzeSelectedFrame.disabled || state.selectedAnalysisPending) return;
         state.selectedAnalysisPending = true;
+        // Скрываем редактирование порогов сразу: анализируемый стоп-кадр
+        // должен оставаться привязанным к уже применённым значениям.
+        if (typeof updateThresholdsPanel === 'function') updateThresholdsPanel();
         if (!state.selectedAnalysisActive) showPendingSelectedFrameAnalysis();
         updateViewModeControls();
         els.analyzeSelectedFrame.disabled = true;

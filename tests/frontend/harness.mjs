@@ -230,6 +230,15 @@ export function loadUI(sandbox) {
     }
 }
 
+// `thresholds.js` намеренно не входит в обычный набор: большинству
+// фронтенд-тестов не нужен его DOM. Подключаем его адресно там, где
+// проверяется сама панель порогов.
+export function loadThresholds(sandbox) {
+    const file = 'thresholds.js';
+    const code = fs.readFileSync(path.join(ROOT, 'vision/ui/static/js', file), 'utf8');
+    vm.runInContext(code, sandbox, { filename: file });
+}
+
 // ─── Заглушки функций из незагруженных модулей ────────────────
 
 const EXTERNAL_STUBS = [

@@ -16,14 +16,17 @@ let _threshDragState = null;
 let _threshFetchSeq = 0;
 
 function thresholdsPanelVisible() {
-    // Пороги показываем только в ручном режиме (анализ кадра / JOG),
-    // чтобы не загромождать правую колонку в рабочем цикле.
-    const manualMode = !!(state.selectedAnalysisActive || state.jogActive || state.jogTogglePending);
+    // Пороги настраиваются только в JOG. Во время анализа выбранного
+    // стоп-кадра они уже применены к показанному результату, поэтому
+    // панель скрыта и оператор не может изменить их задним числом.
+    const jogMode = !!(state.jogActive || state.jogTogglePending);
     return (
         !state.splashActive
         && !state.offline
         && !state.serverExitRequested
-        && manualMode
+        && jogMode
+        && !state.selectedAnalysisActive
+        && !state.selectedAnalysisPending
         && THRESHOLD_EDITABLE_STATES.includes(state.lineState)
         && !!state.currentCamera
     );

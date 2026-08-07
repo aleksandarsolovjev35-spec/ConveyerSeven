@@ -135,6 +135,7 @@ function markUiOffline() {
     els.main.classList.add('ui-offline');
     setIfChanged(els.stateLabel, lineStateLabel('OFFLINE'));
     if (els.stateSection) els.stateSection.className = 'state-section state-box-offline';
+    updateProcessPhaseLabel('OFFLINE');
     showControlError('Нет связи с backend. Все команды заблокированы.');
     releaseJogHoldBestEffort('backend offline');
     applyButtonsForState('OFFLINE', true, {});
@@ -149,6 +150,19 @@ function markUiOffline() {
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
+function updateProcessPhaseLabel(lineState) {
+    const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
+    if (!phaseEl) return;
+    const activeState = String(lineState || 'IDLE').toUpperCase();
+    setIfChanged(phaseEl, lineStateLabel(activeState));
+    phaseEl.dataset.lineState = activeState;
+    phaseEl.style.opacity = '1';
+    if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
+    else if (activeState === 'PAUSED' || activeState === 'STOPPING') phaseEl.style.color = 'var(--warn)';
+    else if (activeState === 'FAULT' || activeState === 'OFFLINE') phaseEl.style.color = 'var(--bad)';
+    else phaseEl.style.color = 'var(--text-dim)';
+}
+
 function updateLineStatus(ls) {
     const lineState = ls.state || 'IDLE';
     const exitRequested = !!ls.exit_requested;
@@ -161,6 +175,7 @@ function updateLineStatus(ls) {
     if (els.stateIndicator) els.stateIndicator.className = `state-dot state-${lineState.toLowerCase()}`;
     if (els.stateSection) els.stateSection.className = `state-section state-box-${lineState.toLowerCase()}`;
     setIfChanged(els.stateLabel, lineStateLabel(lineState));
+    updateProcessPhaseLabel(lineState);
     setIfChanged(els.metricStep, ls.step || 0);
 
     state.backendControls = ls.controls || {};
@@ -254,46 +269,6 @@ function isConveyorTransportPhase(phase) {
         || p === 'CONVEYOR_MOVING'
         || p === 'MOTION'
         || p.startsWith('MOTION_');
-}
-
-function tapeShortLabel(process) {
-    if (!process || !process.phase) return '';
-    const p = String(process.phase).toUpperCase();
-    const lbl = String(process.label || '').toLowerCase();
-    // Короткие названия без лишних деталей (кандидат, счётчики, таймеры).
-    if (isConveyorTransportPhase(p)) return 'ДВИЖЕНИЕ';
-    if (p === 'CONVEYOR_CONFIRMED') return 'СТОЯНКА';
-    if (p === 'PART_DROP') return 'СБРОС';
-    if (p === 'PART_TRANSFER') return 'ПЕРЕДАЧА';
-    if (p === 'SETTLE') return 'СТОЯНКА';
-    if (p === 'CAMERA_CAPTURE') {
-        const roles = Array.isArray(process.capture_roles) ? process.capture_roles : [];
-        const hasInput = roles.includes('INPUT_LEFT') || roles.includes('INPUT_RIGHT');
-        const hasSpider = roles.some(role => String(role).startsWith('SPIDER_') || role === 'TOP');
-        if (hasInput && hasSpider) return 'СЪЁМКА · ВХОД + КОНТРОЛЬ';
-        if (hasInput) return 'СЪЁМКА · ВХОД';
-        if (hasSpider) return 'СЪЁМКА · КОНТРОЛЬ';
-        return 'СЪЁМКА НЕ НУЖНА';
-    }
-    if (p === 'ANALYSIS_REVIEW') return 'ПАУЗА';
-    if (p.includes('INPUT_ANALYSIS') || p === 'INPUT_ANALYSIS') return 'АНАЛИЗ ВХОДА';
-    if (p.includes('SPIDER')) return 'АНАЛИЗ КОНТРОЛЯ';
-    if (p.includes('ANALYSIS')) return 'АНАЛИЗ';
-    // Точные фазы маршрута идут до общего includes('ROUTE'): ROUTE_PREPARE
-    // — подготовка сброса (двигаются оси распределителя), а не проход
-    // детали на выход; раньше эта ветка стояла ниже includes('ROUTE') и была
-    // недостижима, так что подготовка отбраковки подписывалась «ВЫХОД».
-    if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
-    if (p.includes('ROUTE')) return 'ВЫХОД';
-    if (p === 'STEP_COMPLETE') return 'ГОТОВ';
-    if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
-    if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
-    if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
-    if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
-    if (p.includes('PAUSE')) return 'ПАУЗА';
-    if (p.includes('JOG')) return 'РУЧНОЙ ХОД';
-    // fallback — сама фаза коротко, без label с деталями
-    return p.replace(/_/g, ' ').slice(0, 20);
 }
 
 function _lineCellRects(cells) {
@@ -463,22 +438,6 @@ function updateLineCells(lineParts, process = {}) {
     }
     belt.classList.toggle('moving', !!isConveyorMoving);
     els.lineCells.style.setProperty('--move-duration', `${lineMoveDuration(process)}ms`);
-
-    const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
-    if (phaseEl) {
-        const short = tapeShortLabel(process);
-        const activeText = short ? short.toUpperCase() : '';
-        if (activeText) {
-            setIfChanged(phaseEl, activeText);
-            phaseEl.style.opacity = isConveyorMoving ? '1' : '0.85';
-            phaseEl.style.color = isConveyorMoving ? 'var(--ok)' : 'var(--accent)';
-        } else {
-            const defaultLabel = state.lineState === 'RUNNING' ? 'РАБОТА' : 'ОЖИДАНИЕ ПУСКА';
-            setIfChanged(phaseEl, defaultLabel);
-            phaseEl.style.opacity = '0.65';
-            phaseEl.style.color = 'var(--text-dim)';
-        }
-    }
 
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
     const active = Array.isArray(process.positions) ? process.positions : [];

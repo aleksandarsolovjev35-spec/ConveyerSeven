@@ -138,6 +138,7 @@
     color: var(--text-dim);
     font-weight: 700;
 }
+
 .line-cell.process-active { border-color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
 .line-cell.process-camera { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .line-cell.process-route { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
