@@ -126,6 +126,10 @@ def main():
             time.sleep(0.5)
         check("stopped empty", ls2.get("state") == "STOPPED" and not ls2.get("line_parts"),
               f"{ls2.get('state')} parts={len(ls2.get('line_parts', []))}")
+        # После остановки распределитель возвращается на концевик (0/0).
+        check("distributor homed on stop",
+              ls2.get("dist1_position") == 0 and ls2.get("dist2_position") == 0,
+              f"d1={ls2.get('dist1_position')} d2={ls2.get('dist2_position')}")
 
         # Counters accumulated
         ls_total = ls2.get("total", 0)

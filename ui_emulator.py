@@ -519,6 +519,7 @@ class Emulator:
         if new == State.STOPPING:
             self._set_process("DRAINING", "Завершение корпусов на линии")
         elif new == State.STOPPED:
+            self._park_distributor_home()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
@@ -787,6 +788,20 @@ class Emulator:
             self._set_route_bad(animate=True)
         elif category == CATEGORY_CLEANUP:
             self._set_route_cleanup(animate=True)
+
+    def _park_distributor_home(self):
+        """Вернуть обе заслонки на концевик (позиция 0) после остановки.
+
+        После полной остановки линии распределитель не остаётся в последнем
+        положении маршрута, а уходит к домашнему концевику: DIST1 -> GOOD (0),
+        DIST2 -> канал BAD (0).
+        """
+        self.dist1_position = 0
+        self.dist1_state = "GOOD"
+        self.dist2_position = DIST2_BAD
+        self.dist2_state = "IDLE"
+        self.dist2_target = CATEGORY_BAD
+        self.last_distributor_action = "HOMED"
 
     # ── Процесс / статус ───────────────────────────────────────
 

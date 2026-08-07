@@ -334,51 +334,6 @@ function _updateChuteOccupied(cells) {
     });
 }
 
-function _updateLineGates(lineParts, process = {}) {
-    const gateIn = document.querySelector('.line-gate-in');
-    const gateOut = document.querySelector('.line-gate-out');
-    if (!gateIn || !gateOut) return;
-    gateIn.className = 'line-gate line-gate-in';
-    gateOut.className = 'line-gate line-gate-out';
-    gateOut.textContent = 'ВЫХОД ▸';
-
-    const parts = Array.isArray(lineParts) ? lineParts : [];
-    const partAtInput = parts.find(p => Number(p.position) === 0);
-    if (partAtInput) gateIn.classList.add('gate-active');
-
-    const partAtSort = parts.find(p => Number(p.position) === 7);
-    if (!partAtSort) {
-        // После сброса канал распределителя ещё виден: держим цвет ворота,
-        // чтобы оператор видел, куда только что ушёл корпус.
-        if (_currentDistributorCategory === 'BAD') gateOut.classList.add('gate-rejecting');
-        else if (_currentDistributorCategory === 'CLEANUP') gateOut.classList.add('gate-cleanup');
-        else gateOut.classList.add('gate-active');
-        return;
-    }
-
-    const cat = String(partAtSort.category || '').toUpperCase();
-    const phase = String(process.phase || '').toUpperCase();
-    const held = !!partAtSort.held;
-    const dropping = !!partAtSort.dropping;
-    const routing = phase.includes('ROUTE') || phase.includes('DROP')
-        || phase.includes('CONVEYOR') || phase.includes('TRANSFER');
-    // Корпус на +7 ожидает передачи на следующем шаге. Ворота показывают
-    // маршрут, заранее выставленный DIST1/DIST2.
-    if (cat === 'BAD' && (held || dropping || routing)) {
-        gateOut.classList.add('gate-rejecting');
-        gateOut.textContent = '▼ БРАК';
-    } else if (cat === 'CLEANUP' && (held || dropping || routing)) {
-        gateOut.classList.add('gate-cleanup');
-        gateOut.textContent = '▼ ОЧИСТКА';
-    } else if (cat === 'GOOD') {
-        gateOut.classList.add('gate-active');
-        gateOut.textContent = 'ПРОХОД ▸';
-    } else {
-        gateOut.classList.add('gate-active');
-        gateOut.textContent = 'ВЫХОД ▸';
-    }
-}
-
 const ROUTE_CATEGORIES = ['GOOD', 'BAD', 'CLEANUP'];
 let _currentDistributorCategory = '';
 
@@ -475,11 +430,6 @@ function updateLineCells(lineParts, process = {}) {
             else if (chuteCat === 'CLEANUP') cell.classList.add('chute-cleanup');
         }
     });
-
-    // Gate labels do not depend on layout measurements. Update them before
-    // the geometry guard so a cold first render still shows the route while
-    // the browser is calculating the grid rectangles.
-    _updateLineGates(lineParts, process);
 
     const pendingAnalysis = state.pendingAnalysisVersion !== null;
     const appliedById = new Map(_appliedLineParts.map(part => [part.id, part.category]));
