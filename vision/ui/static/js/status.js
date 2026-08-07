@@ -264,11 +264,15 @@ function tapeShortLabel(process) {
     if (p.includes('INPUT_ANALYSIS') || p === 'INPUT_ANALYSIS') return 'АНАЛИЗ ВХОДА';
     if (p.includes('SPIDER')) return 'АНАЛИЗ КОНТРОЛЯ';
     if (p.includes('ANALYSIS')) return 'АНАЛИЗ';
+    // Точные фазы маршрута идут до общего includes('ROUTE'): ROUTE_PREPARE
+    // — подготовка сброса (двигаются оси распределителя), а не проход
+    // детали на выход; раньше эта ветка стояла ниже includes('ROUTE') и была
+    // недостижима, так что подготовка отбраковки подписывалась «ВЫХОД».
+    if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
     if (p.includes('ROUTE')) return 'ВЫХОД';
     if (p === 'STEP_COMPLETE') return 'ГОТОВ';
     if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
     if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
-    if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
     if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
     if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
     if (p.includes('PAUSE')) return 'ПАУЗА';
@@ -302,8 +306,22 @@ function _applyTokenCategory(el, category) {
 
 function _removeLineTokenElement(token) {
     if (!token) return;
+    token.parkedPass = false;
     _lineExitTokens.delete(token);
     if (token.el && token.el.parentNode) token.el.parentNode.removeChild(token.el);
+}
+
+function _scheduleLineTokenRemoval(token, cells, delayMs) {
+    setTimeout(() => {
+        _removeLineTokenElement(token);
+        _updateChuteOccupied(cells);
+    }, delayMs);
+}
+
+function _animateLineTokenExit(token, cells, leftPx, removalDelayMs) {
+    token.el.style.left = `${leftPx}px`;
+    token.el.style.opacity = '0';
+    _scheduleLineTokenRemoval(token, cells, removalDelayMs);
 }
 
 function _clearChuteExitTokens() {
@@ -463,11 +481,14 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
-    // Сортировка +7 по фактической логике: корпус ДОЕХАЛ и придержан
-    // лепестком (held) либо уже падает в лоток (dropping) — ячейка +7
-    // получает ограничитель, лоток +8 — цвет канала маршрута.
-    // При серии через пустую ячейку лоток сохраняет цвет канала
-    // (DIST2 не уходит, DIST1 остаётся открытой), как и ворота выхода.
+    // Сортировка +7 по фактической логике: корпус ДОЕХАЛ до последней
+    // ячейки и ждёт сброса следующим шагом (held) либо уже падает в лоток
+    // (dropping) — ячейка +7 получает ограничитель, лоток +8 — цвет канала
+    // маршрута. Флаг held отражает само пребывание на +7 и не зависит от
+    // положения заслонки: у детали серии (DIST1 ещё открыт) оно то же, что
+    // и у первой детали маршрута. При серии через пустую ячейку лоток
+    // сохраняет цвет канала (DIST2 не уходит, DIST1 остаётся открытой),
+    // как и ворота выхода.
     const sortPart = (lineParts || []).find(p => Number(p.position) === 7);
     const sortHeld = !!(sortPart && sortPart.held);
     const sortCat = sortPart ? String(sortPart.category || '').toUpperCase() : '';
@@ -516,6 +537,23 @@ function updateLineCells(lineParts, process = {}) {
     const isDropPhase = phaseUpper === 'PART_DROP'
         || phaseUpper === 'CONVEYOR_CONFIRMED';
 
+    // Припаркованные годные ждут движения ленты: backend снимает годный
+    // корпус с учёта ещё на ROUTE_CHECK (лента стоит), но физически он
+    // падает с +7 только со следующим шагом движения. Годный падает в
+    // статику — в той же зоне +8, что и реджект, только без цвета канала:
+    // маркер гаснет в +8, не «выезжая» за ворота.
+    if (isConveyorPhase && geometryReady) {
+        for (const token of [..._lineExitTokens]) {
+            if (!token.parkedPass) continue;
+            token.parkedPass = false;
+            const exitLeft = rects[8]
+                ? rects[8].left
+                : (rects[token.position] ? rects[token.position].left + step : step);
+            if (rects[8]) token.exitPosition = 8;
+            _animateLineTokenExit(token, cells, exitLeft, duration + 80);
+        }
+    }
+
     for (const [id, token] of [..._lineTokens.entries()]) {
         if (wanted.has(id)) continue;
         _lineTokens.delete(id);
@@ -524,23 +562,37 @@ function updateLineCells(lineParts, process = {}) {
         if (token.dropping) {
             // Падение: маркер уже уехал в лоток +8 — гаснет на месте.
             token.el.style.opacity = '0';
-        } else if (geometryReady && rects[token.position]) {
-            // Проход (годный) или съезд с линии: маркер уезжает за ячейку.
-            // Годный корпус на сортировке уходит через ворота выхода, а не в лоток:
-            // уезжает дальше лотка, под ворота, и там гаснет.
-            let exitLeft;
-            if (token.position === 7 && token.category === 'GOOD' && rects[8]) {
-                exitLeft = rects[8].left + step;
-            } else {
-                exitLeft = rects[token.position].left + step;
-            }
-            token.el.style.left = `${exitLeft}px`;
-            token.el.style.opacity = '0';
+            _scheduleLineTokenRemoval(token, cells, duration + 80);
+            continue;
         }
-        setTimeout(() => {
-            _removeLineTokenElement(token);
-            _updateChuteOccupied(cells);
-        }, duration + 80);
+        if (geometryReady && rects[token.position]) {
+            // Съезд с линии или проход годного: маркер уезжает за ячейку.
+            // Годный с +7 при DIST1 на концевике тоже падает — в статику,
+            // в той же зоне +8, что и реджект, только без цвета канала:
+            // маркер гаснет в +8, не «выезжая» за ворота.
+            const passingGood = token.position === 7 && token.category === 'GOOD' && rects[8];
+            if (passingGood && !isConveyorPhase) {
+                // Статичная фаза: лента стоит, корпус физически ещё на +7.
+                // Паркуем маркер на месте до транспортной фазы (см. триггер
+                // выше); если движения долго нет (линия остановилась) —
+                // гасим на месте запасным таймером.
+                token.parkedPass = true;
+                setTimeout(() => {
+                    if (!token.parkedPass) return;
+                    token.parkedPass = false;
+                    token.el.style.opacity = '0';
+                    _scheduleLineTokenRemoval(token, cells, duration + 80);
+                }, Math.max(1600, duration * 4));
+                continue;
+            }
+            if (passingGood) token.exitPosition = 8;
+            const exitLeft = passingGood
+                ? rects[8].left
+                : rects[token.position].left + step;
+            _animateLineTokenExit(token, cells, exitLeft, duration + 80);
+        } else {
+            _scheduleLineTokenRemoval(token, cells, duration + 80);
+        }
     }
 
     if (!geometryReady) {
