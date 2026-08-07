@@ -133,8 +133,6 @@ function markUiOffline() {
     state.mainCamMode = 'pull';
     mainBufferLoading = false;
     els.main.classList.add('ui-offline');
-    setIfChanged(els.stateLabel, lineStateLabel('OFFLINE'));
-    if (els.stateSection) els.stateSection.className = 'state-section state-box-offline';
     updateProcessPhaseLabel('OFFLINE');
     showControlError('Нет связи с backend. Все команды заблокированы.');
     releaseJogHoldBestEffort('backend offline');
@@ -172,9 +170,6 @@ function updateLineStatus(ls) {
     if (!['IDLE', 'STOPPED'].includes(lineState)) state.startPending = false;
     updateOperationalAccordions(lineState);
 
-    if (els.stateIndicator) els.stateIndicator.className = `state-dot state-${lineState.toLowerCase()}`;
-    if (els.stateSection) els.stateSection.className = `state-section state-box-${lineState.toLowerCase()}`;
-    setIfChanged(els.stateLabel, lineStateLabel(lineState));
     updateProcessPhaseLabel(lineState);
     setIfChanged(els.metricStep, ls.step || 0);
 

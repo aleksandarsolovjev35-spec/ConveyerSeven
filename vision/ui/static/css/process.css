@@ -332,8 +332,6 @@
     font: 700 10px var(--font-mono);
 }
 
-.main.ui-offline .state-dot { background: var(--bad); box-shadow: none; }
-.main.ui-offline .state-label { color: var(--bad); }
 .jog-panel.jog-inactive { opacity: 0.55; }
 
 .splash-exit-btn {

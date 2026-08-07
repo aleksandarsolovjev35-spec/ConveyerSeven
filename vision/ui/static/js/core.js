@@ -164,9 +164,6 @@ const els = {
 
     main:             $('main'),
 
-    stateSection:     $('state-section'),
-    stateIndicator:   $('state-indicator'),
-    stateLabel:       $('state-label'),
     metricStep:       $('metric-step'),
     metricUptime:     $('metric-uptime'),
 
@@ -410,7 +407,7 @@ function setIfChanged(el, value) {
     const text = normalizeOperatorText(value);
     if (el.textContent === text) return;
     el.textContent = text;
-    if (el.classList.contains('stats-value') || el.classList.contains('axis-state') || el.classList.contains('state-label')) {
+    if (el.classList.contains('stats-value') || el.classList.contains('axis-state')) {
         animateUiElement(el);
     }
 }
