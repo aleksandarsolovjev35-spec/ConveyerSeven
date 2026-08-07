@@ -1099,8 +1099,10 @@ class ProductionCycle:
 
     def _stage_capture(self):
         """CAPTURE: свежие кадры только для занятых инспекционных позиций."""
-        self.stages.enter_capture()
         roles = self._capture_roles_for_current_step()
+        # Пауза только у ролей, которые сейчас дают inspection-кадр.
+        # Остальные камеры продолжают live-поток для оператора.
+        self.stages.enter_capture(roles)
         active_cam_positions = []
         if self.sm.accepts_new_parts:
             active_cam_positions.append(self.OFFSET_INPUT)
@@ -2025,12 +2027,14 @@ class ProductionCycle:
                 "active": self._selected_analysis_active,
                 "role": self._selected_analysis_role,
             },
-            # Живой просмотр: активен во время движения, приостановлен на
-            # статических этапах, по которым считаются defect rules.
+            # Inspection блокирует live только у захватываемых ролей.
+            # Остальные камеры продолжают поток даже на статической фазе.
             "live": {
                 "running": self.live.running,
-                "streaming": self.live.running and not self.stages.static,
+                "streaming": self.live.running,
                 "static": self.stages.static,
+                "static_roles": list(self.stages.static_roles or ()),
+                "all_roles_static": self.stages.static and self.stages.static_roles is None,
                 "stage": self.stages.stage.value,
                 "fps": self._current_live_fps(),
                 "error": self.live.error,

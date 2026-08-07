@@ -62,6 +62,34 @@ class LiveCaptureGateTest(unittest.TestCase):
         with gate.live_read() as allowed:
             self.assertTrue(allowed)
 
+    def test_pause_roles_blocks_only_requested_camera_roles(self):
+        gate = LiveCaptureGate()
+        self.assertTrue(gate.pause_roles(("INPUT_LEFT", "INPUT_RIGHT")))
+        with gate.live_read("INPUT_LEFT") as input_allowed:
+            self.assertFalse(input_allowed)
+        with gate.live_read("TOP") as top_allowed:
+            self.assertTrue(top_allowed)
+        gate.resume_roles(("INPUT_LEFT", "INPUT_RIGHT"))
+        with gate.live_read("INPUT_RIGHT") as input_allowed:
+            self.assertTrue(input_allowed)
+
+    def test_pause_roles_waits_only_for_read_of_same_role(self):
+        gate = LiveCaptureGate()
+        release = threading.Event()
+
+        def read_top():
+            with gate.live_read("TOP"):
+                release.wait(timeout=1.0)
+
+        thread = threading.Thread(target=read_top)
+        thread.start()
+        time.sleep(0.03)
+        # TOP занят, но INPUT должен перейти inspection без ожидания TOP.
+        self.assertTrue(gate.pause_roles(("INPUT_LEFT",), timeout=0.1))
+        release.set()
+        thread.join(timeout=1.0)
+        gate.resume_roles(("INPUT_LEFT",))
+
 
 if __name__ == "__main__":
     unittest.main()

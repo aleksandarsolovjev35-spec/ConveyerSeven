@@ -97,6 +97,7 @@ class StepSequencer:
         self._lock = threading.Lock()
         self._stage = StepStage.IDLE
         self._static_held = False
+        self._static_roles = None
         self._stage_started_at = time.monotonic()
         # Номер поколения шага. reset() увеличивает его, поэтому передача
         # камер, начатая до сброса, понимает, что её результат уже неактуален.
@@ -109,9 +110,15 @@ class StepSequencer:
 
     @property
     def static(self) -> bool:
-        """True, когда кадры принадлежат инспекции."""
+        """True, когда хотя бы одна роль принадлежит inspection."""
         with self._lock:
             return self._static_held
+
+    @property
+    def static_roles(self):
+        """Роли в inspection; ``None`` означает старую глобальную паузу."""
+        with self._lock:
+            return self._static_roles
 
     def _switch(self, target: StepStage):
         """Перейти в фазу, выдержав наблюдательную паузу перед ней.
@@ -156,10 +163,15 @@ class StepSequencer:
         if self._settle_seconds > 0:
             self._sleep(self._settle_seconds)
 
-    def enter_capture(self):
-        """Передать камеры инспекции и дождаться завершения live-чтений."""
+    def enter_capture(self, roles=None):
+        """Передать inspection только нужные роли, остальные оставить live.
+
+        ``roles=None`` сохраняет прежнее безопасное поведение: пауза всех
+        камер. Пустой список означает, что в этой остановке нет камеры для
+        production-инспекции и live не прерывается.
+        """
         self._switch(StepStage.CAPTURE)
-        self._acquire_static()
+        self._acquire_static(roles)
 
     def enter_analysis(self):
         """Кадры сняты; камеры больше не читаются до конца шага."""
@@ -176,36 +188,46 @@ class StepSequencer:
             self._generation += 1
         self._release_static()
 
-    def _acquire_static(self):
+    def _acquire_static(self, roles=None):
+        roles = None if roles is None else tuple(dict.fromkeys(roles))
+        if roles == ():
+            return
         with self._lock:
             if self._static_held:
                 return
             generation = self._generation
 
-        if not self._live.pause(self._handover_timeout):
-            # pause() снимает свою неудачную паузу сам.
+        paused = (
+            self._live.pause(self._handover_timeout)
+            if roles is None
+            else self._live.pause_roles(roles, self._handover_timeout)
+        )
+        if not paused:
+            target = "камеры" if roles is None else f"роли {', '.join(roles)}"
             raise StageSequenceError(
-                "Live-просмотр не освободил камеры за "
+                f"Live-просмотр не освободил {target} за "
                 f"{self._handover_timeout}s; шаг остановлен"
             )
-
         with self._lock:
             if generation != self._generation:
-                # Пока шли переговоры о камерах, шаг успели сбросить.
-                # Держать паузу больше нельзя: live-просмотр завис бы.
                 stale = True
             else:
                 stale = False
                 self._static_held = True
+                self._static_roles = roles
         if stale:
-            self._live.resume()
-            raise StageSequenceError(
-                "Шаг сброшен во время передачи камер инспекции"
-            )
+            if roles is None: self._live.resume()
+            else: self._live.resume_roles(roles)
+            raise StageSequenceError("Шаг сброшен во время передачи камер инспекции")
 
     def _release_static(self):
         with self._lock:
             if not self._static_held:
                 return
+            roles = self._static_roles
             self._static_held = False
-        self._live.resume()
+            self._static_roles = None
+        if roles is None:
+            self._live.resume()
+        else:
+            self._live.resume_roles(roles)

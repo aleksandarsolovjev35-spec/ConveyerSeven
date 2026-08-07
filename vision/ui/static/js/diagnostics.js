@@ -66,8 +66,15 @@ function updateSelectedAnalysisStatus(ls) {
 
     const live = ls.live || {};
     state.liveFps = Number(live.fps || (ls.jog || {}).live_fps || 0);
-    state.liveStreaming = live.streaming === true;
-    state.liveStatic = live.static === true;
+    const staticRoles = Array.isArray(live.static_roles) ? live.static_roles : [];
+    const selectedRoleStatic = live.all_roles_static === true
+        || staticRoles.includes(state.currentCamera)
+        // Совместимость со статусом backend до ролевых пауз.
+        || (live.static === true && live.streaming === false && staticRoles.length === 0);
+    // Источник главной камеры зависит от её собственной роли, а не от
+    // inspection другой группы камер.
+    state.liveStreaming = live.running === true && !selectedRoleStatic;
+    state.liveStatic = selectedRoleStatic;
 
     if (wasLiveStreaming !== state.liveStreaming && typeof applyMainCameraSource === 'function') {
         applyMainCameraSource();

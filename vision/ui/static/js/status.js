@@ -84,11 +84,16 @@ async function fetchStatus() {
 
     const lineStatusPayload = status.line_status || {};
     const liveInfo = lineStatusPayload.live || {};
+    const staticRoles = Array.isArray(liveInfo.static_roles) ? liveInfo.static_roles : [];
+    const selectedRoleStatic = liveInfo.all_roles_static === true
+        || staticRoles.includes(state.currentCamera)
+        // Совместимость со статусом backend до ролевых пауз.
+        || (liveInfo.static === true && liveInfo.streaming === false && staticRoles.length === 0);
     const staticPublish = (
         newPublishArrived
         && incomingVersion > 0
         && !state.splashActive
-        && !liveInfo.streaming
+        && selectedRoleStatic
         && state.mainCamMode === 'pull'
     );
     if (staticPublish) {
