@@ -45,6 +45,7 @@ Functions may call functions from later modules only after all scripts have load
 - `right-panel` — прокручиваемая правая колонка.
 - `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
 - `operator-footer` — кнопки ПУСК/СТОП/ВЫХОД и горячие клавиши.
+- `footer-archive` — сервисная группа футера: кнопка `АРХИВ` (настройки хранения партий) вынесена из ряда операторских кнопок в правый край, за вертикальный разделитель.
 - `gallery` — архивная галерея детали.
 - `archive-settings` — выбор папки хранения и политики сжатия партий.
 - `calibration-header`, `calibration-preview`, `calibration-assignment`, `calibration-footer` — отдельные блоки мастера калибровки.
