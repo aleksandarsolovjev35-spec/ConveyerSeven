@@ -16,6 +16,12 @@ const requiredHtml = [
     'data-pos="7"',
     'data-pos="8"',
     'class="line-cell line-cell-chute"',
+    // Подписи этапов — слова без номеров (ВХОД / КОНТРОЛЬ / СОРТИРОВКА / СБРОС).
+    'class="line-position-labels"',
+    '>ВХОД</span>',
+    '>КОНТРОЛЬ</span>',
+    '>СОРТИРОВКА</span>',
+    '>СБРОС</span>',
 ];
 const requiredCss = [
     '.production-line-cells',
