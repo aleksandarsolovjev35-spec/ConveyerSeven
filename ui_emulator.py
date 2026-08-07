@@ -5,7 +5,13 @@
 буквально всю производственную линию без камер, моделей, контроллера и
 распределителя:
 
-- корпуса появляются случайно (категории GOOD / BAD / CLEANUP и пустые лотки);
+- появление корпуса решает случайно каждая из двух первых камер
+  (INPUT_LEFT / INPUT_RIGHT), как в реальном правиле part_presence: деталь
+  засчитывается, только если её видят ОБЕ входные камеры;
+- при наличии корпуса входные defect-правила (window_geometry, window_sinks)
+  дают дефекты входа, на +4 spider-правила — дефекты контроля, а маршрут
+  GOOD / BAD / CLEANUP вычисляется строго как в Part._recompute() (нет
+  дефектов → GOOD; только glass/glass_glare → CLEANUP; иначе BAD);
 - лента движется по шагам, позиции корпусов анимируются в «Пути корпусов»;
 - распределитель DIST1/DIST2 выставляет маршрут строго по
   ``DISTRIBUTOR_LOGIC.md`` до каждого шага ленты;
@@ -41,7 +47,12 @@ from core.rule_report import HUMAN_CAUSE_MAP
 from domain.threshold_loader import ThresholdLoader
 from config import load_archive_config
 
-from domain.part import CATEGORY_GOOD, CATEGORY_BAD, CATEGORY_CLEANUP
+from domain.part import (
+    CATEGORY_GOOD,
+    CATEGORY_BAD,
+    CATEGORY_CLEANUP,
+    CATEGORY_UNKNOWN,
+)
 
 # ─────────────────────────────────────────────────────────────────────
 # Конфигурация имитации
@@ -135,10 +146,53 @@ RULE_METRICS = {
     ],
 }
 
-# Вес категорий случайного корпуса + вероятность пустого лотка.
-CATEGORY_WEIGHTS = [CATEGORY_GOOD, CATEGORY_BAD, CATEGORY_CLEANUP]
-CATEGORY_PROBS = [0.55, 0.28, 0.17]
-EMPTY_PROB = 0.12
+# ── Присутствие детали (как реальное правило part_presence) ─────
+# Деталь под входными камерами засчитывается, только если её видят ОБЕ
+# INPUT-камеры (flatness >= порога на каждой). Эмулятор моделирует это так:
+# каждая камера «видит» деталь с вероятностью INPUT_CAMERA_PRESENT_PROB,
+# а наличие корпуса = присутствие на обеих. Это и есть «случайное появление
+# ячеек под первыми двумя камерами».
+INPUT_CAMERA_PRESENT_PROB = 0.93
+# Порог присутствия детали на каждой камере (совпадает со смыслом
+# input_part_presence_false_positive_max_count + 1 = 3).
+INPUT_PRESENCE_THRESHOLD = 3
+
+# Дефекты, которые приводят на CLEANUP (как в domain/part.py).
+CLEANUP_DEFECTS = {"glass", "glass_glare"}
+
+# INPUT defect-правила (вход +0): их срабатывание даёт дефекты входа.
+INPUT_RULES = ("window_geometry", "window_sinks")
+
+# SPIDER/TOP defect-правила (контроль +4): дефекты контроля.
+SPIDER_RULES = (
+    "contacts_long",
+    "long_omission",
+    "contacts_short",
+    "short_omission",
+    "top_contacts",
+    "top_platform",
+    "platform_contacts_overlap",
+    "sinks",
+    "glass",
+    "glass_on_contacts",
+)
+
+# Вероятность срабатывания каждого defect-правила (эмуляция «по алгоритму»:
+# правило сработало -> дефект в список, как в инспекции).
+RULE_TRIGGER_PROB = {
+    "window_geometry": 0.10,
+    "window_sinks": 0.05,
+    "contacts_long": 0.08,
+    "long_omission": 0.05,
+    "contacts_short": 0.06,
+    "short_omission": 0.04,
+    "top_contacts": 0.07,
+    "top_platform": 0.05,
+    "platform_contacts_overlap": 0.05,
+    "sinks": 0.05,
+    "glass": 0.05,
+    "glass_on_contacts": 0.05,
+}
 
 
 def _metric(label, value, limit, ok, key):
@@ -180,10 +234,16 @@ def _generate_metrics(rule_name, triggered):
     return out
 
 
-def _rule_row(rule_name, category, role, part_id, empty=False):
-    """Строка правила для панели «Анализ кадра»."""
+def _rule_row(rule_name, role, part_id, present=True, defects=None):
+    """Строка правила для панели «Анализ кадра».
+
+    ``present`` — подтверждено ли присутствие корпуса обеими входными камерами;
+    ``defects`` — сработавшие defect-правила этого корпуса (на текущей стадии).
+    ``triggered`` для правила берётся из ``defects``, как в реальной инспекции.
+    """
+    defects = defects or []
     if rule_name == "part_presence":
-        if empty:
+        if not present:
             return {
                 "name": "part_presence",
                 "triggered": False,
@@ -221,16 +281,7 @@ def _rule_row(rule_name, category, role, part_id, empty=False):
             }]],
         }
 
-    # Определяем, сработало ли правило для этой категории.
-    triggered = False
-    if category == CATEGORY_BAD:
-        triggered = random.random() < 0.7
-    elif category == CATEGORY_CLEANUP:
-        triggered = rule_name in ("glass", "glass_on_contacts") and random.random() < 0.85
-    # «Выключенные» правила в демо не срабатывают.
-    if random.random() < 0.08:
-        triggered = False
-
+    triggered = rule_name in defects
     human = HUMAN_CAUSE_MAP.get((rule_name, True))
     metrics = _generate_metrics(rule_name, triggered)
     return {
@@ -554,8 +605,10 @@ class Emulator:
                 "detections": 6,
             })
         rules = [
-            _rule_row("part_presence", CATEGORY_GOOD, "INPUT_LEFT", None),
-            _rule_row("window_geometry", CATEGORY_BAD, "INPUT_LEFT", None),
+            _rule_row("part_presence", "INPUT_LEFT", None,
+                      present=True, defects=[]),
+            _rule_row("window_geometry", "INPUT_LEFT", None,
+                      present=True, defects=["window_geometry"]),
         ]
         self._diagnostics = {
             "status": "PASSED", "kind": "VISION_RULES",
@@ -583,9 +636,18 @@ class Emulator:
         self.selected_analysis_active = True
         self.selected_analysis_role = role
         self._set_process("SELECTED_MODEL_ANALYSIS", f"Анализ кадра {role}")
-        category = CATEGORY_BAD if random.random() < 0.5 else CATEGORY_GOOD
-        rules = [_rule_row("part_presence", category, role, None)]
-        rules.extend(_rule_row(r, category, role, None) for r in ROLE_RULES.get(role, []))
+        # Стоящий анализ: деталь присутствует, часть правил роли срабатывает
+        # случайно (как в реальной инспекции по свежему кадру).
+        role_defects = [
+            r for r in ROLE_RULES.get(role, [])
+            if random.random() < 0.3
+        ]
+        rules = [_rule_row("part_presence", role, None,
+                           present=True, defects=[])]
+        rules.extend(
+            _rule_row(r, role, None, present=True, defects=role_defects)
+            for r in ROLE_RULES.get(role, [])
+        )
         self._diagnostics = {
             "status": "PASSED", "kind": "SELECTED_MODEL",
             "message": f"{role}: свежий кадр; правил {len(rules)}; объекты 5",
@@ -776,25 +838,36 @@ class Emulator:
             }
 
         # Активный корпус, чей анализ показать (чаще всего на +0 или +4).
-        part = self._part_at(OFFSET_INPUT) or self._part_at(OFFSET_SPIDER)
+        # Для INPUT-ролей — корпус под входом, для SPIDER/TOP — под контролем.
+        is_input_role = role in ("INPUT_LEFT", "INPUT_RIGHT")
+        part = self._part_at(OFFSET_INPUT if is_input_role else OFFSET_SPIDER)
         if part is None:
+            stage = "ВХОД" if is_input_role else "КОНТРОЛЬ +4"
             return {
                 "available": True, "kind": "CYCLE", "active": True,
                 "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА", "role": role,
-                "group": "INPUT", "stage": "ВХОД", "part_id": None,
-                "message": f"{'ВХОД' if role in ('INPUT_LEFT','INPUT_RIGHT') else 'КОНТРОЛЬ +4'} · {role}: результатов анализа пока нет",
+                "group": "INPUT" if is_input_role else "SPIDER",
+                "stage": stage, "part_id": None,
+                "message": f"{stage} · {role}: результатов анализа пока нет",
                 "models": [], "rules": [],
                 "picture_run": None, "picture_reason": None, "updated_at": time.time(),
             }
 
-        category = part["category"]
-        rules = [_rule_row("part_presence", category, role, part["id"])]
+        # Правила, сработавшие на текущей стадии корпуса (вход/контроль).
+        if is_input_role:
+            stage_defects = part.get("input_defects") or []
+        else:
+            stage_defects = part.get("spider_defects") or []
+        # part_presence подтверждён (деталь на линии есть) — пустой лоток
+        # показываем только когда под входом ничего нет (part is None выше).
+        rules = [_rule_row("part_presence", role, part["id"],
+                           present=True, defects=[])]
         rules.extend(
-            _rule_row(r, category, role, part["id"])
+            _rule_row(r, role, part["id"], present=True, defects=stage_defects)
             for r in ROLE_RULES.get(role, [])
         )
-        stage = "ВХОД" if role in ("INPUT_LEFT", "INPUT_RIGHT") else "КОНТРОЛЬ +4"
-        group = "INPUT" if role in ("INPUT_LEFT", "INPUT_RIGHT") else "SPIDER"
+        stage = "ВХОД" if is_input_role else "КОНТРОЛЬ +4"
+        group = "INPUT" if is_input_role else "SPIDER"
         return {
             "available": True, "kind": "CYCLE", "active": True,
             "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА", "role": role, "group": group,
@@ -1040,6 +1113,7 @@ class Emulator:
 
         # 5. Анализ входа (+0) и контроля (+4).
         new_part = self._spawn_input_part()
+        self._run_spider_inspection()
         frames = self._generate_frames()
         self._set_process(
             "SETTLE", "Ожидание затухания вибрации перед съёмкой",
@@ -1076,24 +1150,93 @@ class Emulator:
             self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
             self._refresh(frames=frames)
 
+    def _input_presence(self):
+        """Присутствие детали под входными камерами (как part_presence).
+
+        Деталь засчитывается только если её видят ОБЕ камеры (INPUT_LEFT и
+        INPUT_RIGHT). Каждая камера «видит» деталь случайно с вероятностью
+        INPUT_CAMERA_PRESENT_PROB — это случайное появление ячеек под первыми
+        двумя камерами. Возвращает (present: bool, left: bool, right: bool).
+        """
+        left = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
+        right = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
+        return (left and right), left, right
+
+    def _run_defect_rules(self, rule_names):
+        """Сработавшие defect-правила: правило сработало -> его имя в списке."""
+        return [
+            rule for rule in rule_names
+            if self.rng.random() < RULE_TRIGGER_PROB.get(rule, 0.0)
+        ]
+
+    def _recompute_route(self, part):
+        """Категория корпуса строго как в Part._recompute().
+
+        - нет дефектов: GOOD только после полной инспекции, иначе UNKNOWN;
+        - только glass/glass_glare -> CLEANUP;
+        - любой другой дефект -> BAD.
+        """
+        defects = part["input_defects"] + part["spider_defects"]
+        fully = part["input_inspected"] and part["spider_inspected"]
+        if not defects:
+            part["category"] = CATEGORY_GOOD if fully else CATEGORY_UNKNOWN
+            return
+        if all(d in CLEANUP_DEFECTS for d in defects):
+            part["category"] = CATEGORY_CLEANUP
+        else:
+            part["category"] = CATEGORY_BAD
+
     def _spawn_input_part(self):
-        """Создать новый случайный корпус на входе (или пустой лоток)."""
+        """Обработать вход +0: присутствие -> входные правила -> корпус.
+
+        Если деталь не подтверждена обеими камерами — пустой лоток (Part и
+        архив не создаются). Иначе создаётся корпус, проходят INPUT
+        defect-правила (window_geometry, window_sinks) и предварительно
+        пересчитывается маршрут (полная инспекция завершится на +4).
+        """
         if not self.sm.accepts_new_parts:
             return None
-        if self.rng.random() < EMPTY_PROB:
+        present, left, right = self._input_presence()
+        if not present:
             self.empty += 1
-            print(f"[EMU] Step {self.current_step}: пустой лоток (empty={self.empty})")
+            print(f"[EMU] Step {self.current_step}: пустой лоток "
+                  f"(LEFT={left}, RIGHT={right}; empty={self.empty})")
             return None
         self.part_counter += 1
-        category = self.rng.choices(CATEGORY_WEIGHTS, CATEGORY_PROBS)[0]
+        input_defects = self._run_defect_rules(INPUT_RULES)
         part = {
             "id": self.part_counter,
             "step_created": self.current_step,
-            "category": category,
+            "category": CATEGORY_UNKNOWN,
+            "input_defects": input_defects,
+            "spider_defects": [],
+            "input_inspected": True,
+            "spider_inspected": False,
         }
+        self._recompute_route(part)
         self.parts.append(part)
-        print(f"[EMU] Step {self.current_step}: корпус #{part['id']} -> {category}")
+        print(f"[EMU] Step {self.current_step}: корпус #{part['id']} "
+              f"вход-дефекты={input_defects or ['нет']} "
+              f"маршрут(предв.)={part['category']}")
         return part
+
+    def _run_spider_inspection(self):
+        """Контроль +4: SPIDER/TOP defect-правила корпусов на этой позиции.
+
+        После этой стадии корпус полностью инспектирован, маршрут
+        финализируется по Part._recompute().
+        """
+        for part in self.parts:
+            if self.current_step - part["step_created"] != OFFSET_SPIDER:
+                continue
+            if part["spider_inspected"]:
+                continue
+            part["spider_inspected"] = True
+            part["spider_defects"] = self._run_defect_rules(SPIDER_RULES)
+            self._recompute_route(part)
+            print(f"[EMU] Контроль +4: корпус #{part['id']} "
+                  f"дефекты={part['spider_defects'] or ['нет']} "
+                  f"маршрут={part['category']}")
 
     def _execute_drop(self, part):
         category = part["category"]
