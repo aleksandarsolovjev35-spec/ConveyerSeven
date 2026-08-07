@@ -408,6 +408,9 @@ class DropFlowTest(unittest.TestCase):
             p = next(p for p in snap["line_parts"] if p.get("id") == part.id)
             self.assertFalse(p.get("dropping"))
             self.assertEqual(p.get("category"), CATEGORY_BAD)
+            # +7 — последняя ячейка перед распределителем: деталь ждёт
+            # сброса следующим шагом независимо от положения заслонки.
+            self.assertTrue(p.get("held"))
 
         # Следующий шаг завершает серию: деталь падает, лопасть закрывается.
         cycle._run_once_safe()
