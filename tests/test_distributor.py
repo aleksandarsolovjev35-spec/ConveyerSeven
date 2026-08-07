@@ -43,7 +43,9 @@ class DistributorTest(unittest.TestCase):
         dist.dist1.move_absolute = lambda pos: (log.append(("dist1", pos)), original1(pos))[1]
         dist.dist2.move_absolute = lambda pos: (log.append(("dist2", pos)), original2(pos))[1]
         dist.prepare_route(CATEGORY_CLEANUP, 2)
-        self.assertEqual(log, [("dist2", 340), ("dist1", 340)])
+        # Wrapper записывает событие оси, а FakeAxis дополнительно хранит
+        # собственный («move») вызов в том же тестовом списке.
+        self.assertEqual(log[:2], [("dist2", 340), ("dist1", 340)])
 
     def test_channel_change_closes_first_gate_before_dist2_moves(self):
         dist = self.make()

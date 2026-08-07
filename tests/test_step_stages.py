@@ -25,6 +25,13 @@ class FakeLive:
         self.resume_calls += 1
         self.paused = False
 
+    def pause_roles(self, roles, timeout=5.0):
+        self.pause_roles_calls = getattr(self, "pause_roles_calls", []) + [tuple(roles)]
+        return True
+
+    def resume_roles(self, roles):
+        self.resume_roles_calls = getattr(self, "resume_roles_calls", []) + [tuple(roles)]
+
 
 class StepSequencerTest(unittest.TestCase):
     def setUp(self):
@@ -70,6 +77,20 @@ class StepSequencerTest(unittest.TestCase):
         self.stages.enter_motion()
         self.assertFalse(self.stages.static)
         self.assertEqual(self.live.resume_calls, 1)
+
+    def test_role_capture_releases_only_captured_roles_early(self):
+        roles = ("INPUT_LEFT", "INPUT_RIGHT")
+        self.stages.enter_motion()
+        self.stages.enter_settle()
+        self.stages.enter_capture(roles)
+        self.assertEqual(self.live.pause_roles_calls, [roles])
+        self.assertTrue(self.stages.static)
+        self.stages.release_capture_roles()
+        self.assertEqual(self.live.resume_roles_calls, [roles])
+        self.assertFalse(self.stages.static)
+        # Анализ идёт по сохранённым кадрам и не должен снова блокировать live.
+        self.stages.enter_analysis()
+        self.assertEqual(self.live.resume_roles_calls, [roles])
 
     def test_cannot_skip_analysis_from_capture(self):
         self.stages.enter_motion()
