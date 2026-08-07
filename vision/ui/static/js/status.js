@@ -216,6 +216,10 @@ function updateLineStatus(ls) {
 
 // ─── Line cells ──────────────────────────────────────────────
 const _lineTokens = new Map();
+// Tokens that are fading after leaving the logical line. They are kept out
+// of _lineTokens so a new status cannot move them, but a fast consecutive drop
+// must still be able to remove an old chute token before adding another one.
+const _lineExitTokens = new Set();
 let _lineSyncDone = false;
 let _appliedLineParts = [];
 let _appliedInLine = 0;
@@ -227,12 +231,27 @@ function lineMoveDuration(process = {}) {
     return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
 }
 
+// ``CONVEYOR_CONFIRMED`` is published after the controller has already
+// advanced the logical positions.  Treating every phase containing the word
+// CONVEYOR as motion advances the same token for a second time, then makes it
+// jump back on SETTLE.  Keep the transport phases explicit so the animation
+// has exactly one step per physical move.
+function isConveyorTransportPhase(phase) {
+    const p = String(phase || '').toUpperCase();
+    return p === 'CONVEYOR'
+        || p === 'CONVEYOR_COMMAND'
+        || p === 'CONVEYOR_MOVING'
+        || p === 'MOTION'
+        || p.startsWith('MOTION_');
+}
+
 function tapeShortLabel(process) {
     if (!process || !process.phase) return '';
     const p = String(process.phase).toUpperCase();
     const lbl = String(process.label || '').toLowerCase();
     // Короткие названия без лишних деталей (кандидат, счётчики, таймеры).
-    if (p.includes('CONVEYOR')) return 'ДВИЖЕНИЕ';
+    if (isConveyorTransportPhase(p)) return 'ДВИЖЕНИЕ';
+    if (p === 'CONVEYOR_CONFIRMED') return 'СТОЯНКА';
     if (p === 'PART_DROP') return 'СБРОС';
     if (p === 'PART_HOLD') {
         if (lbl.includes('серии')) return 'ОЖИДАНИЕ СБРОСА';
@@ -250,7 +269,6 @@ function tapeShortLabel(process) {
     if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
     if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
     if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
-    if (p === 'CONVEYOR_COMMAND' || p === 'CONVEYOR_CONFIRMED') return 'ДВИЖЕНИЕ';
     if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
     if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
     if (p.includes('PAUSE')) return 'ПАУЗА';
@@ -280,6 +298,32 @@ function _applyTokenCategory(el, category) {
     if (category === 'BAD') el.classList.add('cell-bad');
     else if (category === 'CLEANUP') el.classList.add('cell-cleanup');
     else if (category === 'GOOD') el.classList.add('cell-good');
+}
+
+function _removeLineTokenElement(token) {
+    if (!token) return;
+    _lineExitTokens.delete(token);
+    if (token.el && token.el.parentNode) token.el.parentNode.removeChild(token.el);
+}
+
+function _clearChuteExitTokens() {
+    for (const token of [..._lineExitTokens]) {
+        if (token.exitPosition === 8) _removeLineTokenElement(token);
+    }
+}
+
+function _updateChuteOccupied(cells) {
+    const occupied = [..._lineTokens.values()].some(token => token.position === 8)
+        || [..._lineExitTokens].some(token => (
+            token.exitPosition === 8
+            && token.el
+            && token.el.parentNode
+        ));
+    cells.forEach(cell => {
+        if (Number(cell.dataset.pos) === 8) {
+            cell.classList.toggle('chute-occupied', occupied);
+        }
+    });
 }
 
 function _updateLineGates(lineParts, process = {}) {
@@ -378,7 +422,8 @@ function _updateDistributorRoute(ls) {
 
 function updateLineCells(lineParts, process = {}) {
     if (!els.lineCells) return;
-    const isConveyorMoving = (process.phase || '').includes('CONVEYOR') || (process.phase || '').includes('MOTION');
+    const phase = String(process.phase || '').toUpperCase();
+    const isConveyorMoving = isConveyorTransportPhase(phase);
     let belt = els.lineCells.querySelector('.conveyor-belt');
     if (!belt) {
         belt = document.createElement('div');
@@ -406,8 +451,7 @@ function updateLineCells(lineParts, process = {}) {
 
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
     const active = Array.isArray(process.positions) ? process.positions : [];
-    const phase = process.phase || '';
-    const phaseUpper = String(phase).toUpperCase();
+    const phaseUpper = phase;
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         cell.className = 'line-cell';
@@ -443,6 +487,11 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
+    // Gate labels do not depend on layout measurements. Update them before
+    // the geometry guard so a cold first render still shows the route while
+    // the browser is calculating the grid rectangles.
+    _updateLineGates(lineParts, process);
+
     const pendingAnalysis = state.pendingAnalysisVersion !== null;
     const appliedById = new Map(_appliedLineParts.map(part => [part.id, part.category]));
     const wanted = new Map();
@@ -463,11 +512,15 @@ function updateLineCells(lineParts, process = {}) {
     const geometryReady = !!(containerRect.width && rects[0] && rects[0].width);
     const step = (rects[0] && rects[1]) ? (rects[1].left - rects[0].left) : (rects[0] ? rects[0].width + 3 : 0);
     const duration = lineMoveDuration(process);
-    const isConveyorPhase = phaseUpper.includes('CONVEYOR');
+    const isConveyorPhase = isConveyorTransportPhase(phaseUpper);
+    const isDropPhase = phaseUpper === 'PART_DROP'
+        || phaseUpper === 'CONVEYOR_CONFIRMED';
 
     for (const [id, token] of [..._lineTokens.entries()]) {
         if (wanted.has(id)) continue;
         _lineTokens.delete(id);
+        token.exitPosition = token.dropping ? 8 : null;
+        _lineExitTokens.add(token);
         if (token.dropping) {
             // Падение: маркер уже уехал в лоток +8 — гаснет на месте.
             token.el.style.opacity = '0';
@@ -484,8 +537,10 @@ function updateLineCells(lineParts, process = {}) {
             token.el.style.left = `${exitLeft}px`;
             token.el.style.opacity = '0';
         }
-        const el = token.el;
-        setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, duration + 80);
+        setTimeout(() => {
+            _removeLineTokenElement(token);
+            _updateChuteOccupied(cells);
+        }, duration + 80);
     }
 
     if (!geometryReady) {
@@ -493,6 +548,7 @@ function updateLineCells(lineParts, process = {}) {
             const token = _lineTokens.get(id);
             if (token) token.position = meta.position;
         }
+        _updateChuteOccupied(cells);
         return;
     }
 
@@ -505,16 +561,22 @@ function updateLineCells(lineParts, process = {}) {
         // исчезновения детали. В остальных случаях лента везёт все корпуса
         // синхронно — во время CONVEYOR каждый маркер скользит на ячейку вправо.
         let targetPos = meta.position;
+        let dropAnimationActive = false;
         if (meta.dropping) {
             const alreadyInChute = !!(token && token.position === 8);
-            if (alreadyInChute) targetPos = 8;
-            else if (!token) targetPos = 8;
-            else if (isConveyorPhase || phaseUpper.includes('PART_DROP')) targetPos = 8;
+            dropAnimationActive = alreadyInChute || isConveyorPhase || isDropPhase;
+            if (dropAnimationActive) targetPos = 8;
+            // ``CONVEYOR_CONFIRMED`` is not a second belt move, but it is a
+            // safe point at which a late first render must still show the
+            // pending body in the chute.  This avoids leaving it at +7 when
+            // the browser missed the short CONVEYOR_MOVING snapshot.
         } else if (isConveyorPhase) {
             targetPos = Math.min(meta.position + 1, 7);
         }
 
+        if (targetPos === 8) _clearChuteExitTokens();
         const target = rects[targetPos] || rects[meta.position] || rects[0];
+        const targetOpacity = dropAnimationActive ? '0.65' : '1';
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
@@ -528,10 +590,13 @@ function updateLineCells(lineParts, process = {}) {
             if (_lineSyncDone) {
                 el.style.left = `${target.left - step}px`;
                 el.style.opacity = '0';
-                requestAnimationFrame(() => { el.style.left = `${target.left}px`; el.style.opacity = '1'; });
+                requestAnimationFrame(() => {
+                    el.style.left = `${target.left}px`;
+                    el.style.opacity = targetOpacity;
+                });
             } else {
                 el.style.left = `${target.left}px`;
-                el.style.opacity = '1';
+                el.style.opacity = targetOpacity;
             }
         } else {
             token.el.style.top = `${target.top}px`;
@@ -539,21 +604,33 @@ function updateLineCells(lineParts, process = {}) {
             token.el.style.height = `${target.height}px`;
             const targetLeft = `${target.left}px`;
             if (token.el.style.left !== targetLeft) token.el.style.left = targetLeft;
+            if (token.el.style.opacity !== '0') token.el.style.opacity = targetOpacity;
             token.position = targetPos;
         }
-        token.dropping = !!meta.dropping;
-        token.held = !!meta.held;
+        // Backend marks a body as ``dropping`` as soon as the route is
+        // prepared.  Keep the normal hold marker until the belt actually
+        // carries it to +8; otherwise the token flashes a drop arrow at +7
+        // before motion and can look as if it jumped through the gate.
+        token.dropping = dropAnimationActive;
+        token.held = !!meta.held || (!!meta.dropping && !dropAnimationActive);
         if (token.category !== meta.category) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
         }
-        // Придержание и сброс рисуются поверх цвета категории.
-        token.el.classList.remove('token-hold', 'token-dropping');
+        // Придержание, сброс и нахождение в лотке рисуются поверх цвета
+        // категории, но не смешиваются между собой.
+        token.el.classList.remove('token-hold', 'token-dropping', 'token-in-chute');
         if (token.held) token.el.classList.add('token-hold');
         if (token.dropping) token.el.classList.add('token-dropping');
+        if (token.position === 8) token.el.classList.add('token-in-chute');
         token.el.textContent = `#${id}`;
         token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }
+
+    // The chute marker is a real visual layer above the cell symbol. Keep
+    // the symbol hidden while that layer is occupied, including the short
+    // fade-out interval after a drop.
+    _updateChuteOccupied(cells);
 
     if (!pendingAnalysis) {
         _appliedLineParts = (lineParts || []).map(part => ({
@@ -564,7 +641,6 @@ function updateLineCells(lineParts, process = {}) {
         _appliedInLine = _appliedLineParts.length;
     }
 
-    _updateLineGates(lineParts, process);
     _lineSyncDone = true;
 }
 
