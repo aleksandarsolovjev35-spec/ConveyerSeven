@@ -157,9 +157,14 @@ class ProductionCycle:
         # камерами, и только потом движение ленты.
         self._await_initial_inspection = False
 
-        # Фоновая проверка наличия детали (InputPartPresence)
+        # Фоновая проверка наличия детали (InputPartPresence). Результат
+        # действителен только до первой паузы: после паузы положение детали
+        # может быть скорректировано, поэтому старый live-кадр нельзя
+        # использовать для решения о том, что сейчас находится под INPUT-камерами.
         self._background_presence_thread = None
         self._background_presence_result = None
+        self._background_presence_usable = False
+        self._background_presence_generation = 0
 
     # Process telemetry
 
@@ -244,6 +249,7 @@ class ProductionCycle:
                 self._drain_start_time = 0
                 self._fault_reason = None
                 self._reset_frame_analysis()
+                self._invalidate_background_presence()
                 # Деталь могла остаться под входными камерами ещё до пуска:
                 # первый шаг выполняется без движения ленты, чтобы она
                 # попала в учёт, а не уехала дальше непроверенной.
@@ -284,6 +290,10 @@ class ProductionCycle:
             return False
         if self._pause_requested.is_set():
             return True
+        # Фоновая проверка могла уже закончить работу на кадре до паузы.
+        # После PAUSED этот результат больше не описывает текущую позицию:
+        # при продолжении INPUT нужно проверить заново.
+        self._invalidate_background_presence()
         self._pause_requested.set()
         self._set_process(
             "PAUSE_REQUESTED",
@@ -302,6 +312,10 @@ class ProductionCycle:
                 return False
             if self.jog is not None and (self.jog.busy or self.jog.status.get("error")):
                 return False
+            # Даже если пауза была включена без JOG, к моменту продолжения
+            # live-кадр уже мог устареть. INPUT будет снят заново после
+            # возобновления, а не решён по результату до паузы.
+            self._invalidate_background_presence()
             self._pause_requested.clear()
             accepted = self.sm.request_resume()
             if not accepted:
@@ -490,19 +504,49 @@ class ProductionCycle:
             and not (self.jog is not None and self.jog.busy)
         )
 
-    def _run_background_presence_check(self):
+    def _invalidate_background_presence(self):
+        """Запретить быстрый live-результат для текущей позиции.
+
+        ``_run_background_presence_check`` смотрит кадры из UI-кэша, а не
+        захватывает инспекционный кадр. Это безопасно только пока положение
+        ленты не менялось. Поэтому после запроса/снятия паузы нужно
+        обязательно пройти обычный свежий захват INPUT; ограничения JOG
+        этот механизм не вводит.
+        """
+        self._background_presence_generation = (
+            getattr(self, "_background_presence_generation", 0) + 1
+        )
+        self._background_presence_usable = False
+        self._background_presence_result = None
+
+    def _background_presence_is_current(self, generation: int) -> bool:
+        """Проверить, что фоновый поток относится к текущей позиции."""
+        pause_requested = getattr(self, "_pause_requested", None)
+        return (
+            getattr(self, "_background_presence_usable", False)
+            and getattr(self, "_background_presence_generation", 0) == generation
+            and not (pause_requested is not None and pause_requested.is_set())
+        )
+
+    def _run_background_presence_check(self, generation: int | None = None):
         """Проверка наличия детали по последнему лайв-изображению.
 
         Выполняется в отдельном потоке сразу после остановки ленты, пока
         основной цикл ждёт затухания вибраций (SETTLE). Это позволяет
         мгновенно определить пустой лоток и пропустить полноценный захват
-        кадров для этой позиции.
+        кадров для этой позиции. Если в это время запрошена пауза, результат
+        отбрасывается: после паузы позицию нужно подтвердить свежим кадром.
         """
         try:
+            if generation is None:
+                generation = self._background_presence_generation
+
             # Даем лайв-просмотру время обновить хотя бы один кадр после
             # физической остановки ленты. 150мс — это 2-3 такта FPS_AUX.
             time.sleep(0.15)
 
+            if not self._background_presence_is_current(generation):
+                return
             if not self.monitor or not self.monitor.server:
                 return
 
@@ -517,10 +561,17 @@ class ProductionCycle:
 
             if len(frames) < len(self.inspector.INPUT_ROLES):
                 return
+            if not self._background_presence_is_current(generation):
+                return
 
             # Выполняем быстрый прогон моделей и правила наличия
             vision_results = self.inspector.vision.process_all(frames)
             presence_result = self.inspector._evaluate_part_presence(vision_results)
+
+            # Пауза могла быть нажата во время работы моделей. Не публикуем
+            # результат, рассчитанный до изменения физической позиции.
+            if not self._background_presence_is_current(generation):
+                return
 
             # Сохраняем результат для основного цикла
             health_with_run = [
@@ -1059,15 +1110,32 @@ class ProductionCycle:
         self._last_vision_results = {}
         self._last_rule_results = []
 
+        # Запоминаем особый первый шаг до _stage_motion(): внутри него флаг
+        # _await_initial_inspection сбрасывается, иначе фоновая проверка могла
+        # ошибочно заменить обязательный свежий захват детали, уже стоящей
+        # под INPUT при пуске.
+        initial_inspection = self._await_initial_inspection
         pending_id = self._stage_motion()
 
         # Фоновая проверка наличия: запускается сразу после wait_stop()
         # внутри _stage_motion, чтобы работать параллельно с _stage_settle.
+        # Её результат — лишь оптимизация пустого лотка. При паузе он
+        # инвалидируется и _stage_capture всегда получает свежие INPUT-кадры.
+        self._background_presence_generation = (
+            getattr(self, "_background_presence_generation", 0) + 1
+        )
+        background_generation = self._background_presence_generation
         self._background_presence_result = None
         self._background_presence_thread = None
-        if accept_input_for_this_step and not self._await_initial_inspection:
+        self._background_presence_usable = (
+            accept_input_for_this_step
+            and not initial_inspection
+            and not self._pause_requested.is_set()
+        )
+        if self._background_presence_usable:
             self._background_presence_thread = threading.Thread(
                 target=self._run_background_presence_check,
+                args=(background_generation,),
                 daemon=True,
                 name="background-presence-check",
             )
@@ -1160,12 +1228,17 @@ class ProductionCycle:
         roles = []
 
         # Ожидаем завершения фоновой проверки, если она была запущена.
-        if self._background_presence_thread:
-            self._background_presence_thread.join(timeout=1.5)
+        # После паузы фоновый результат намеренно игнорируется: это кадр,
+        # снятый до паузы, а не подтверждение текущего состояния под INPUT.
+        background_thread = getattr(self, "_background_presence_thread", None)
+        if background_thread:
+            background_thread.join(timeout=1.5)
 
         input_needed = self.sm.accepts_new_parts
-        if input_needed and self._background_presence_result:
-            if self._background_presence_result["is_empty"]:
+        background_result = getattr(self, "_background_presence_result", None)
+        background_usable = getattr(self, "_background_presence_usable", False)
+        if input_needed and background_usable and background_result:
+            if background_result["is_empty"]:
                 input_needed = False
                 print(
                     f"[BG-PRESENCE] Step {self.current_step}: лоток пуст "
@@ -1392,6 +1465,10 @@ class ProductionCycle:
             and self._pause_requested.is_set()
             and not self.sm.exit_requested
         ):
+            # Барьер может быть достигнут уже после завершения фоновой
+            # проверки. С этого момента её live-кадр больше не является
+            # основанием пропускать INPUT-захват.
+            self._invalidate_background_presence()
             if self.sm.request_pause():
                 self._enter_pause_frame()
             else:
@@ -1449,11 +1526,12 @@ class ProductionCycle:
 
         # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
         # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
-        if (
-            self._background_presence_result
-            and self._background_presence_result["is_empty"]
-        ):
-            res = self._background_presence_result
+        # После паузы этот кэш недействителен, поэтому INPUT проходит обычный
+        # свежий захват и анализ даже при старом is_empty=True.
+        background_result = getattr(self, "_background_presence_result", None)
+        background_usable = getattr(self, "_background_presence_usable", False)
+        if background_usable and background_result and background_result["is_empty"]:
+            res = background_result
             result = InspectionResult(
                 stage="input",
                 defects=[],
