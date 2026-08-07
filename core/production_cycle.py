@@ -2013,7 +2013,7 @@ class ProductionCycle:
         line_parts = []
         for part in parts_snapshot:
             position = step_snapshot - part.step_created
-            position = max(0, min(position, self.OFFSET_REJECT))
+            position = max(0, min(position, self.OFFSET_REJECT + 1))
             # Сброс уже запланирован на этот шаг: деталь придержана на +7,
             # лента несёт её к лотку (между +7 и +8) или она уже падает.
             # Флаг ставится только деталям на сброс (БРАК/ОЧИСТКА): годные

@@ -501,7 +501,7 @@ function updateLineCells(lineParts, process = {}) {
         let category = (part.category || '').toUpperCase();
         if (pendingAnalysis && appliedById.has(id)) category = appliedById.get(id);
         wanted.set(id, {
-            position: Math.max(0, Math.min(Number(part.position) || 0, 7)),
+            position: Math.max(0, Math.min(Number(part.position) || 0, 8)),
             category,
             held: !!(part && part.held),
             dropping: !!(part && part.dropping),
@@ -529,7 +529,7 @@ function updateLineCells(lineParts, process = {}) {
             // Годный корпус на сортировке уходит через ворота выхода, а не в лоток:
             // уезжает дальше лотка, под ворота, и там гаснет.
             let exitLeft;
-            if (token.position === 7 && token.category === 'GOOD' && rects[8]) {
+            if (token.position >= 7 && token.category === 'GOOD' && rects[8]) {
                 exitLeft = rects[8].left + step;
             } else {
                 exitLeft = rects[token.position].left + step;
@@ -571,7 +571,7 @@ function updateLineCells(lineParts, process = {}) {
             // pending body in the chute.  This avoids leaving it at +7 when
             // the browser missed the short CONVEYOR_MOVING snapshot.
         } else if (isConveyorPhase) {
-            targetPos = Math.min(meta.position + 1, 7);
+            targetPos = Math.min(meta.position + 1, 8);
         }
 
         if (targetPos === 8) _clearChuteExitTokens();
@@ -635,7 +635,7 @@ function updateLineCells(lineParts, process = {}) {
     if (!pendingAnalysis) {
         _appliedLineParts = (lineParts || []).map(part => ({
             id: Number(part.id),
-            position: Math.max(0, Math.min(Number(part.position) || 0, 7)),
+            position: Math.max(0, Math.min(Number(part.position) || 0, 8)),
             category: (part.category || '').toUpperCase(),
         }));
         _appliedInLine = _appliedLineParts.length;
