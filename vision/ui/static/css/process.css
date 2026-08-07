@@ -158,6 +158,8 @@
     opacity: 0.5;
 }
 .production-line-cells .line-cell.line-cell-chute .chute-symbol {
+    position: relative;
+    z-index: 2;
     font: 700 13px var(--font-mono);
     color: var(--text-muted);
     pointer-events: none;
@@ -474,7 +476,7 @@
     place-items: center;
     border: 1px solid var(--accent);
     border-radius: 3px;
-    background: var(--accent-glow);
+    background: linear-gradient(var(--accent-glow), var(--accent-glow)), var(--bg-1);
     color: var(--text);
     font: 700 11px var(--font-mono);
     pointer-events: none;
@@ -489,13 +491,22 @@
 }
 
 .line-token.cell-good {
-    background: var(--ok-bg);
+    background: linear-gradient(var(--ok-bg), var(--ok-bg)), var(--bg-1);
     border-color: var(--ok);
     color: var(--ok);
 }
 
-.line-token.cell-bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
-.line-token.cell-cleanup { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+.line-token.cell-bad {
+    background: linear-gradient(var(--bad-bg), var(--bad-bg)), var(--bg-1);
+    border-color: var(--bad);
+    color: var(--bad);
+}
+
+.line-token.cell-cleanup {
+    background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--bg-1);
+    border-color: var(--warn);
+    color: var(--warn);
+}
 .line-token::after { content: "•••"; position: absolute; right: 3px; bottom: 1px; font: 700 8px var(--font-mono); opacity: 0.75; }
 .line-token.cell-good::after { content: "✓"; color: var(--ok); }
 .line-token.cell-bad::after { content: "✕"; color: var(--bad); }
@@ -510,7 +521,7 @@
 .line-token.token-hold::before {
     content: '▽';
     position: absolute;
-    left: 3px;
+    right: 3px;
     top: 1px;
     font: 700 9px var(--font-mono);
     color: var(--warn);
