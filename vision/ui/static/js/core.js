@@ -40,6 +40,42 @@ const LINE_STATE_LABELS = {
     OFFLINE: 'НЕТ СВЯЗИ',
 };
 
+// Детальные подписи фаз производственного шага для блока «СОСТОЯНИЕ ЛЕНТЫ».
+// Отображаются после операторского состояния (например, «РАБОТАЕТ · ЛЕНТА
+// ДВИЖЕТСЯ»), чтобы оператор видел, что именно делает линия на этом шаге.
+const PROCESS_PHASE_LABELS = {
+    START_POSITIONING: 'ПОДГОТОВКА К ПУСКУ',
+    READY: 'ЦИКЛ ЗАПУЩЕН',
+    INITIAL_INSPECTION: 'КОНТРОЛЬ КОРПУСА НА ВХОДЕ',
+    ROUTE_PREPARE: 'ПОДГОТОВКА МАРШРУТА',
+    CONVEYOR_COMMAND: 'КОМАНДА ДВИЖЕНИЯ',
+    CONVEYOR_MOVING: 'ЛЕНТА ДВИЖЕТСЯ',
+    CONVEYOR_CONFIRMED: 'ПОЗИЦИИ ПОДТВЕРЖДЕНЫ',
+    PART_TRANSFER: 'ПЕРЕДАЧА КОРПУСА',
+    SETTLE: 'ОЖИДАНИЕ ЗАТУХАНИЯ',
+    CAMERA_CAPTURE: 'СЪЁМКА КАМЕР',
+    INPUT_ANALYSIS: 'АНАЛИЗ ВХОДА',
+    SPIDER_CHECK: 'КОНТРОЛЬ +4',
+    SPIDER_ANALYSIS: 'КОНТРОЛЬ +4',
+    ANALYSIS_REVIEW: 'ПРОСМОТР АНАЛИЗА',
+    STEP_COMPLETE: 'ШАГ ЗАВЕРШЁН',
+    DRAINING: 'ЗАВЕРШЕНИЕ КОРПУСОВ',
+    PAUSE_REQUESTED: 'ПАУЗА НА ГРАНИЦЕ ШАГА',
+    RESUMED: 'РАБОТА ВОЗОБНОВЛЕНА',
+    JOG_HOLD: 'РУЧНОЙ ХОД ЛЕНТЫ',
+    JOG_STOPPED: 'РУЧНОЙ ХОД ОСТАНОВЛЕН',
+    CAMERA_DIAGNOSTIC: 'ПРОВЕРКА КАМЕР',
+    VISION_RULE_DIAGNOSTIC: 'ПРОВЕРКА МОДЕЛЕЙ И ПРАВИЛ',
+    DISTRIBUTOR_DIAGNOSTIC: 'ПРОВЕРКА РАСПРЕДЕЛИТЕЛЯ',
+    SELECTED_MODEL_ANALYSIS: 'АНАЛИЗ КАДРА',
+    SELECTED_MODEL_READY: 'АНАЛИЗ КАДРА ГОТОВ',
+    LIVE_SELECTED_CAMERA: 'ПОТОК ВОССТАНОВЛЕН',
+};
+
+function processPhaseLabel(value) {
+    return PROCESS_PHASE_LABELS[String(value || '').toUpperCase()] || '';
+}
+
 const AXIS_STATE_LABELS = {
     IDLE: 'В ПОЗИЦИИ',
     READY: 'В ПОЗИЦИИ',

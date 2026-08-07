@@ -39,5 +39,20 @@ await runInSandbox(sandbox, `
             stateName + ': state marker');
     }
 
+    // Детальная фаза шага: «РАБОТАЕТ · ЛЕНТА ДВИЖЕТСЯ» и т.п.
+    updateProcessPhaseLabel('RUNNING', 'CONVEYOR_MOVING');
+    assert(display.textContent === 'РАБОТАЕТ · ЛЕНТА ДВИЖЕТСЯ',
+        'RUNNING + CONVEYOR_MOVING: ' + display.textContent);
+    updateProcessPhaseLabel('RUNNING', 'CAMERA_CAPTURE');
+    assert(display.textContent === 'РАБОТАЕТ · СЪЁМКА КАМЕР',
+        'RUNNING + CAMERA_CAPTURE: ' + display.textContent);
+    updateProcessPhaseLabel('RUNNING', 'ANALYSIS_REVIEW');
+    assert(display.textContent === 'РАБОТАЕТ · ПРОСМОТР АНАЛИЗА',
+        'RUNNING + ANALYSIS_REVIEW: ' + display.textContent);
+    // В останове детальную фазу не добавляем.
+    updateProcessPhaseLabel('STOPPED', 'CONVEYOR_MOVING');
+    assert(display.textContent === 'ОСТАНОВЛЕНА',
+        'STOPPED ignores phase: ' + display.textContent);
+
     console.log('TEST LINE STATE DISPLAY OK');
 `);

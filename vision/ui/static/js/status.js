@@ -148,11 +148,21 @@ function markUiOffline() {
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
-function updateProcessPhaseLabel(lineState) {
+function updateProcessPhaseLabel(lineState, phase) {
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (!phaseEl) return;
     const activeState = String(lineState || 'IDLE').toUpperCase();
-    setIfChanged(phaseEl, lineStateLabel(activeState));
+    let label = lineStateLabel(activeState);
+    // Детальная фаза шага: например «РАБОТАЕТ · ЛЕНТА ДВИЖЕТСЯ». Для
+    // состояний останова/аварии/оффлайн фазу не добавляем — там достаточно
+    // операторского названия состояния.
+    if ((activeState === 'RUNNING' || activeState === 'STOPPING'
+         || activeState === 'PAUSED')
+        && typeof processPhaseLabel === 'function') {
+        const detail = processPhaseLabel(phase);
+        if (detail) label += ' · ' + detail;
+    }
+    setIfChanged(phaseEl, label);
     phaseEl.dataset.lineState = activeState;
     phaseEl.style.opacity = '1';
     if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
@@ -170,7 +180,8 @@ function updateLineStatus(ls) {
     if (!['IDLE', 'STOPPED'].includes(lineState)) state.startPending = false;
     updateOperationalAccordions(lineState);
 
-    updateProcessPhaseLabel(lineState);
+    const process = ls.process || {};
+    updateProcessPhaseLabel(lineState, process.phase);
     setIfChanged(els.metricStep, ls.step || 0);
 
     state.backendControls = ls.controls || {};
@@ -187,7 +198,6 @@ function updateLineStatus(ls) {
     const inLine = pendingAnalysis ? _appliedInLine : (ls.in_line || 0);
     setIfChanged(els.statInline, `${inLine} / 8`);
 
-    const process = ls.process || {};
     _updateDistributorRoute(ls);
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);

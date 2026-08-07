@@ -64,26 +64,6 @@
     position: relative;
     box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
-.line-position-labels {
-    display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
-    min-width: 0;
-    gap: 3px;
-    /* Labels aligned with the nine cells. */
-    margin: 3px 0 0;
-}
-.line-position-labels span {
-    overflow: hidden;
-    color: var(--text-muted);
-    font: 600 8px var(--font-mono);
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.line-position-labels .stage-position {
-    color: var(--text-dim);
-    font-weight: 700;
-}
 
 .line-cell.process-active { border-color: var(--ok); box-shadow: inset 0 0 0 1px var(--ok); }
 .line-cell.process-camera { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
