@@ -149,7 +149,6 @@
    заранее подготовленный маршрут BAD/CLEANUP. */
 .production-line-cells .line-cell.line-cell-chute {
     background: var(--bg-2);
-    border-style: dashed;
     border-color: var(--border-strong);
     box-shadow: none;
 }
@@ -169,14 +168,16 @@
 .production-line-cells .line-cell.line-cell-chute.chute-bad {
     border-color: var(--bad);
     color: var(--bad);
-    background: var(--bad-bg);
+    /* Непрозрачный фон канала: сквозь него не просвечивает горизонтальная
+       линия ленты за сеткой (полупрозрачный --bad-bg давал «линию» в ячейке). */
+    background: var(--bad-gate);
     box-shadow: inset 0 0 0 1px var(--bad);
 }
 .production-line-cells .line-cell.line-cell-chute.chute-bad .chute-symbol { color: var(--bad); }
 .production-line-cells .line-cell.line-cell-chute.chute-cleanup {
     border-color: var(--warn);
     color: var(--warn);
-    background: var(--warn-bg);
+    background: var(--warn-gate);
     box-shadow: inset 0 0 0 1px var(--warn);
 }
 .production-line-cells .line-cell.line-cell-chute.chute-cleanup .chute-symbol { color: var(--warn); }
