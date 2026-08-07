@@ -91,7 +91,7 @@ const UI_IDS = [
     'defects-section', 'defects-title', 'defects-list', 'jog-panel',
     'jog-last-action', 'jog-hw-serial', 'jog-hw-cameras', 'jog-hw-conveyor',
     'jog-hw-dist1', 'jog-hw-dist2', 'frame-analysis-panel',
-    'archive-settings-open', 'archive-settings-modal', 'archive-settings-close',
+    'archive-settings-open', 'archive-settings-group', 'archive-settings-modal', 'archive-settings-close',
     'archive-settings-cancel', 'archive-pick-folder', 'archive-settings-save',
     'archive-root-path', 'archive-jpeg-quality', 'archive-zip-compression',
     'archive-zip-level', 'archive-enabled', 'archive-compress-on-shutdown', 'archive-delete-original',
