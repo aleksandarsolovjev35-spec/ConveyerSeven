@@ -45,7 +45,7 @@ from vision.ui.server.server import CAMERA_ORDER
 from core.state_machine import StateMachine, State
 from core.rule_report import HUMAN_CAUSE_MAP
 from domain.threshold_loader import ThresholdLoader
-from config import load_archive_config
+from config import load_archive_config, load_calibration
 
 from domain.part import (
     CATEGORY_GOOD,
@@ -194,6 +194,28 @@ RULE_TRIGGER_PROB = {
     "glass_on_contacts": 0.05,
 }
 
+# ── Реалистичные тайминги фаз шага (сек) ────────────────────────
+# Согласованы с calibration.json (см. conveyor_speed, settle_time, drop_time,
+# axis_speed) и с реальной физикой железа. Фронтенд анимирует ленту в течение
+# `8400000 / conveyor_speed` мс (при 20000 — 420 мс), поэтому фаза движения
+# ленты должна длиться не меньше этой анимации.
+DEFAULT_CONVEYOR_SPEED = 20000
+DEFAULT_SETTLE_TIME = 0.5
+DEFAULT_DROP_TIME = 0.8
+DEFAULT_AXIS_SPEED = 300
+DEFAULT_REVIEW_SECONDS = 4.0
+
+# Базовые тайминги (сек). Могут быть переопределены значениями из
+# calibration.json, если он существует.
+TIME_ROUTE_PREPARE = 1.2     # перемещение DIST1/DIST2 на маршрут (ось ~300 шаг/с)
+TIME_BELT_MOVE = 1.4         # лента на 2 деления (движение + разгон/торможение)
+TIME_CONVEYOR_CONFIRM = 0.3  # подтверждение позиций контроллером
+TIME_PART_TRANSFER = 0.6     # корпус прошёл распределитель
+TIME_SETTLE = 0.5            # затухание вибрации перед съёмкой
+TIME_CAPTURE = 0.35          # съёмка камер
+TIME_INPUT_ANALYSIS = 0.7    # модели + входные правила
+TIME_SPIDER_ANALYSIS = 0.7   # модели + правила контроля +4
+
 
 def _metric(label, value, limit, ok, key):
     """Метрика панели «Анализ кадра» (тот же формат, что у UIServer)."""
@@ -309,7 +331,7 @@ class Emulator:
     """Имитация производственной линии поверх настоящего UIServer."""
 
     def __init__(self, seed=None, review_seconds=4.0, auto_start=True,
-                 archive_enabled=True):
+                 archive_enabled=True, time_scale=1.0):
         self.rng = random.Random(seed)
         if seed is not None:
             random.seed(seed)
@@ -368,6 +390,12 @@ class Emulator:
         self._live_thread = None
 
         self._current_camera_role = CAMERA_ORDER[0]
+
+        # Масштаб таймингов: 1.0 — реалистичные паузы; меньше — ускорение
+        # (удобно для тестов). Базовые значения умножаются на масштаб.
+        self.time_scale = max(0.01, float(time_scale))
+        # Тайминги из calibration.json (если файл доступен), иначе — базовые.
+        self._load_timings()
 
         self._setup_thresholds()
         self._setup_archive(archive_enabled)
@@ -441,6 +469,58 @@ class Emulator:
             self.archive = None
             self.server.archive = None
             print(f"[EMU] Архив недоступен: {exc}")
+
+    def _load_timings(self):
+        """Тайминги фаз шага из calibration.json (реалистичная физика).
+
+        Берём conveyor_speed / settle_time / drop_time / axis_speed и
+        пересчитываем длительности фаз. Если файла нет — оставляем базовые
+        значения DEFAULT_*/TIME_*.
+        """
+        try:
+            calib = load_calibration()
+        except Exception as exc:
+            print(f"[EMU] calibration.json недоступен, тайминги по умолчанию: {exc}")
+            calib = {}
+
+        conveyor_speed = float(calib.get("conveyor_speed", DEFAULT_CONVEYOR_SPEED) or DEFAULT_CONVEYOR_SPEED)
+        settle_time = float(calib.get("settle_time", DEFAULT_SETTLE_TIME) or DEFAULT_SETTLE_TIME)
+        drop_time = float(calib.get("drop_time", DEFAULT_DROP_TIME) or DEFAULT_DROP_TIME)
+        axis_speed = float(calib.get("axis_speed", DEFAULT_AXIS_SPEED) or DEFAULT_AXIS_SPEED)
+
+        # Движение ленты не должно быть короче фронтенд-анимации маркера
+        # (8400000 / speed мс). Фактический ход ленты — с разгоном/торможением.
+        belt_anim = 8400000 / max(1.0, conveyor_speed) / 1000.0
+        # Реальный шаг ленты (2 деления) с учётом скорости: аппроксимация.
+        steps = 2 * float(calib.get("normal_steps", 19048) or 19048)
+        belt_phys = steps / max(1.0, conveyor_speed)
+        # Фаза движения = максимум анимации и физики, с небольшим запасом.
+        scale = self.time_scale
+        self.time_belt_move = max(TIME_BELT_MOVE, belt_anim + 0.15, belt_phys * 0.5) * scale
+        # Позиционирование заслонок: DIST1 ход 340 при скорости оси.
+        self.time_route_prepare = max(TIME_ROUTE_PREPARE, 340.0 / max(1.0, axis_speed)) * scale
+        self.time_settle = max(0.3, settle_time) * scale
+        self.time_part_transfer = max(0.4, drop_time) * scale
+        # Съёмка/анализ — фиксированные реалистичные паузы.
+        self.time_capture = TIME_CAPTURE * scale
+        self.time_input_analysis = TIME_INPUT_ANALYSIS * scale
+        self.time_spider_analysis = TIME_SPIDER_ANALYSIS * scale
+        self.time_conveyor_confirm = TIME_CONVEYOR_CONFIRM * scale
+        print(
+            f"[EMU] Тайминги: маршрут {self.time_route_prepare:.2f}с, "
+            f"лента {self.time_belt_move:.2f}с, оседание {self.time_settle:.2f}с, "
+            f"передача {self.time_part_transfer:.2f}с"
+        )
+
+    def _sleep_cancellable(self, seconds: float):
+        """Пауза с проверкой отмены (СТОП / принудительный выход)."""
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            self._check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.1 * self.time_scale, remaining))
 
     # ── Привязка серверных колбэков ────────────────────────────
 
@@ -1090,10 +1170,13 @@ class Emulator:
     # ── Производственный цикл (имитация) ───────────────────────
 
     def _run_once(self):
-        """Один шаг линии: маршрут -> движение -> анализ -> передача."""
+        """Один шаг линии по реальной фазовой последовательности:
+        маршрут -> движение -> подтверждение -> передача -> оседание ->
+        съёмка -> анализ -> просмотр.
+        """
         self._check_cancelled()
 
-        # 1. Маршрут корпуса на +7 до движения.
+        # 1. Маршрут корпуса на +7 до движения (перемещение заслонок).
         pending = self._pending_drop()
         if pending:
             self._prepare_route(pending["category"])
@@ -1102,7 +1185,7 @@ class Emulator:
                 part_id=pending["id"], positions=[OFFSET_REJECT],
             )
             self._refresh()
-            time.sleep(0.5)
+            self._sleep_cancellable(self.time_route_prepare)
 
         # 2. Движение ленты.
         self._set_process(
@@ -1112,11 +1195,18 @@ class Emulator:
         )
         frames = self._generate_frames()
         self._refresh(frames=frames)
-        time.sleep(1.0)
+        self._sleep_cancellable(self.time_belt_move)
         self._check_cancelled()
 
         # 3. Подтверждение позиций: логический шаг выполнен.
         self.current_step += 1
+        self._set_process(
+            "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
+            part_id=(pending["id"] if pending else None),
+            positions=range(OFFSET_REJECT + 1),
+        )
+        self._refresh(frames=frames)
+        self._sleep_cancellable(self.time_conveyor_confirm)
 
         # 4. Передача корпуса, достигшего +8.
         if pending:
@@ -1124,31 +1214,53 @@ class Emulator:
                 "PART_TRANSFER", "Корпус прошёл распределитель",
                 part_id=pending["id"], positions=[OFFSET_REJECT],
             )
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_part_transfer)
             self._execute_drop(pending)
 
-        # 5. Анализ входа (+0) и контроля (+4).
-        new_part = self._spawn_input_part()
-        self._run_spider_inspection()
-        frames = self._generate_frames()
+        # 5. Оседание вибрации перед съёмкой.
         self._set_process(
             "SETTLE", "Ожидание затухания вибрации перед съёмкой",
             positions=[OFFSET_INPUT, OFFSET_SPIDER],
         )
         self._refresh(frames=frames)
-        time.sleep(0.4)
+        self._sleep_cancellable(self.time_settle)
+
+        # 6. Съёмка камер под входом (+0) и контролем (+4).
+        self._set_process(
+            "CAMERA_CAPTURE", "Синхронный захват камер",
+            positions=[OFFSET_INPUT, OFFSET_SPIDER],
+        )
+        self._refresh(frames=frames)
+        self._sleep_cancellable(self.time_capture)
+
+        # 7. Анализ входа (+0) и контроля (+4).
+        new_part = self._spawn_input_part()
+        has_spider = self._run_spider_inspection()
+        frames = self._generate_frames()
 
         if new_part is not None:
             self._set_process(
                 "INPUT_ANALYSIS", f"Вход: анализ кандидата #{new_part['id']}",
                 part_id=new_part["id"], positions=[OFFSET_INPUT],
             )
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_input_analysis)
         else:
             self._set_process("INPUT_ANALYSIS", "Вход: лоток пуст",
                               positions=[OFFSET_INPUT])
-        self._refresh(frames=frames)
-        time.sleep(0.3)
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_capture)
 
-        # 6. Просмотр результатов (REVIEW).
+        if has_spider:
+            self._set_process(
+                "SPIDER_ANALYSIS", "Контроль +4: модели и правила",
+                positions=[OFFSET_SPIDER],
+            )
+            self._refresh(frames=frames)
+            self._sleep_cancellable(self.time_spider_analysis)
+
+        # 8. Просмотр результатов (REVIEW).
         self._set_process(
             "ANALYSIS_REVIEW", "Просмотр результатов анализа",
             positions=[OFFSET_INPUT, OFFSET_SPIDER],
@@ -1239,11 +1351,14 @@ class Emulator:
         """Контроль +4: SPIDER/TOP defect-правила корпусов на этой позиции.
 
         После этой стадии корпус полностью инспектирован, маршрут
-        финализируется по Part._recompute().
+        финализируется по Part._recompute(). Возвращает True, если в этом
+        шаге на +4 действительно был корпус (и проходил анализ).
         """
+        inspected = False
         for part in self.parts:
             if self.current_step - part["step_created"] != OFFSET_SPIDER:
                 continue
+            inspected = True
             if part["spider_inspected"]:
                 continue
             part["spider_inspected"] = True
@@ -1252,6 +1367,7 @@ class Emulator:
             print(f"[EMU] Контроль +4: корпус #{part['id']} "
                   f"дефекты={part['spider_defects'] or ['нет']} "
                   f"маршрут={part['category']}")
+        return inspected
 
     def _execute_drop(self, part):
         category = part["category"]
@@ -1336,7 +1452,7 @@ class Emulator:
                     if self.sm.exit_requested:
                         break
                     self._refresh()
-                    time.sleep(0.15)
+                    time.sleep(0.15 * self.time_scale)
         finally:
             print("[EMU] Цикл имитации завершён")
 
@@ -1348,7 +1464,7 @@ class Emulator:
         while not self._cancel.is_set():
             frames = self._generate_frames()
             self.server.update(frames=frames)
-            time.sleep(1.2)
+            time.sleep(max(0.05, 1.2 * self.time_scale))
 
     # ── Запуск / остановка ─────────────────────────────────────
 
@@ -1357,7 +1473,7 @@ class Emulator:
             self.server.boot_step_start(key)
         import time as _t
         for key, _ in self.server.BOOT_STEPS:
-            _t.sleep(0.12)
+            _t.sleep(0.12 * self.time_scale)
             self.server.boot_step_done(key)
         self.server.boot_complete()
 
@@ -1413,6 +1529,8 @@ def _parse_args():
                    help="не запускать цикл автоматически (нажать ПУСК вручную)")
     p.add_argument("--no-archive", action="store_true",
                    help="отключить запись архива партий")
+    p.add_argument("--time-scale", type=float, default=1.0,
+                   help="масштаб таймингов (1.0 = реалистично, <1 быстрее)")
     return p.parse_args()
 
 
@@ -1423,6 +1541,7 @@ def main():
         review_seconds=args.review,
         auto_start=not args.no_auto_start,
         archive_enabled=not args.no_archive,
+        time_scale=args.time_scale,
     )
     emu.run(host=args.host, port=args.port)
 

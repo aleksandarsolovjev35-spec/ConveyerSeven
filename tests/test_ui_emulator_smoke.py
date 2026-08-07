@@ -73,7 +73,8 @@ def main():
     _ensure_cv2()
     import ui_emulator
 
-    emu = ui_emulator.Emulator(seed=7, review_seconds=0.0, auto_start=True)
+    emu = ui_emulator.Emulator(seed=7, review_seconds=0.0, auto_start=True,
+                               time_scale=0.3)
     emu._boot()
     emu.server.start_server(host="127.0.0.1", port=8765)
     emu.begin_simulation(start=False)  # manually drive start below
