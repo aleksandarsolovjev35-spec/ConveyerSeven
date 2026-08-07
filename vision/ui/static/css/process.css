@@ -496,7 +496,9 @@
 
 .line-token.cell-bad { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
 .line-token.cell-cleanup { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
-.line-token::after { content: "•••"; position: absolute; right: 3px; bottom: 1px; font: 700 8px var(--font-mono); opacity: 0.75; }
+/* Глиф категории в правом нижнем углу маркера. Без категории (например,
+   UNKNOWN) глифа нет — только рамка и короткий ID, без «шума». */
+.line-token::after { content: ""; position: absolute; right: 3px; bottom: 1px; font: 700 8px var(--font-mono); opacity: 0.75; }
 .line-token.cell-good::after { content: "✓"; color: var(--ok); }
 .line-token.cell-bad::after { content: "✕"; color: var(--bad); }
 .line-token.cell-cleanup::after { content: "🧹"; color: var(--warn); }
@@ -518,9 +520,11 @@
 }
 
 /* Маркер падающего корпуса: в шаге сброса лента несёт корпус от +7 к
-   лотку +8 — маркер уезжает в зону сброса и тонет в ней. */
+   лотку +8 — маркер уезжает в зону сброса и «тонет» в ней. Маркер рисуется
+   полностью непрозрачным, чтобы он не «просвечивал» залитый лоток и не
+   сливался с ним на +7/+8. */
 .line-token.token-dropping {
-    opacity: 0.65;
+    opacity: 1;
     box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--bad);
 }
 .line-token.token-dropping.cell-cleanup {
@@ -528,10 +532,18 @@
 }
 .line-token.token-dropping::after { content: "▼"; color: inherit; opacity: 0.85; }
 
-/* В лотке маркер находится над символом ячейки. Символ скрывается
-   классом chute-occupied, поэтому две стрелки и две рамки не смешиваются. */
+/* В лотке маркер находится над символом ячейки. Символ скрывается классом
+   chute-occupied, а сам маркер получает непрозрачную тёмную заливку: он
+   читается как отдельный бокс поверх залитого канала лотка, а не сливается
+   с ним. Так на +7/+8 не получается «двойной заливки» одного цвета. */
 .line-token.token-in-chute {
     z-index: 6;
+    opacity: 1;
+    /* Непрозрачная тёмная заливка: маркер в лотке читается как отдельный
+       бокс, а не просвечивает цвет канала лотка насквозь. Категория
+       остаётся видимой через border-color (cell-bad/cell-cleanup/cell-good)
+       и стрелку падения. */
+    background: var(--bg-2);
 }
 
 /* === Human-readable defect cause (simple & bold) === */
