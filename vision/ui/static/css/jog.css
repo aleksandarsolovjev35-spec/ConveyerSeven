@@ -146,20 +146,6 @@
     opacity: 0.8;
 }
 
-/* ─── JOG action ───────────────────────────────────────────────── */
-
-.jog-action {
-    color: var(--text-dim);
-    font-size: 9px;
-    font-family: var(--font-mono);
-    padding-top: 2px;
-}
-
-.jog-action span {
-    color: var(--accent);
-    font-weight: 600;
-}
-
 /* ─── JOG hardware status ──────────────────────────────────────── */
 
 .jog-hw {
@@ -238,16 +224,5 @@
 
 .jog-hw-value.hw-bad {
     color: var(--bad);
-}
-
-/* ─── JOG hint ─────────────────────────────────────────────────── */
-
-.jog-hint {
-    color: var(--text-muted);
-    font-size: 8px;
-    font-family: var(--font-mono);
-    text-align: center;
-    padding-top: 4px;
-    letter-spacing: 0.5px;
 }
 

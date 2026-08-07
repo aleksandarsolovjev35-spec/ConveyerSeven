@@ -227,6 +227,38 @@ function lineMoveDuration(process = {}) {
     return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
 }
 
+function tapeShortLabel(process) {
+    if (!process || !process.phase) return '';
+    const p = String(process.phase).toUpperCase();
+    const lbl = String(process.label || '').toLowerCase();
+    // Короткие названия без лишних деталей (кандидат, счётчики, таймеры).
+    if (p.includes('CONVEYOR')) return 'ДВИЖЕНИЕ';
+    if (p === 'PART_DROP') return 'СБРОС';
+    if (p === 'PART_HOLD') {
+        if (lbl.includes('серии')) return 'ОЖИДАНИЕ СБРОСА';
+        if (lbl.includes('проход')) return 'ПРОХОД';
+        return 'УДЕРЖАНИЕ';
+    }
+    if (p === 'SETTLE') return 'СТОЯНКА';
+    if (p === 'CAMERA_CAPTURE') return 'СЪЁМКА';
+    if (p === 'ANALYSIS_REVIEW') return 'ПАУЗА';
+    if (p.includes('INPUT_ANALYSIS') || p === 'INPUT_ANALYSIS') return 'АНАЛИЗ ВХОДА';
+    if (p.includes('SPIDER')) return 'АНАЛИЗ КОНТРОЛЯ';
+    if (p.includes('ANALYSIS')) return 'АНАЛИЗ';
+    if (p.includes('ROUTE')) return 'ВЫХОД';
+    if (p === 'STEP_COMPLETE') return 'ГОТОВ';
+    if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
+    if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
+    if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
+    if (p === 'CONVEYOR_COMMAND' || p === 'CONVEYOR_CONFIRMED') return 'ДВИЖЕНИЕ';
+    if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
+    if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
+    if (p.includes('PAUSE')) return 'ПАУЗА';
+    if (p.includes('JOG')) return 'РУЧНОЙ ХОД';
+    // fallback — сама фаза коротко, без label с деталями
+    return p.replace(/_/g, ' ').slice(0, 20);
+}
+
 function _lineCellRects(cells) {
     if (!els.lineCells) return {containerRect: {width: 0}, rects: {}};
     const containerRect = els.lineCells.getBoundingClientRect();
@@ -280,14 +312,15 @@ function _updateLineGates(lineParts, process = {}) {
         || phase.includes('CONVEYOR') || phase.includes('PART_HOLD');
     // Корпус на сортировке (+7) придержан лепестком или уже падает в
     // канал: ворота показывают канал маршрута (БРАК/ОЧИСТКА). Годный
-    // корпус проходит без сброса — ворота показывают «проход».
+    // корпус проходит без сброса — ворота показывают «проход» весь
+    // период пребывания годного на +7, а не только во время ROUTE.
     if (cat === 'BAD' && (held || dropping || routing)) {
         gateOut.classList.add('gate-rejecting');
         gateOut.textContent = '▼ БРАК';
     } else if (cat === 'CLEANUP' && (held || dropping || routing)) {
         gateOut.classList.add('gate-cleanup');
         gateOut.textContent = '▼ ОЧИСТКА';
-    } else if (cat === 'GOOD' && phase.includes('ROUTE')) {
+    } else if (cat === 'GOOD') {
         gateOut.classList.add('gate-active');
         gateOut.textContent = 'ПРОХОД ▸';
     } else {
@@ -345,7 +378,7 @@ function _updateDistributorRoute(ls) {
 
 function updateLineCells(lineParts, process = {}) {
     if (!els.lineCells) return;
-    const isConveyorMoving = (process.phase || '').includes('CONVEYOR') || (process.phase || '').includes('MOTION') || (process.phase || '').includes('ROUTE_PREPARE');
+    const isConveyorMoving = (process.phase || '').includes('CONVEYOR') || (process.phase || '').includes('MOTION');
     let belt = els.lineCells.querySelector('.conveyor-belt');
     if (!belt) {
         belt = document.createElement('div');
@@ -357,7 +390,8 @@ function updateLineCells(lineParts, process = {}) {
 
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (phaseEl) {
-        const activeText = process.phase ? (process.label || process.phase).slice(0, 64).toUpperCase() : '';
+        const short = tapeShortLabel(process);
+        const activeText = short ? short.toUpperCase() : '';
         if (activeText) {
             setIfChanged(phaseEl, activeText);
             phaseEl.style.opacity = isConveyorMoving ? '1' : '0.85';
@@ -388,15 +422,24 @@ function updateLineCells(lineParts, process = {}) {
     // Сортировка +7 по фактической логике: корпус ДОЕХАЛ и придержан
     // лепестком (held) либо уже падает в лоток (dropping) — ячейка +7
     // получает ограничитель, лоток +8 — цвет канала маршрута.
+    // При серии через пустую ячейку лоток сохраняет цвет канала
+    // (DIST2 не уходит, DIST1 остаётся открытой), как и ворота выхода.
     const sortPart = (lineParts || []).find(p => Number(p.position) === 7);
     const sortHeld = !!(sortPart && sortPart.held);
     const sortCat = sortPart ? String(sortPart.category || '').toUpperCase() : '';
+    let chuteCat = sortCat;
+    if (!sortPart) {
+        // Пауза серии с пустой ячейкой: лоток держит канал распределителя,
+        // чтобы оператор видел, куда пойдёт следующий корпус той же категории.
+        if (_currentDistributorCategory === 'BAD') chuteCat = 'BAD';
+        else if (_currentDistributorCategory === 'CLEANUP') chuteCat = 'CLEANUP';
+    }
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         if (position === 7 && sortHeld) cell.classList.add('cell-hold');
         if (position === 8) {
-            if (sortCat === 'BAD') cell.classList.add('chute-bad');
-            else if (sortCat === 'CLEANUP') cell.classList.add('chute-cleanup');
+            if (chuteCat === 'BAD') cell.classList.add('chute-bad');
+            else if (chuteCat === 'CLEANUP') cell.classList.add('chute-cleanup');
         }
     });
 
@@ -430,7 +473,15 @@ function updateLineCells(lineParts, process = {}) {
             token.el.style.opacity = '0';
         } else if (geometryReady && rects[token.position]) {
             // Проход (годный) или съезд с линии: маркер уезжает за ячейку.
-            token.el.style.left = `${rects[token.position].left + step}px`;
+            // Годный корпус на сортировке уходит через ворота выхода, а не в лоток:
+            // уезжает дальше лотка, под ворота, и там гаснет.
+            let exitLeft;
+            if (token.position === 7 && token.category === 'GOOD' && rects[8]) {
+                exitLeft = rects[8].left + step;
+            } else {
+                exitLeft = rects[token.position].left + step;
+            }
+            token.el.style.left = `${exitLeft}px`;
             token.el.style.opacity = '0';
         }
         const el = token.el;
@@ -451,13 +502,16 @@ function updateLineCells(lineParts, process = {}) {
         // Куда физически уезжает маркер в этом снимке. Дроп происходит,
         // когда лента несёт корпус от +7 к лотку +8: во время фазы
         // CONVEYOR маркер скользит в зону сброса и остаётся там до
-        // исчезновения детали.
+        // исчезновения детали. В остальных случаях лента везёт все корпуса
+        // синхронно — во время CONVEYOR каждый маркер скользит на ячейку вправо.
         let targetPos = meta.position;
         if (meta.dropping) {
             const alreadyInChute = !!(token && token.position === 8);
             if (alreadyInChute) targetPos = 8;
             else if (!token) targetPos = 8;
             else if (isConveyorPhase || phaseUpper.includes('PART_DROP')) targetPos = 8;
+        } else if (isConveyorPhase) {
+            targetPos = Math.min(meta.position + 1, 7);
         }
 
         const target = rects[targetPos] || rects[meta.position] || rects[0];

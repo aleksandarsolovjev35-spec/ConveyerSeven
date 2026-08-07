@@ -5,12 +5,12 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
-    /* Фиксированная высота блока: правая колонка не раздувается и
-       не требует собственной прокрутки при разном числе порогов. */
-    flex: 0 0 auto;
-    height: 268px;
-    max-height: 268px;
-    min-height: 268px;
+    /* Гибкая высота: заполняет пустое пространство правой колонки,
+       оставшееся после distributor и frame-analysis. Jog опущен ниже. */
+    flex: 1 1 auto;
+    min-height: 180px;
+    max-height: 560px;
+    height: auto;
     overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--border);
@@ -20,10 +20,11 @@
 .thresholds-head {
     display: flex;
     flex: 0 0 auto;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 8px;
     min-width: 0;
+    min-height: 16px;
 }
 .thresholds-title {
     font-family: var(--font-ui);

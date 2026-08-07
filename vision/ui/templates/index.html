@@ -9,14 +9,14 @@
     <link rel="stylesheet" href="/static/css/blocks.css?v=23">
     <link rel="stylesheet" href="/static/css/camera.css?v=34">
     <link rel="stylesheet" href="/static/css/axis.css?v=33">
-    <link rel="stylesheet" href="/static/css/history-strip.css?v=36">
+    <link rel="stylesheet" href="/static/css/history-strip.css?v=37">
     <link rel="stylesheet" href="/static/css/stats.css?v=43">
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
     <link rel="stylesheet" href="/static/css/controls.css?v=32">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
-    <link rel="stylesheet" href="/static/css/process.css?v=39">
+    <link rel="stylesheet" href="/static/css/process.css?v=40">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
-    <link rel="stylesheet" href="/static/css/thresholds.css?v=19">
+    <link rel="stylesheet" href="/static/css/thresholds.css?v=20">
     <link rel="stylesheet" href="/static/css/archive.css?v=1">
 </head>
 <body>
@@ -74,7 +74,6 @@
                     </div>
                     <div class="line-cells-wrapper production-line-wrapper">
                         <div class="line-conveyor-track">
-                            <div class="line-gate line-gate-in" aria-hidden="true">▸ ВХОД</div>
                             <div id="line-cells" class="line-cells production-line-cells">
                                 <div class="line-cell" data-pos="0" data-cell-no="+0"></div>
                                 <div class="line-cell" data-pos="1" data-cell-no="+1"></div>
@@ -86,7 +85,6 @@
                                 <div class="line-cell" data-pos="7" data-cell-no="+7"></div>
                                 <div class="line-cell line-cell-chute" data-pos="8" data-cell-no="+8"><span class="chute-symbol">▼</span></div>
                             </div>
-                            <div class="line-gate line-gate-out" aria-hidden="true">ВЫХОД ▸</div>
                         </div>
                     <div class="line-position-labels" aria-label="Позиции линии">
                         <span class="stage-position">+0 · ВХОД</span>
@@ -133,11 +131,6 @@
                         <div class="stats-row stats-third"><span class="stats-label">На очистку</span><span id="stat-cleanup" class="stats-value warn">0</span></div>
                     </div>
                 </section>
-
-                <div id="defects-section" class="defects-section is-hidden" data-ui-block="defects">
-                    <div id="defects-title" class="stats-label">ОСНОВНЫЕ ДЕФЕКТЫ</div>
-                    <ul id="defects-list" class="defects-list"><li class="defects-empty">Нет данных</li></ul>
-                </div>
 
                 <div id="stats-service" class="stats-service ui-collapse" data-ui-block="service-stats">
                     <div class="stats-service-row">
@@ -222,14 +215,6 @@
                             <div id="fa-new-scroll-thumb" class="fa-new-scroll-thumb"></div>
                         </div>
                     </div>
-                    <!-- Статистика по корпусам: всего / годные / брак / очистка.
-                         Обновляется точечно и не перестраивает список замеров. -->
-                    <div id="fa-new-stats" class="fa-new-stats">
-                        <span class="fa-new-stats-cell"><b id="fa-new-stat-total">0</b>ВСЕГО</span>
-                        <span class="fa-new-stats-cell ok"><b id="fa-new-stat-good">0</b>ГОДНЫЕ</span>
-                        <span class="fa-new-stats-cell bad"><b id="fa-new-stat-bad">0</b>БРАК</span>
-                        <span class="fa-new-stats-cell warn"><b id="fa-new-stat-cleanup">0</b>ОЧИСТКА</span>
-                    </div>
                 </section>
 
                 <section id="jog-panel" class="jog-panel jog-panel-embedded ui-collapse" data-ui-block="jog">
@@ -250,8 +235,6 @@
                             </svg>
                         </button>
                     </div>
-                    <div class="jog-action">СОСТОЯНИЕ: <span id="jog-last-action">—</span></div>
-                    <div class="jog-hint">Удерживайте кнопку для движения; отпустите для остановки</div>
                     <div class="jog-hw is-hidden" aria-hidden="true">
                         <span id="jog-hw-serial"></span><span id="jog-hw-cameras"></span>
                         <span id="jog-hw-conveyor"></span><span id="jog-hw-dist1"></span>
@@ -271,7 +254,6 @@
                 <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
                 <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
-            <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
             <div class="footer-archive" id="archive-settings-group" data-ui-block="footer-archive">
                 <span class="footer-archive-label">АРХИВ ПАРТИЙ</span>
                 <button id="archive-settings-open" class="btn btn-archive-settings" disabled>АРХИВ</button>
@@ -366,9 +348,9 @@
     <script src="/static/js/core.js?v=42"></script>
     <script src="/static/js/boot.js?v=31"></script>
     <script src="/static/js/diagnostics.js?v=47"></script>
-    <script src="/static/js/status.js?v=39"></script>
+    <script src="/static/js/status.js?v=40"></script>
     <script src="/static/js/controls.js?v=35"></script>
-    <script src="/static/js/thresholds.js?v=16"></script>
+    <script src="/static/js/thresholds.js?v=17"></script>
     <script src="/static/js/cameras.js?v=36"></script>
     <script src="/static/js/frame-analysis.js?v=10"></script>
     <script src="/static/js/jog.js?v=35"></script>
