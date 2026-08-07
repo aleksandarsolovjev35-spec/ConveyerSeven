@@ -3,10 +3,14 @@
 Поднимает настоящий UIServer и публикует в /api/status демонстрационный
 снимок панели «Анализ кадра»: правило window_geometry с блоками объектов
 (Окно #1 … Окно #7), статистику корпусов (всего/годные/брак/очистка) и
-версию кадра. Камеры/модели/конвейер не нужны — только просмотр панели.
+версию кадра. Панель «Путь корпусов» дополнительно анимируется: корпус на
++7 придерживается лепестком и сбрасывается между +7 и +8, чтобы наглядно
+проверить отсутствие наложения маркеров в зоне сброса. Камеры/модели/
+конвейер не нужны — только просмотр панели.
 
 Использование: python demo_ui_server.py  (затем открыть http://localhost:8000)
 """
+import threading
 import time
 
 from vision.ui.server.server import UIServer, CAMERA_ORDER
@@ -141,6 +145,78 @@ def build_demo_frame_analysis():
     }
 
 
+def _animate_sort_drop(server):
+    """Циклически проигрывает сброс корпуса на +7 → +8 в «Пути корпусов».
+
+    Позволяет визуально проверить, что в зоне сброса маркер один и не
+    накладывается на лоток (+7/+8): придержание (PART_HOLD), подготовка
+    маршрута (ROUTE_PREPARE), движение ленты (CONVEYOR_MOVING), сброс
+    (CONVEYOR_CONFIRMED / PART_DROP) и возврат в исходное состояние.
+    """
+    base_parts = [
+        {"id": 4, "position": 0, "category": "GOOD", "held": False, "dropping": False},
+        {"id": 5, "position": 1, "category": "GOOD", "held": False, "dropping": False},
+        {"id": 6, "position": 2, "category": "GOOD", "held": False, "dropping": False},
+        {"id": 7, "position": 3, "category": "BAD", "held": False, "dropping": False},
+        {"id": 8, "position": 4, "category": "UNKNOWN", "held": False, "dropping": False},
+    ]
+    drop_part = {"id": 9, "position": 7, "category": "BAD",
+                 "held": False, "dropping": False}
+
+    def apply(parts, phase, label, positions, dist1_pos, dist1_state,
+              dist_action, part_id=None):
+        with server.lock:
+            ls = server.line_status
+            ls["line_parts"] = parts
+            ls["process"] = {
+                "phase": phase, "label": label, "step": ls.get("step", 0),
+                "part_id": part_id, "positions": positions,
+            }
+            ls["dist1_position"] = dist1_pos
+            ls["dist1_state"] = dist1_state
+            ls["last_distributor_action"] = dist_action
+
+    while True:
+        try:
+            held = dict(drop_part, held=True, dropping=False)
+            apply(base_parts + [held], "PART_HOLD",
+                  "Корпус придержан лепестком до сброса", [7],
+                  0, "IDLE", "ПРИДЕРЖАНИЕ", part_id=9)
+            time.sleep(1.4)
+
+            prep = dict(drop_part, held=False, dropping=True)
+            apply(base_parts + [prep], "ROUTE_PREPARE",
+                  "Подготовка маршрута распределителя", [7],
+                  0, "IDLE", "ПОДГОТОВКА", part_id=9)
+            time.sleep(0.6)
+
+            # Лента несёт корпус между +7 и +8: DIST1 открыт, маркер скользит
+            # в лоток и «тонет» в нём. Один маркер, без наложения на лоток.
+            apply(base_parts + [prep], "CONVEYOR_MOVING",
+                  "Движение ленты: сброс между +7 и +8", list(range(8)),
+                  340, "OPEN", "СБРОС", part_id=9)
+            time.sleep(1.2)
+
+            apply(base_parts + [prep], "CONVEYOR_CONFIRMED",
+                  "Позиции корпусов подтверждены", list(range(8)),
+                  340, "OPEN", "СБРОС", part_id=9)
+            time.sleep(0.4)
+
+            # Корпус ушёл в лоток: маркер гаснет в нём, заслонка закрывается.
+            apply(base_parts, "PART_DROP",
+                  "Сброс корпуса и возврат лопасти", [7],
+                  0, "CLOSING", "ВОЗВРАТ", part_id=9)
+            time.sleep(0.9)
+
+            apply(base_parts, "SETTLE",
+                  "Ожидание затухания вибрации перед съёмкой", [0, 4],
+                  0, "IDLE", "ВОЗВРАТ")
+            time.sleep(0.6)
+        except Exception as exc:  # demo должен продолжать работать
+            print(f"[DEMO] Ошибка анимации пути: {exc}")
+            time.sleep(1.0)
+
+
 def main():
     server = UIServer()
     for key, _ in server.BOOT_STEPS:
@@ -224,6 +300,12 @@ def main():
 
     server.start_server(host="0.0.0.0", port=8000)
     print("DEMO UI: http://localhost:8000 (Ctrl+C для выхода)")
+    threading.Thread(
+        target=_animate_sort_drop,
+        args=(server,),
+        daemon=True,
+        name="demo-sort-drop",
+    ).start()
     try:
         while True:
             time.sleep(3600)

@@ -576,7 +576,10 @@ function updateLineCells(lineParts, process = {}) {
 
         if (targetPos === 8) _clearChuteExitTokens();
         const target = rects[targetPos] || rects[meta.position] || rects[0];
-        const targetOpacity = dropAnimationActive ? '0.65' : '1';
+        // Полностью непрозрачный маркер: падающий корпус не должен
+        // «просвечивать» цвет канала лотка (тот же цвет, что и у самого
+        // маркера) — иначе на +7/+8 получается двойная заливка одного цвета.
+        const targetOpacity = '1';
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
