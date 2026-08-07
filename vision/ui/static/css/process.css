@@ -504,6 +504,28 @@
 
 
 
+/* ─── Заголовки панелей: равное расстояние от верха/низа ───────────
+   Все надписи блоков выровнены по центру вертикали (flex center)
+   с одинаковым min-height, чтобы визуально стояли на одном уровне. */
+.process-line-head,
+.distributor-head,
+.thresholds-head,
+.jog-header,
+.fa-new-head,
+.history {
+    min-height: 16px;
+}
+.process-line-title,
+.distributor-title,
+.history-title,
+.process-phase-title,
+.thresholds-title,
+.jog-title {
+    display: flex;
+    align-items: center;
+    min-height: 14px;
+}
+
 /* Anti-overlap guards for compact Russian captions. */
 .axis-route span,
 .axis-route b,

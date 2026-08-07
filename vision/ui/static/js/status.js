@@ -227,6 +227,38 @@ function lineMoveDuration(process = {}) {
     return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
 }
 
+function tapeShortLabel(process) {
+    if (!process || !process.phase) return '';
+    const p = String(process.phase).toUpperCase();
+    const lbl = String(process.label || '').toLowerCase();
+    // Короткие названия без лишних деталей (кандидат, счётчики, таймеры).
+    if (p.includes('CONVEYOR')) return 'ДВИЖЕНИЕ';
+    if (p === 'PART_DROP') return 'СБРОС';
+    if (p === 'PART_HOLD') {
+        if (lbl.includes('серии')) return 'ОЖИДАНИЕ СБРОСА';
+        if (lbl.includes('проход')) return 'ПРОХОД';
+        return 'УДЕРЖАНИЕ';
+    }
+    if (p === 'SETTLE') return 'СТОЯНКА';
+    if (p === 'CAMERA_CAPTURE') return 'СЪЁМКА';
+    if (p === 'ANALYSIS_REVIEW') return 'ПАУЗА';
+    if (p.includes('INPUT_ANALYSIS') || p === 'INPUT_ANALYSIS') return 'АНАЛИЗ ВХОДА';
+    if (p.includes('SPIDER')) return 'АНАЛИЗ КОНТРОЛЯ';
+    if (p.includes('ANALYSIS')) return 'АНАЛИЗ';
+    if (p.includes('ROUTE')) return 'ВЫХОД';
+    if (p === 'STEP_COMPLETE') return 'ГОТОВ';
+    if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
+    if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
+    if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
+    if (p === 'CONVEYOR_COMMAND' || p === 'CONVEYOR_CONFIRMED') return 'ДВИЖЕНИЕ';
+    if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
+    if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
+    if (p.includes('PAUSE')) return 'ПАУЗА';
+    if (p.includes('JOG')) return 'РУЧНОЙ ХОД';
+    // fallback — сама фаза коротко, без label с деталями
+    return p.replace(/_/g, ' ').slice(0, 20);
+}
+
 function _lineCellRects(cells) {
     if (!els.lineCells) return {containerRect: {width: 0}, rects: {}};
     const containerRect = els.lineCells.getBoundingClientRect();
@@ -358,7 +390,8 @@ function updateLineCells(lineParts, process = {}) {
 
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (phaseEl) {
-        const activeText = process.phase ? (process.label || process.phase).slice(0, 64).toUpperCase() : '';
+        const short = tapeShortLabel(process);
+        const activeText = short ? short.toUpperCase() : '';
         if (activeText) {
             setIfChanged(phaseEl, activeText);
             phaseEl.style.opacity = isConveyorMoving ? '1' : '0.85';

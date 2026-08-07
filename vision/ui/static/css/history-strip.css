@@ -31,8 +31,12 @@
     letter-spacing: 0.6px;
     text-transform: uppercase;
     flex: 0 0 auto;
-    flex-shrink: 0;
     white-space: nowrap;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    padding-right: 10px;
+    border-right: 1px solid rgba(255,255,255,0.06);
 }
 
 .history-cards {
