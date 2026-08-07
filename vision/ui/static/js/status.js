@@ -85,8 +85,14 @@ async function fetchStatus() {
     const lineStatusPayload = status.line_status || {};
     const liveInfo = lineStatusPayload.live || {};
     const staticRoles = Array.isArray(liveInfo.static_roles) ? liveInfo.static_roles : [];
+    const processInfo = lineStatusPayload.process || {};
+    const inspectionRoles = Array.isArray(processInfo.inspection_roles) ? processInfo.inspection_roles : [];
+    const processPhase = String(processInfo.phase || '').toUpperCase();
+    const inspectionDisplay = inspectionRoles.includes(state.currentCamera)
+        && (processPhase.includes('CAMERA') || processPhase.includes('ANALYSIS') || processPhase === 'PUBLISH');
     const selectedRoleStatic = liveInfo.all_roles_static === true
         || staticRoles.includes(state.currentCamera)
+        || inspectionDisplay
         // Совместимость со статусом backend до ролевых пауз.
         || (liveInfo.static === true && liveInfo.streaming === false && staticRoles.length === 0);
     const staticPublish = (

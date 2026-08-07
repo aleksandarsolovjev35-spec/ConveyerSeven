@@ -26,6 +26,7 @@ def _make_cycle():
     )
     cycle._set_process = Mock()
     cycle._check_motion_cancelled = Mock()
+    cycle.monitor = None
     cycle.parts = []
     cycle.current_step = 1
     cycle.OFFSET_INPUT = 0

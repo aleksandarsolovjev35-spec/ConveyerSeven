@@ -103,6 +103,9 @@ class ProductionCycle:
         self._cancel_motion = threading.Event()
         self.distributor.cancel_check = self._cancel_motion.is_set
         self._process_revision = 0
+        # Снимки inspection остаются операторским стоп-кадром до следующего
+        # движения, хотя физические камеры уже вернулись в live.
+        self._inspection_display_roles = ()
         self._diagnostics = {
             "status": "NOT_RUN",
             "kind": None,
@@ -176,6 +179,7 @@ class ProductionCycle:
             # Роли только что захваченных камер. UI использует это, чтобы
             # оператор видел, какая стадия Part действительно снималась.
             "capture_roles": list(capture_roles or []),
+            "inspection_roles": list(self._inspection_display_roles),
             "revision": self._process_revision,
             "updated_at": time.time(),
         }
@@ -1016,6 +1020,7 @@ class ProductionCycle:
     def _stage_motion(self):
         """MOTION: подготовить маршрут и переместить ленту на шаг."""
         self.stages.enter_motion()
+        self._inspection_display_roles = ()
         # Разметка прошлого шага построена по статичному кадру и на
         # движущемся изображении указывала бы мимо детали.
         self.live.clear_overlays()
@@ -1100,6 +1105,7 @@ class ProductionCycle:
     def _stage_capture(self):
         """CAPTURE: свежие кадры только для занятых инспекционных позиций."""
         roles = self._capture_roles_for_current_step()
+        self._inspection_display_roles = roles
         # Пауза только у ролей, которые сейчас дают inspection-кадр.
         # Остальные камеры продолжают live-поток для оператора.
         self.stages.enter_capture(roles)
@@ -1145,6 +1151,10 @@ class ProductionCycle:
         release_capture = getattr(self.stages, "release_capture_roles", None)
         if callable(release_capture):
             release_capture()
+        # Публикуем frozen snapshot отдельным inspection-слоем. Live может
+        # сразу обновлять физические камеры, но UI выбранной inspection-роли
+        # видит именно кадр, по которому сейчас считается решение.
+        self._refresh_monitor(run_frames=[frames], run_rule_results=[[]])
         return [frames]
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
