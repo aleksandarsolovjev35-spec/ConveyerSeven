@@ -64,16 +64,6 @@
     position: relative;
     box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
-.production-line-cells .line-cell::before {
-    content: attr(data-cell-no);
-    position: absolute;
-    top: 2px;
-    left: 4px;
-    font: 700 8.5px var(--font-mono);
-    color: var(--text-muted);
-    opacity: 0.65;
-    pointer-events: none;
-}
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(9, minmax(0, 1fr));
@@ -107,10 +97,6 @@
     background: var(--bg-2);
     border-color: var(--border-strong);
     box-shadow: none;
-}
-.production-line-cells .line-cell.line-cell-chute::before {
-    color: var(--text-muted);
-    opacity: 0.5;
 }
 .production-line-cells .line-cell.line-cell-chute .chute-symbol {
     font: 700 13px var(--font-mono);
