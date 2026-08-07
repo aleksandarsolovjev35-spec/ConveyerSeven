@@ -1139,6 +1139,12 @@ class ProductionCycle:
                 f"получены {sorted(frames)}"
             )
         self._check_motion_cancelled()
+        # Нейросети используют только frames в памяти. Освобождаем камеры
+        # немедленно: INPUT/SPIDER, не участвующие в следующем чтении,
+        # уже продолжают live во время part_presence и defect rules.
+        release_capture = getattr(self.stages, "release_capture_roles", None)
+        if callable(release_capture):
+            release_capture()
         return [frames]
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):

@@ -173,8 +173,17 @@ class StepSequencer:
         self._switch(StepStage.CAPTURE)
         self._acquire_static(roles)
 
+    def release_capture_roles(self):
+        """Вернуть камеры в live сразу после копирования inspection-кадров.
+
+        Модели далее работают только с уже сохранёнными numpy-кадрами и не
+        требуют владения VideoCapture. Это сокращает паузу live до самого
+        чтения кадра, не смешивая корпуса.
+        """
+        self._release_static()
+
     def enter_analysis(self):
-        """Кадры сняты; камеры больше не читаются до конца шага."""
+        """Анализирует сохранённые кадры; камеры уже могут быть в live."""
         self._switch(StepStage.ANALYSIS)
 
     def enter_publish(self):
