@@ -4,7 +4,7 @@
 снимок панели «Анализ кадра»: правило window_geometry с блоками объектов
 (Окно #1 … Окно #7), статистику корпусов (всего/годные/брак/очистка) и
 версию кадра. Панель «Путь корпусов» дополнительно анимируется: корпус на
-+7 придерживается лепестком и сбрасывается между +7 и +8, чтобы наглядно
++7 ожидает следующего шага и передаётся между +7 и +8, чтобы наглядно
 проверить отсутствие наложения маркеров в зоне сброса. Камеры/модели/
 конвейер не нужны — только просмотр панели.
 
@@ -149,7 +149,7 @@ def _animate_sort_drop(server):
     """Циклически проигрывает сброс корпуса на +7 → +8 в «Пути корпусов».
 
     Позволяет визуально проверить, что в зоне сброса маркер один и не
-    накладывается на лоток (+7/+8): придержание (PART_HOLD), подготовка
+    накладывается на лоток (+7/+8): ожидание маршрута, подготовка
     маршрута (ROUTE_PREPARE), движение ленты (CONVEYOR_MOVING), сброс
     (CONVEYOR_CONFIRMED / PART_DROP) и возврат в исходное состояние.
     """
@@ -178,10 +178,10 @@ def _animate_sort_drop(server):
 
     while True:
         try:
-            held = dict(drop_part, held=True, dropping=False)
-            apply(base_parts + [held], "PART_HOLD",
-                  "Корпус придержан лепестком до сброса", [7],
-                  0, "IDLE", "ПРИДЕРЖАНИЕ", part_id=9)
+            waiting = dict(drop_part, held=False, dropping=False)
+            apply(base_parts + [waiting], "ROUTE_WAIT",
+                  "Корпус ожидает маршрута на следующем шаге", [7],
+                  340, "TO_DIST2", "МАРШРУТ BAD", part_id=9)
             time.sleep(1.4)
 
             prep = dict(drop_part, held=False, dropping=True)
@@ -203,9 +203,9 @@ def _animate_sort_drop(server):
             time.sleep(0.4)
 
             # Корпус ушёл в лоток: маркер гаснет в нём, заслонка закрывается.
-            apply(base_parts, "PART_DROP",
-                  "Сброс корпуса и возврат лопасти", [7],
-                  0, "CLOSING", "ВОЗВРАТ", part_id=9)
+            apply(base_parts, "PART_TRANSFER",
+                  "Корпус передан в канал", [7],
+                  340, "TO_DIST2", "ПЕРЕДАЧА", part_id=9)
             time.sleep(0.9)
 
             apply(base_parts, "SETTLE",
@@ -252,10 +252,10 @@ def main():
                 {"id": 6, "position": 2, "category": "GOOD", "held": False, "dropping": False},
                 {"id": 7, "position": 3, "category": "BAD", "held": False, "dropping": False},
                 {"id": 8, "position": 4, "category": "UNKNOWN", "held": False, "dropping": False},
-                # Корпус доехал до сортировки (+7) и придержан лепестком:
+                # Корпус доехал до сортировки (+7) и ждёт следующего шага:
                 # лоток +8 показывает канал маршрута, сброс — на следующем
                 # шаге, когда лента понесёт корпус между +7 и +8.
-                {"id": 9, "position": 7, "category": "BAD", "held": True, "dropping": False},
+                {"id": 9, "position": 7, "category": "BAD", "held": False, "dropping": False},
             ],
             "total": 12,
             "good": 8,

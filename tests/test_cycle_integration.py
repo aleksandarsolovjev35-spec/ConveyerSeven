@@ -6,8 +6,7 @@
 
 Ключевые проверки:
 - каждый шаг снимает кадры один раз и публикует единый снимок;
-- деталь создаётся на входе, на +4 проверяется, на +7 придерживается
-  лепестком и на следующем шаге (+8) сбрасывается (BAD -> падение);
+- деталь создаётся на входе, на +4 проверяется, на +7 ожидает следующего шага, затем проходит заслонки в выбранный канал;
 - пустые лотки на входе считаются и не создают Part.
 """
 
@@ -76,19 +75,13 @@ class FakeDistributor:
         self.status["dist1_state"] = "IDLE"
         self.status["last_distributor_action"] = "PRODUCTION READY"
 
-    def prepare(self, category, part_id):
+    def prepare_route(self, category, part_id):
         self.status["dist2_target"] = category
-        self.status["last_distributor_action"] = f"PREPARE #{part_id}"
+        self.status["last_distributor_action"] = f"ROUTE #{part_id} -> {category}"
 
-    def mark_pass(self, part_id):
-        self.status["last_distributor_action"] = f"PASS #{part_id}"
-
-    def drop_and_close(self, part_id, category, keep_open=False):
+    def confirm_transfer(self, part_id, category):
         self.drops.append((part_id, category))
-        self.status["dist2_target"] = "-"
-        self.status["last_distributor_action"] = (
-            f"DROP #{part_id} {'KEEP_OPEN' if keep_open else ''}".rstrip()
-        )
+        self.status["last_distributor_action"] = f"TRANSFER #{part_id} -> {category}"
 
     def reset_target(self):
         self.status["dist2_target"] = "-"
@@ -222,8 +215,7 @@ class CycleIntegrationTest(unittest.TestCase):
         self.cycle.sm.request_start()
 
     def test_full_cycle(self):
-        # Прогоняем 9 шагов: вход -> +4 (spider) -> +7 (придержан лепестком)
-        # -> +8 (сброс BAD во время движения ленты)
+        # Прогоняем 9 шагов: вход -> +4 (spider) -> +7 (ожидание маршрута) -> +8 (BAD)
         for _ in range(9):
             self.cycle._run_once_safe()
 

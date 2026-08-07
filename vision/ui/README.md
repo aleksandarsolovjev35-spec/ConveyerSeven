@@ -40,7 +40,7 @@ Functions may call functions from later modules only after all scripts have load
 - `operator-header` — статус линии, заголовок и метрики.
 - `preview-strip` — семь миниатюр камер.
 - `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ кадра.
-- `process-line` — путь корпусов по фактической логике линии: восемь позиций ленты (`+0 · ВХОД`, `+4 · КОНТРОЛЬ`, `+7 · СОРТИРОВКА`) и зона сброса `+8 · СБРОС`, куда падает корпус между +7 и +8; придержание на +7 (`held`) и сброс (`dropping`) приходят из `line_status.line_parts[]` как явные флаги и рисуются ограничителем ячейки, цветом лотка и ворот выхода.
+- `process-line` — путь корпусов по фактической логике линии: восемь позиций ленты (`+0 · ВХОД`, `+4 · КОНТРОЛЬ`, `+7 · СОРТИРОВКА`) и зона сброса `+8 · СБРОС`, куда падает корпус между +7 и +8; маршрут корпуса на +7 и передача (`dropping`) приходят из `line_status.line_parts[]`. DIST1=0 означает GOOD, DIST1=340 — передачу на DIST2; DIST2=0/BAD, DIST2=340/CLEANUP.
 - `history-strip` — последние детали.
 - `right-panel` — прокручиваемая правая колонка.
 - `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
@@ -73,8 +73,8 @@ Functions may call functions from later modules only after all scripts have load
 | `STOPPING` | `ОСТАНОВКА ЛИНИИ` |
 | `STOPPED` | `ОСТАНОВЛЕНА` |
 | `FAULT` | `АВАРИЯ` |
-| `DIST1_HOME` | `ПРОХОД` |
-| `DIST1_OPEN` | `СБРОС` |
+| `DIST1_HOME` | `ГОДНО (0)` |
+| `DIST1_OPEN` | `НА DIST2 (340)` |
 | `DIST2_BAD` | `БРАК` |
 | `DIST2_CLEANUP` | `ОЧИСТКА` |
 | `GOOD` | `ГОДНО` |

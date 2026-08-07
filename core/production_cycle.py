@@ -44,9 +44,9 @@ class ProductionCycle:
 
     OFFSET_INPUT  = 0
     OFFSET_SPIDER = 4
-    # Позиция сортировки: корпус приезжает сюда и ПРИДЕРЖИВАЕТСЯ лепестком.
-    # Падение происходит на следующем шаге, когда лента несёт корпус дальше
-    # (между +7 и +8) — к этому моменту DIST2 уже в нужном канале, DIST1 открыт.
+    # Позиция сортировки: на следующем шаге корпус проходит распределитель.
+    # До движения DIST1 выбирает GOOD (0) или передачу на DIST2 (340);
+    # DIST2 выбирает BAD (0) или CLEANUP (340).
     OFFSET_REJECT = 7
 
     JOG_ALLOWED_STATES = ("IDLE", "STOPPED", "PAUSED")
@@ -163,6 +163,7 @@ class ProductionCycle:
         part_id=None,
         positions=None,
         conveyor_status=None,
+        capture_roles=None,
     ):
         self._process_revision += 1
         self._process = {
@@ -172,6 +173,9 @@ class ProductionCycle:
             "part_id": part_id,
             "positions": list(positions or []),
             "conveyor": dict(conveyor_status or {}),
+            # Роли только что захваченных камер. UI использует это, чтобы
+            # оператор видел, какая стадия Part действительно снималась.
+            "capture_roles": list(capture_roles or []),
             "revision": self._process_revision,
             "updated_at": time.time(),
         }
@@ -1055,96 +1059,85 @@ class ProductionCycle:
         return pending_id
 
     def _stage_settle(self, pending_id):
-        """SETTLE: сброс детали и пауза на затухание вибрации."""
+        """SETTLE: подтвердить передачу корпуса и погасить вибрацию."""
         self._set_process(
-            "CONVEYOR_CONFIRMED",
-            "Позиции корпусов подтверждены контроллером",
-            part_id=pending_id,
-            positions=range(self.OFFSET_REJECT + 1),
+            "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
+            part_id=pending_id, positions=range(self.OFFSET_REJECT + 1),
         )
-
         if self._pending_drop is not None:
             self._set_process(
-                "PART_DROP",
-                "Сброс корпуса и возврат лопасти",
-                part_id=pending_id,
-                positions=[self.OFFSET_REJECT],
+                "PART_TRANSFER", "Корпус прошёл распределитель",
+                part_id=pending_id, positions=[self.OFFSET_REJECT],
             )
-        else:
-            # Корпус приехал на сортировку (+7); падение произойдёт на
-            # следующем шаге, когда лента понесёт его к лотку (между +7 и +8).
-            held = [
-                p for p in self.parts
-                if p.step_created + self.OFFSET_REJECT == self.current_step
-            ]
-            if held:
-                all_good = all(
-                    p.route_category == CATEGORY_GOOD for p in held
-                )
-                # Серия сбросов одной категории продолжается через пустые
-                # лотки: заслонка уже открыта от предыдущего сброса, корпус
-                # не придерживается лепестком, а просто ждёт своей очереди.
-                flap_open = (
-                    self.distributor.status.get("dist1_position", 0) > 0
-                )
-                if all_good:
-                    label = "Корпус на сортировке: проход"
-                elif flap_open:
-                    label = "Корпус на сортировке: следующий в серии сброса"
-                else:
-                    label = "Корпус придержан лепестком до сброса"
-                self._set_process(
-                    "PART_HOLD",
-                    label,
-                    part_id=held[0].id,
-                    positions=[self.OFFSET_REJECT],
-                )
         self._execute_drop()
         self._check_motion_cancelled()
-
         active_cam_positions = []
-        if self.sm.accepts_new_parts:
-            active_cam_positions.append(self.OFFSET_INPUT)
-        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+        if self.sm.accepts_new_parts: active_cam_positions.append(self.OFFSET_INPUT)
+        if any(p.step_created + self.OFFSET_SPIDER == self.current_step for p in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
-
-        self._set_process(
-            "SETTLE",
-            "Ожидание затухания вибрации перед съёмкой",
-            positions=active_cam_positions,
-        )
+        self._set_process("SETTLE", "Ожидание затухания вибрации перед съёмкой", positions=active_cam_positions)
         self.stages.enter_settle()
         self._check_motion_cancelled()
 
+    def _capture_roles_for_current_step(self) -> tuple[str, ...]:
+        """Вернуть только камеры, под которыми сейчас есть корпус.
+
+        Один Part собирается в два разных момента: INPUT получает 2 кадра
+        на +0, SPIDER/TOP — 5 кадров того же Part на +4. Захватывать все
+        семь камер без корпуса под соответствующей группой нельзя: это
+        расходует USB-полосу и создаёт ложные точки отказа.
+        """
+        roles = []
+        if self.sm.accepts_new_parts:
+            roles.extend(self.inspector.INPUT_ROLES)
+        if any(
+            part.step_created + self.OFFSET_SPIDER == self.current_step
+            for part in self.parts
+        ):
+            roles.extend(self.inspector.SPIDER_ROLES)
+        return tuple(roles)
+
     def _stage_capture(self):
-        """CAPTURE: один синхронный набор кадров неподвижной детали."""
+        """CAPTURE: свежие кадры только для занятых инспекционных позиций."""
         self.stages.enter_capture()
-
-        # Сброс буфера драйвера: UVC-драйверы игнорируют
-        # CAP_PROP_BUFFERSIZE=1 и копят кадры во внутреннем кольцевом
-        # буфере. Пока live-просмотр читал камеры — буфер дренировался.
-        # После паузы live cap.read() вернёт самый старый кадр из буфера,
-        # а не самый свежий. drain_buffers() отбрасывает устаревшие кадры,
-        # чтобы capture_all() гарантированно получил кадр неподвижной
-        # детали, а не кадр с прошлого шага или из фазы движения.
-        drain = getattr(self.cameras, "drain_buffers", None)
-        if callable(drain):
-            drain()
-
+        roles = self._capture_roles_for_current_step()
         active_cam_positions = []
         if self.sm.accepts_new_parts:
             active_cam_positions.append(self.OFFSET_INPUT)
-        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+        if any(part.step_created + self.OFFSET_SPIDER == self.current_step for part in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
 
         self._set_process(
             "CAMERA_CAPTURE",
-            "Синхронный захват семи камер",
+            (f"Синхронный захват камер: {', '.join(roles)}" if roles
+             else "Нет корпуса под инспекционными камерами"),
             positions=active_cam_positions,
+            capture_roles=roles,
         )
-        frame_runs = [self.cameras.capture_all()]
+        if not roles:
+            return [{}]
+
+        # Драйвер может отдать старый кадр из буфера после движения. Дренируем
+        # только нужные роли, затем получаем один свежий набор именно для
+        # соответствующей стадии Part.
+        drain = getattr(self.cameras, "drain_buffers", None)
+        if callable(drain):
+            drain(roles=roles)
+        capture_roles = getattr(self.cameras, "capture_roles", None)
+        if callable(capture_roles):
+            frames = capture_roles(roles)
+        else:
+            # Совместимость со старыми test doubles; production CameraManager
+            # всегда предоставляет capture_roles().
+            frames = self.cameras.capture_all()
+            frames = {role: frames[role] for role in roles}
+        if set(frames) != set(roles):
+            raise RuntimeError(
+                f"Неполный набор кадров для инспекции: ожидались {sorted(roles)}, "
+                f"получены {sorted(frames)}"
+            )
         self._check_motion_cancelled()
-        return frame_runs
+        return [frames]
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
         """ANALYSIS: модели и defect rules по уже снятым кадрам."""
@@ -1286,13 +1279,6 @@ class ProductionCycle:
     def _stage_publish(self, display_frames):
         """PUBLISH: маршрут годных деталей и вывод результата на экран."""
         self.stages.enter_publish()
-
-        self._set_process(
-            "ROUTE_CHECK",
-            "Проверка годного корпуса на позиции +7",
-            positions=[self.OFFSET_REJECT],
-        )
-        self._pass_good_parts()
 
         self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
         self._refresh_monitor(display_frames)
@@ -1498,11 +1484,7 @@ class ProductionCycle:
     # Distributor flow
 
     def _find_pending_drop(self):
-        # Корпус, который УЖЕ стоит на сортировке (+7) и придержан лепестком.
-        # Падение произойдёт в этом шаге: перед движением ленты распределитель
-        # встанет в нужное положение, лента понесёт корпус дальше (7 -> 8),
-        # и он провалится в канал, заданный DIST2. Сам приезд на +7 сбросом
-        # не является — корпус должен сначала встать и быть придержанным.
+        """Вернуть корпус на +7, который на следующем шаге пройдёт заслонки."""
         for part in self.parts:
             if part.step_created + self.OFFSET_REJECT == self.current_step:
                 return part
@@ -1513,102 +1495,32 @@ class ProductionCycle:
         if part is None:
             self.distributor.reset_target()
             return
-
         category = part.route_category
-
         if category == CATEGORY_UNKNOWN:
-            print(
-                f"[WARN] Деталь #{part.id} не прошла полную "
-                f"инспекцию -> принудительно BAD"
-            )
-            part.route_category = CATEGORY_BAD
-            part.final_decision = "incomplete_inspection"
-            category = CATEGORY_BAD
-
-        if category in (CATEGORY_BAD, CATEGORY_CLEANUP):
-            print(
-                f"[PRE-OPEN] Деталь #{part.id} "
-                f"категория={category}"
-            )
-            self.distributor.prepare(category, part.id)
-        else:
-            self.distributor.mark_pass(part.id)
-            self._pending_drop = None
-
-    def _next_part_will_drop(self) -> bool:
-        """Следующая деталь в очереди падает в тот же канал без паузы.
-
-        Серия сбросов одной категории (БРАК/ОЧИСТКА) не разрывается пустыми
-        лотками: если следующая деталь в очереди — на сброс, заслонка
-        остаётся открытой и DIST2 не покидает канал, даже когда между
-        деталями есть пустая ячейка. Одно открытие лопасти на всю серию.
-        Между сериями разного маршрута (следующая деталь годная) заслонка
-        закрывается, чтобы следующий корпус придержался на +7.
-        """
-        next_part = None
-        for p in self.parts:
-            if p is self._pending_drop:
-                continue
-            # Следующей к сортировке подъедет деталь, созданная раньше всех
-            # остальных (она ближе всех к +7).
-            if next_part is None or p.step_created < next_part.step_created:
-                next_part = p
-        if next_part is None:
-            return False
-        return next_part.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
+            print(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
+            part.route_category, part.final_decision, category = CATEGORY_BAD, "incomplete_inspection", CATEGORY_BAD
+        # GOOD: DIST1=0. BAD/CLEANUP: сначала DIST2, затем DIST1=340.
+        self.distributor.prepare_route(category, part.id)
 
     def _execute_drop(self):
         part = self._pending_drop
         if part is None:
             return
-
         category = part.route_category
-        keep_open = self._next_part_will_drop()
-        self.distributor.drop_and_close(part.id, category, keep_open=keep_open)
-
-        if category == CATEGORY_BAD:
+        self.distributor.confirm_transfer(part.id, category)
+        if category == CATEGORY_GOOD:
+            self.good_count += 1
+            print(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
+        elif category == CATEGORY_BAD:
             self.bad_count += 1
-            print(
-                f"[REJECT] #{part.id} -> BAD "
-                f"({self.bad_count})"
-            )
+            print(f"[REJECT] #{part.id} -> BAD ({self.bad_count})")
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
-            print(
-                f"[CLEANUP] #{part.id} -> CLEANUP "
-                f"({self.cleanup_count})"
-            )
-
+            print(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
         self._archive_part(part)
         self._register_finished(part)
         self._remove_part(part)
         self._pending_drop = None
-
-    def _pass_good_parts(self):
-        for part in list(self.parts):
-            if (part.step_created + self.OFFSET_REJECT
-                    != self.current_step):
-                continue
-            if part.route_category != CATEGORY_GOOD:
-                continue
-
-            self._set_process(
-                "ROUTE_FINALIZE",
-                f"GOOD: завершение корпуса #{part.id}",
-                part_id=part.id,
-                positions=[self.OFFSET_REJECT],
-            )
-            # Годный корпус проходит без сброса: лепесток не двигается,
-            # в UI показывается «проход».
-            self.distributor.mark_pass(part.id)
-            self.good_count += 1
-            self._archive_part(part)
-            self._register_finished(part)
-            self._remove_part(part)
-            print(
-                f"[PASS] #{part.id} -> GOOD "
-                f"({self.good_count})"
-            )
 
     # Archive
 
@@ -2014,31 +1926,16 @@ class ProductionCycle:
         for part in parts_snapshot:
             position = step_snapshot - part.step_created
             position = max(0, min(position, self.OFFSET_REJECT))
-            # Сброс уже запланирован на этот шаг: деталь придержана на +7,
-            # лента несёт её к лотку (между +7 и +8) или она уже падает.
-            # Флаг ставится только деталям на сброс (БРАК/ОЧИСТКА): годные
-            # проходят без участия распределителя и не могут быть «падающими».
-            dropping = (
-                self._pending_drop is not None
-                and self._pending_drop is part
-                and part.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
-            )
+            # На шаге передачи маршрут уже выставлен: GOOD проходит через
+            # DIST1=0, BAD/CLEANUP — через DIST1=340 и DIST2.
+            dropping = self._pending_drop is not None and self._pending_drop is part
             line_parts.append({
                 "id": part.id,
                 "position": position,
                 "category": part.route_category,
-                # Ожидание сброса на сортировке: деталь стоит на +7 —
-                # последней ячейке ленты перед распределителем — и уйдёт
-                # в канал следующим шагом движения. Это свойство позиции,
-                # а не заслонки: при серии DIST1 остаётся открытой между
-                # сбросами, но деталь на +7 точно так же ждёт своего шага,
-                # поэтому положение заслонки во флаг не входит. Годные не
-                # помечаются — они проходят в шаге приезда, без сброса.
-                "held": (
-                    position == self.OFFSET_REJECT
-                    and part.route_category != CATEGORY_GOOD
-                    and not dropping
-                ),
+                # Флаг оставлен для обратной совместимости UI; механического
+                # удержания корпуса в этой линии нет.
+                "held": False,
                 "dropping": dropping,
             })
 
