@@ -267,6 +267,34 @@ class CycleIntegrationTest(unittest.TestCase):
         self.assertEqual(self.cycle.part_counter, 1)
         self.assertEqual(self.cycle.empty_count, 1)
 
+    def test_pause_invalidates_cached_empty_input_result(self):
+        # Фоновая проверка могла успеть решить, что вход пуст, до того как
+        # оператор нажал паузу. После паузы INPUT обязан пройти свежий захват.
+        self.cycle._background_presence_usable = True
+        self.cycle._background_presence_result = {"is_empty": True}
+
+        self.assertTrue(self.cycle.request_pause())
+        self.assertFalse(self.cycle._background_presence_usable)
+        self.assertIsNone(self.cycle._background_presence_result)
+
+        roles = self.cycle._capture_roles_for_current_step()
+        self.assertEqual(roles, self.inspector.INPUT_ROLES)
+
+        # Отдельно проверяем защиту в INPUT-анализе: даже если гонка потока
+        # успела оставить старый is_empty-кэш, свежие кадры не превращаются
+        # в «пусто».
+        self.assertTrue(self.cycle.sm.request_pause())
+        self.assertTrue(self.cycle.request_resume())
+        self.cycle._background_presence_usable = False
+        self.cycle._background_presence_result = {"is_empty": True}
+        frames = [{
+            role: _frame(index)
+            for index, role in enumerate(self.inspector.INPUT_ROLES)
+        }]
+        result = self.cycle._process_input_stage(frames)
+        self.assertFalse(result.is_empty_tray)
+        self.assertEqual(self.inspector.input_calls, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
