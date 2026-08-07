@@ -219,6 +219,7 @@ const els = {
     frameAnalysisPanel: $('frame-analysis-panel'),
 
     archiveSettingsOpen: $('archive-settings-open'),
+    archiveSettingsGroup: $('archive-settings-group'),
     archiveSettingsModal: $('archive-settings-modal'),
     archiveSettingsBackdrop: document.querySelector('.archive-settings-backdrop'),
     archiveSettingsClose: $('archive-settings-close'),

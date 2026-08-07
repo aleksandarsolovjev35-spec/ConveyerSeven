@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="/static/css/history-strip.css?v=36">
     <link rel="stylesheet" href="/static/css/stats.css?v=43">
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
-    <link rel="stylesheet" href="/static/css/controls.css?v=31">
+    <link rel="stylesheet" href="/static/css/controls.css?v=32">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
     <link rel="stylesheet" href="/static/css/process.css?v=39">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
@@ -76,26 +76,28 @@
                         <div class="line-conveyor-track">
                             <div class="line-gate line-gate-in" aria-hidden="true">▸ ВХОД</div>
                             <div id="line-cells" class="line-cells production-line-cells">
-                                <div class="line-cell" data-pos="0" data-cell-no="1"></div>
-                                <div class="line-cell" data-pos="1" data-cell-no="2"></div>
-                                <div class="line-cell" data-pos="2" data-cell-no="3"></div>
-                                <div class="line-cell" data-pos="3" data-cell-no="4"></div>
-                                <div class="line-cell" data-pos="4" data-cell-no="5"></div>
-                                <div class="line-cell" data-pos="5" data-cell-no="6"></div>
-                                <div class="line-cell" data-pos="6" data-cell-no="7"></div>
-                                <div class="line-cell" data-pos="7" data-cell-no="8"></div>
+                                <div class="line-cell" data-pos="0" data-cell-no="+0"></div>
+                                <div class="line-cell" data-pos="1" data-cell-no="+1"></div>
+                                <div class="line-cell" data-pos="2" data-cell-no="+2"></div>
+                                <div class="line-cell" data-pos="3" data-cell-no="+3"></div>
+                                <div class="line-cell" data-pos="4" data-cell-no="+4"></div>
+                                <div class="line-cell" data-pos="5" data-cell-no="+5"></div>
+                                <div class="line-cell" data-pos="6" data-cell-no="+6"></div>
+                                <div class="line-cell" data-pos="7" data-cell-no="+7"></div>
+                                <div class="line-cell line-cell-chute" data-pos="8" data-cell-no="+8"><span class="chute-symbol">▼</span></div>
                             </div>
                             <div class="line-gate line-gate-out" aria-hidden="true">ВЫХОД ▸</div>
                         </div>
                     <div class="line-position-labels" aria-label="Позиции линии">
-                        <span class="stage-position">1 · ВХОД</span>
-                        <span>2</span>
-                        <span>3</span>
-                        <span>4</span>
-                        <span class="stage-position">5 · КОНТРОЛЬ</span>
-                        <span>6</span>
-                        <span>7</span>
-                        <span class="stage-position">8 · СОРТИРОВКА</span>
+                        <span class="stage-position">+0 · ВХОД</span>
+                        <span>+1</span>
+                        <span>+2</span>
+                        <span>+3</span>
+                        <span class="stage-position">+4 · КОНТРОЛЬ</span>
+                        <span>+5</span>
+                        <span>+6</span>
+                        <span class="stage-position">+7 · СОРТИРОВКА</span>
+                        <span class="stage-position">+8 · СБРОС</span>
                     </div>
                     </div>
                 </section>
@@ -267,10 +269,13 @@
                 <button id="btn-pause" class="btn btn-pause is-hidden" disabled>ПАУЗА</button>
                 <button id="btn-resume" class="btn btn-resume is-hidden" disabled>ПРОДОЛЖИТЬ</button>
                 <button id="btn-stop"  class="btn btn-stop is-hidden" disabled>СТОП</button>
-                <button id="archive-settings-open" class="btn btn-archive-settings" disabled>АРХИВ</button>
                 <button id="btn-exit"  class="btn btn-exit" disabled>ВЫХОД</button>
             </div>
             <div class="hotkeys">F5 пуск | F6 стоп | F7 пауза/продолжить | TAB вид | 1–7 камеры | F11 полный экран | ESC выход</div>
+            <div class="footer-archive" id="archive-settings-group" data-ui-block="footer-archive">
+                <span class="footer-archive-label">АРХИВ ПАРТИЙ</span>
+                <button id="archive-settings-open" class="btn btn-archive-settings" disabled>АРХИВ</button>
+            </div>
         </footer>
     </div>
 

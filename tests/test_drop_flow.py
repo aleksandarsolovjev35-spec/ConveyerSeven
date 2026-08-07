@@ -290,6 +290,159 @@ class DropFlowTest(unittest.TestCase):
                          [("move", DIST2_BAD)])
         self.assertEqual(cycle.parts, [])
 
+    def test_line_parts_publish_hold_and_drop_flags(self):
+        """UI-статус публикует фактическое состояние корпуса на +7:
+        придержание лепестком (held) и сброс в шаге движения (dropping)."""
+        cycle = self.make_cycle(spider_defects=["contacts_long"])
+        for _ in range(8):
+            cycle._run_once_safe()
+
+        # Корпус доехал до сортировки (+7) и придержан: held=True.
+        held_snap = next(
+            s for s in cycle.monitor.snapshots
+            if any(p.get("held") for p in s["line_parts"])
+        )
+        held_part = next(p for p in held_snap["line_parts"] if p.get("held"))
+        self.assertEqual(held_part["position"], 7)
+        self.assertEqual(held_part["category"], CATEGORY_BAD)
+        self.assertFalse(held_part["dropping"])
+
+        # Следующий шаг: лента несёт корпус к лотку (между +7 и +8) —
+        # в снимках фазы движения/сброса тот же корпус уже dropping.
+        cycle._run_once_safe()
+        drop_snap = next(
+            s for s in cycle.monitor.snapshots
+            if any(p.get("dropping") for p in s["line_parts"])
+        )
+        drop_part = next(p for p in drop_snap["line_parts"] if p.get("dropping"))
+        self.assertEqual(drop_part["id"], 1)
+        self.assertEqual(drop_part["position"], 7)
+        self.assertEqual(drop_part["category"], CATEGORY_BAD)
+        self.assertFalse(drop_part["held"])
+        # После падения детали в очереди нет и флаг dropping исчезает.
+        self.assertEqual(cycle.parts, [])
+        last_snap = cycle.monitor.snapshots[-1]
+        self.assertFalse(
+            any(p.get("dropping") or p.get("held") for p in last_snap["line_parts"])
+        )
+
+    def test_good_part_not_held_at_reject(self):
+        """Годный корпус на +7 не придерживается: held отсутствует."""
+        cycle = self.make_cycle(spider_defects=[])
+        for _ in range(8):
+            cycle._run_once_safe()
+
+        self.assertEqual(cycle.good_count, 1)
+        self.assertEqual(cycle.parts, [])
+        # Ни в одном снимке годный корпус не помечался придержанным.
+        for snap in cycle.monitor.snapshots:
+            for part in snap["line_parts"]:
+                self.assertFalse(part.get("held"))
+                self.assertFalse(part.get("dropping"))
+
+    def test_same_route_series_across_empty_cell(self):
+        """БРАК, пустой лоток, БРАК: распределитель сохраняет позицию.
+
+        Пустая ячейка между двумя одинаковыми деталями не разрывает серию
+        сбросов: DIST1 остаётся открытой и DIST2 остаётся в канале БРАК —
+        одно открытие лопасти и один переезд направляющей на всю серию.
+        """
+        cycle = self.make_cycle(
+            spider_defects=["contacts_long"],
+            present_steps=(1, 3),   # шаг 2 — пустой лоток между деталями
+        )
+        for _ in range(11):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.bad_count, 2)
+        self.assertEqual(cycle.good_count, 0)
+        self.assertEqual(cycle.parts, [])
+        # Одно открытие + одно закрытие лопасти на два сброса.
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0)],
+        )
+        # Направляющая переехала в БРАК один раз и не возвращалась.
+        self.assertEqual(dist.dist2.calls, [("move", DIST2_BAD)])
+        self.assertEqual(dist.dist1_state, "IDLE")
+        self.assertEqual(dist.dist2_state, "READY")
+        self.assertEqual(dist.dist2.position, DIST2_BAD)
+
+    def test_same_route_series_keeps_flap_open_between_drops(self):
+        """Между двумя сбросами с пустой ячейкой лопасть остаётся открытой.
+
+        В снимках UI между падением первой детали и сбросом второй есть
+        состояние «вторая деталь на +7, лопасть открыта, DIST2 в канале»:
+        распределитель не возвращался в исходное положение.
+        """
+        cycle = self.make_cycle(
+            spider_defects=["contacts_long"],
+            present_steps=(1, 3),
+        )
+        for _ in range(10):
+            cycle._run_once_safe()
+
+        # Вторая деталь ещё на линии (на +7), лопасть открыта, канал БРАК.
+        self.assertEqual(len(cycle.parts), 1)
+        part = cycle.parts[0]
+        self.assertEqual(part.step_created, 3)
+        self.assertEqual(
+            cycle.distributor.status["dist1_position"], DIST1_OPEN,
+        )
+        self.assertEqual(
+            cycle.distributor.status["dist2_position"], DIST2_BAD,
+        )
+        # В снимках статуса: вторая деталь на +7 не помечена «падающей»,
+        # хотя лопасть физически открыта (серия продолжается).
+        held_snaps = [
+            s for s in cycle.monitor.snapshots
+            if any(
+                p.get("id") == part.id
+                and p.get("position") == 7
+                for p in s["line_parts"]
+            )
+        ]
+        self.assertTrue(held_snaps, "вторая деталь видна на +7 в статусе")
+        for snap in held_snaps:
+            p = next(p for p in snap["line_parts"] if p.get("id") == part.id)
+            self.assertFalse(p.get("dropping"))
+            self.assertEqual(p.get("category"), CATEGORY_BAD)
+
+        # Следующий шаг завершает серию: деталь падает, лопасть закрывается.
+        cycle._run_once_safe()
+        self.assertEqual(cycle.bad_count, 2)
+        self.assertEqual(cycle.parts, [])
+        self.assertEqual(
+            cycle.distributor.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0)],
+        )
+
+    def test_good_part_between_drops_across_empty_cell(self):
+        """БРАК, пустой лоток, ГОДНОЕ: серия разного маршрута разрывается.
+
+        Пустая ячейка не «склеивает» разный маршрут: после БРАК лопасть
+        закрывается, чтобы годный корпус придержался и прошёл на +7.
+        """
+        cycle = self.make_cycle(
+            spider_defects=["contacts_long"],
+            present_steps=(1, 3),
+            part_spider_defects={2: []},   # деталь со 2-го входа — годная
+        )
+        for _ in range(11):
+            cycle._run_once_safe()
+
+        dist = cycle.distributor
+        self.assertEqual(cycle.bad_count, 1)
+        self.assertEqual(cycle.good_count, 1)
+        self.assertEqual(cycle.parts, [])
+        # Два независимых цикла лопасти: БРАК -> закрытие, проход годного.
+        self.assertEqual(
+            dist.dist1.calls,
+            [("move", DIST1_OPEN), ("move", 0)],
+        )
+        self.assertEqual(dist.dist2.calls, [("move", DIST2_BAD)])
+
     def test_bad_part_dropped(self):
         archive = FakeArchive()
         cycle = self.make_cycle(spider_defects=["contacts_long"], archive=archive)

@@ -91,7 +91,7 @@ const UI_IDS = [
     'defects-section', 'defects-title', 'defects-list', 'jog-panel',
     'jog-last-action', 'jog-hw-serial', 'jog-hw-cameras', 'jog-hw-conveyor',
     'jog-hw-dist1', 'jog-hw-dist2', 'frame-analysis-panel',
-    'archive-settings-open', 'archive-settings-modal', 'archive-settings-close',
+    'archive-settings-open', 'archive-settings-group', 'archive-settings-modal', 'archive-settings-close',
     'archive-settings-cancel', 'archive-pick-folder', 'archive-settings-save',
     'archive-root-path', 'archive-jpeg-quality', 'archive-zip-compression',
     'archive-zip-level', 'archive-enabled', 'archive-compress-on-shutdown', 'archive-delete-original',
@@ -118,12 +118,13 @@ export function createSandbox({ fetchImpl } = {}) {
     const els = {};
     for (const id of UI_IDS) els[id] = makeEl();
 
-    // line-cells: 8 позиций с ненулевым шагом (для анимации маркеров)
+    // line-cells: 9 ячеек — 8 позиций ленты (+0 … +7) и зона сброса +8
+    // (лоток между +7 и +8 по фактической логике сортировки).
     const lineCells = makeEl('div');
     lineCells.querySelector = () => null;
     lineCells.querySelectorAll = (selector) => {
         if (selector === '.line-cell[data-pos]') {
-            return Array.from({ length: 8 }, (_, index) => {
+            return Array.from({ length: 9 }, (_, index) => {
                 const cell = makeEl('div');
                 cell.dataset.pos = String(index);
                 cell.getBoundingClientRect = () => ({

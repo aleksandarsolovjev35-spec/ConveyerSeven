@@ -16,10 +16,24 @@ function archiveSettingsEditable() {
     );
 }
 
+function archiveSettingsVisible() {
+    // Сервисные настройки хранения показываются только на остановленной
+    // линии: в IDLE/STOPPED. При работе, паузе, остановке линии и аварии
+    // группа «АРХИВ» скрывается, чтобы не занимать место и не отвлекать.
+    return (
+        !state.splashActive
+        && !state.offline
+        && ['IDLE', 'STOPPED'].includes(state.lineState)
+    );
+}
+
 function updateArchiveButton() {
     const button = els.archiveSettingsOpen;
     if (!button) return;
-    button.disabled = !archiveSettingsEditable() || archiveSettingsBusy;
+    const visible = archiveSettingsVisible();
+    const group = els.archiveSettingsGroup;
+    if (group) group.classList.toggle('is-hidden', !visible);
+    button.disabled = !visible || !archiveSettingsEditable() || archiveSettingsBusy;
 }
 
 function setArchiveSettingsStatus(text, kind = '') {
