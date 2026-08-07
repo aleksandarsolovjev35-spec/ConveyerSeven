@@ -290,6 +290,56 @@ class DropFlowTest(unittest.TestCase):
                          [("move", DIST2_BAD)])
         self.assertEqual(cycle.parts, [])
 
+    def test_line_parts_publish_hold_and_drop_flags(self):
+        """UI-статус публикует фактическое состояние корпуса на +7:
+        придержание лепестком (held) и сброс в шаге движения (dropping)."""
+        cycle = self.make_cycle(spider_defects=["contacts_long"])
+        for _ in range(8):
+            cycle._run_once_safe()
+
+        # Корпус доехал до сортировки (+7) и придержан: held=True.
+        held_snap = next(
+            s for s in cycle.monitor.snapshots
+            if any(p.get("held") for p in s["line_parts"])
+        )
+        held_part = next(p for p in held_snap["line_parts"] if p.get("held"))
+        self.assertEqual(held_part["position"], 7)
+        self.assertEqual(held_part["category"], CATEGORY_BAD)
+        self.assertFalse(held_part["dropping"])
+
+        # Следующий шаг: лента несёт корпус к лотку (между +7 и +8) —
+        # в снимках фазы движения/сброса тот же корпус уже dropping.
+        cycle._run_once_safe()
+        drop_snap = next(
+            s for s in cycle.monitor.snapshots
+            if any(p.get("dropping") for p in s["line_parts"])
+        )
+        drop_part = next(p for p in drop_snap["line_parts"] if p.get("dropping"))
+        self.assertEqual(drop_part["id"], 1)
+        self.assertEqual(drop_part["position"], 7)
+        self.assertEqual(drop_part["category"], CATEGORY_BAD)
+        self.assertFalse(drop_part["held"])
+        # После падения детали в очереди нет и флаг dropping исчезает.
+        self.assertEqual(cycle.parts, [])
+        last_snap = cycle.monitor.snapshots[-1]
+        self.assertFalse(
+            any(p.get("dropping") or p.get("held") for p in last_snap["line_parts"])
+        )
+
+    def test_good_part_not_held_at_reject(self):
+        """Годный корпус на +7 не придерживается: held отсутствует."""
+        cycle = self.make_cycle(spider_defects=[])
+        for _ in range(8):
+            cycle._run_once_safe()
+
+        self.assertEqual(cycle.good_count, 1)
+        self.assertEqual(cycle.parts, [])
+        # Ни в одном снимке годный корпус не помечался придержанным.
+        for snap in cycle.monitor.snapshots:
+            for part in snap["line_parts"]:
+                self.assertFalse(part.get("held"))
+                self.assertFalse(part.get("dropping"))
+
     def test_bad_part_dropped(self):
         archive = FakeArchive()
         cycle = self.make_cycle(spider_defects=["contacts_long"], archive=archive)

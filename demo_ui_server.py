@@ -169,13 +169,17 @@ def main():
             "state": "RUNNING",
             "exit_requested": False,
             "step": 12,
-            "in_line": 5,
+            "in_line": 6,
             "line_parts": [
-                {"id": 4, "position": 0, "category": "GOOD"},
-                {"id": 5, "position": 1, "category": "GOOD"},
-                {"id": 6, "position": 2, "category": "GOOD"},
-                {"id": 7, "position": 3, "category": "BAD"},
-                {"id": 8, "position": 4, "category": "UNKNOWN"},
+                {"id": 4, "position": 0, "category": "GOOD", "held": False, "dropping": False},
+                {"id": 5, "position": 1, "category": "GOOD", "held": False, "dropping": False},
+                {"id": 6, "position": 2, "category": "GOOD", "held": False, "dropping": False},
+                {"id": 7, "position": 3, "category": "BAD", "held": False, "dropping": False},
+                {"id": 8, "position": 4, "category": "UNKNOWN", "held": False, "dropping": False},
+                # Корпус доехал до сортировки (+7) и придержан лепестком:
+                # лоток +8 показывает канал маршрута, сброс — на следующем
+                # шаге, когда лента понесёт корпус между +7 и +8.
+                {"id": 9, "position": 7, "category": "BAD", "held": True, "dropping": False},
             ],
             "total": 12,
             "good": 8,

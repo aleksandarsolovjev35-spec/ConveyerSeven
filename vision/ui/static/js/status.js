@@ -256,18 +256,43 @@ function _updateLineGates(lineParts, process = {}) {
     if (!gateIn || !gateOut) return;
     gateIn.className = 'line-gate line-gate-in';
     gateOut.className = 'line-gate line-gate-out';
-    const partAtInput = (lineParts || []).find(p => Number(p.position) === 0);
+    gateOut.textContent = 'ВЫХОД ▸';
+
+    const parts = Array.isArray(lineParts) ? lineParts : [];
+    const partAtInput = parts.find(p => Number(p.position) === 0);
     if (partAtInput) gateIn.classList.add('gate-active');
-    const partAtReject = (lineParts || []).find(p => Number(p.position) === 7);
-    const outCat = partAtReject ? (partAtReject.category || '').toUpperCase() : '';
-    const isDropPhase = (process.phase || '').includes('DROP') || (process.phase || '').includes('ROUTE') || (process.phase || '').includes('REJECT');
-    if (outCat === 'BAD') { gateOut.classList.add('gate-rejecting'); gateOut.textContent = '▼ СБРОС'; }
-    else if (outCat === 'CLEANUP') { gateOut.classList.add('gate-cleanup'); gateOut.textContent = '▼ ОЧИСТКА'; }
-    else if (isDropPhase && partAtReject) { gateOut.classList.add('gate-rejecting'); gateOut.textContent = '▼ СБРОС'; }
-    else {
-        if (_currentDistributorCategory === 'BAD') { gateOut.classList.add('gate-rejecting'); gateOut.textContent = 'ВЫХОД ▸'; }
-        else if (_currentDistributorCategory === 'CLEANUP') { gateOut.classList.add('gate-cleanup'); gateOut.textContent = 'ВЫХОД ▸'; }
-        else { gateOut.classList.add('gate-active'); gateOut.textContent = 'ВЫХОД ▸'; }
+
+    const partAtSort = parts.find(p => Number(p.position) === 7);
+    if (!partAtSort) {
+        // После сброса канал распределителя ещё виден: держим цвет ворота,
+        // чтобы оператор видел, куда только что ушёл корпус.
+        if (_currentDistributorCategory === 'BAD') gateOut.classList.add('gate-rejecting');
+        else if (_currentDistributorCategory === 'CLEANUP') gateOut.classList.add('gate-cleanup');
+        else gateOut.classList.add('gate-active');
+        return;
+    }
+
+    const cat = String(partAtSort.category || '').toUpperCase();
+    const phase = String(process.phase || '').toUpperCase();
+    const held = !!partAtSort.held;
+    const dropping = !!partAtSort.dropping;
+    const routing = phase.includes('ROUTE') || phase.includes('DROP')
+        || phase.includes('CONVEYOR') || phase.includes('PART_HOLD');
+    // Корпус на сортировке (+7) придержан лепестком или уже падает в
+    // канал: ворота показывают канал маршрута (БРАК/ОЧИСТКА). Годный
+    // корпус проходит без сброса — ворота показывают «проход».
+    if (cat === 'BAD' && (held || dropping || routing)) {
+        gateOut.classList.add('gate-rejecting');
+        gateOut.textContent = '▼ БРАК';
+    } else if (cat === 'CLEANUP' && (held || dropping || routing)) {
+        gateOut.classList.add('gate-cleanup');
+        gateOut.textContent = '▼ ОЧИСТКА';
+    } else if (cat === 'GOOD' && phase.includes('ROUTE')) {
+        gateOut.classList.add('gate-active');
+        gateOut.textContent = 'ПРОХОД ▸';
+    } else {
+        gateOut.classList.add('gate-active');
+        gateOut.textContent = 'ВЫХОД ▸';
     }
 }
 
@@ -348,13 +373,30 @@ function updateLineCells(lineParts, process = {}) {
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
     const active = Array.isArray(process.positions) ? process.positions : [];
     const phase = process.phase || '';
+    const phaseUpper = String(phase).toUpperCase();
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         cell.className = 'line-cell';
+        if (position === 8) cell.classList.add('line-cell-chute');
         if (active.includes(position)) {
             cell.classList.add('process-active');
             if (phase.includes('CAMERA') || phase.includes('ANALYSIS')) cell.classList.add('process-camera');
             if (phase.includes('ROUTE') || phase.includes('DROP')) cell.classList.add('process-route');
+        }
+    });
+
+    // Сортировка +7 по фактической логике: корпус ДОЕХАЛ и придержан
+    // лепестком (held) либо уже падает в лоток (dropping) — ячейка +7
+    // получает ограничитель, лоток +8 — цвет канала маршрута.
+    const sortPart = (lineParts || []).find(p => Number(p.position) === 7);
+    const sortHeld = !!(sortPart && sortPart.held);
+    const sortCat = sortPart ? String(sortPart.category || '').toUpperCase() : '';
+    cells.forEach(cell => {
+        const position = Number(cell.dataset.pos);
+        if (position === 7 && sortHeld) cell.classList.add('cell-hold');
+        if (position === 8) {
+            if (sortCat === 'BAD') cell.classList.add('chute-bad');
+            else if (sortCat === 'CLEANUP') cell.classList.add('chute-cleanup');
         }
     });
 
@@ -366,18 +408,28 @@ function updateLineCells(lineParts, process = {}) {
         if (pendingAnalysis && !appliedById.has(id)) continue;
         let category = (part.category || '').toUpperCase();
         if (pendingAnalysis && appliedById.has(id)) category = appliedById.get(id);
-        wanted.set(id, {position: Math.max(0, Math.min(Number(part.position) || 0, 7)), category});
+        wanted.set(id, {
+            position: Math.max(0, Math.min(Number(part.position) || 0, 7)),
+            category,
+            held: !!(part && part.held),
+            dropping: !!(part && part.dropping),
+        });
     }
 
     const {containerRect, rects} = _lineCellRects(cells);
     const geometryReady = !!(containerRect.width && rects[0] && rects[0].width);
     const step = (rects[0] && rects[1]) ? (rects[1].left - rects[0].left) : (rects[0] ? rects[0].width + 3 : 0);
     const duration = lineMoveDuration(process);
+    const isConveyorPhase = phaseUpper.includes('CONVEYOR');
 
     for (const [id, token] of [..._lineTokens.entries()]) {
         if (wanted.has(id)) continue;
         _lineTokens.delete(id);
-        if (geometryReady && rects[token.position]) {
+        if (token.dropping) {
+            // Падение: маркер уже уехал в лоток +8 — гаснет на месте.
+            token.el.style.opacity = '0';
+        } else if (geometryReady && rects[token.position]) {
+            // Проход (годный) или съезд с линии: маркер уезжает за ячейку.
             token.el.style.left = `${rects[token.position].left + step}px`;
             token.el.style.opacity = '0';
         }
@@ -394,8 +446,21 @@ function updateLineCells(lineParts, process = {}) {
     }
 
     for (const [id, meta] of wanted) {
-        const target = rects[meta.position] || rects[0];
         let token = _lineTokens.get(id);
+
+        // Куда физически уезжает маркер в этом снимке. Дроп происходит,
+        // когда лента несёт корпус от +7 к лотку +8: во время фазы
+        // CONVEYOR маркер скользит в зону сброса и остаётся там до
+        // исчезновения детали.
+        let targetPos = meta.position;
+        if (meta.dropping) {
+            const alreadyInChute = !!(token && token.position === 8);
+            if (alreadyInChute) targetPos = 8;
+            else if (!token) targetPos = 8;
+            else if (isConveyorPhase || phaseUpper.includes('PART_DROP')) targetPos = 8;
+        }
+
+        const target = rects[targetPos] || rects[meta.position] || rects[0];
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
@@ -403,7 +468,7 @@ function updateLineCells(lineParts, process = {}) {
             el.style.top = `${target.top}px`;
             el.style.width = `${target.width}px`;
             el.style.height = `${target.height}px`;
-            token = {el, position: meta.position, category: null};
+            token = {el, position: targetPos, category: null, dropping: false, held: false};
             _lineTokens.set(id, token);
             els.lineCells.appendChild(el);
             if (_lineSyncDone) {
@@ -420,12 +485,18 @@ function updateLineCells(lineParts, process = {}) {
             token.el.style.height = `${target.height}px`;
             const targetLeft = `${target.left}px`;
             if (token.el.style.left !== targetLeft) token.el.style.left = targetLeft;
-            token.position = meta.position;
+            token.position = targetPos;
         }
+        token.dropping = !!meta.dropping;
+        token.held = !!meta.held;
         if (token.category !== meta.category) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
         }
+        // Придержание и сброс рисуются поверх цвета категории.
+        token.el.classList.remove('token-hold', 'token-dropping');
+        if (token.held) token.el.classList.add('token-hold');
+        if (token.dropping) token.el.classList.add('token-dropping');
         token.el.textContent = `#${id}`;
         token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }

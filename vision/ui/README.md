@@ -40,7 +40,7 @@ Functions may call functions from later modules only after all scripts have load
 - `operator-header` — статус линии, заголовок и метрики.
 - `preview-strip` — семь миниатюр камер.
 - `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ кадра.
-- `process-line` — путь деталей: непрозрачные ворота входа/выхода, из-под которых появляются и уезжают маркеры деталей.
+- `process-line` — путь корпусов по фактической логике линии: восемь позиций ленты (`+0 · ВХОД`, `+4 · КОНТРОЛЬ`, `+7 · СОРТИРОВКА`) и зона сброса `+8 · СБРОС`, куда падает корпус между +7 и +8; придержание на +7 (`held`) и сброс (`dropping`) приходят из `line_status.line_parts[]` как явные флаги и рисуются ограничителем ячейки, цветом лотка и ворот выхода.
 - `history-strip` — последние детали.
 - `right-panel` — прокручиваемая правая колонка.
 - `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.

@@ -118,12 +118,13 @@ export function createSandbox({ fetchImpl } = {}) {
     const els = {};
     for (const id of UI_IDS) els[id] = makeEl();
 
-    // line-cells: 8 позиций с ненулевым шагом (для анимации маркеров)
+    // line-cells: 9 ячеек — 8 позиций ленты (+0 … +7) и зона сброса +8
+    // (лоток между +7 и +8 по фактической логике сортировки).
     const lineCells = makeEl('div');
     lineCells.querySelector = () => null;
     lineCells.querySelectorAll = (selector) => {
         if (selector === '.line-cell[data-pos]') {
-            return Array.from({ length: 8 }, (_, index) => {
+            return Array.from({ length: 9 }, (_, index) => {
                 const cell = makeEl('div');
                 cell.dataset.pos = String(index);
                 cell.getBoundingClientRect = () => ({

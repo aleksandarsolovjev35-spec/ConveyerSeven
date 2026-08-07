@@ -2001,10 +2001,26 @@ class ProductionCycle:
         for part in parts_snapshot:
             position = step_snapshot - part.step_created
             position = max(0, min(position, self.OFFSET_REJECT))
+            # Сброс уже запланирован на этот шаг: деталь придержана на +7,
+            # лента несёт её к лотку (между +7 и +8) или она уже падает.
+            dropping = (
+                self._pending_drop is not None
+                and self._pending_drop is part
+            )
             line_parts.append({
                 "id": part.id,
                 "position": position,
                 "category": part.route_category,
+                # Придержание лепестком: деталь ДОЕХАЛА до сортировки (+7)
+                # и ждёт следующего шага, когда DIST2 встанет в канал и
+                # DIST1 откроется. Годные на +7 не придерживаются — они
+                # проходят в шаге приезда.
+                "held": (
+                    position == self.OFFSET_REJECT
+                    and part.route_category != CATEGORY_GOOD
+                    and not dropping
+                ),
+                "dropping": dropping,
             })
 
         state_name = sm_snap["state"]
