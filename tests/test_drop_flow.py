@@ -1,13 +1,16 @@
-"""Сквозная проверка сброса детали на позиции +7 (OFFSET_REJECT).
+"""Сквозная проверка сброса детали на позиции сортировки (+7).
+
+Физика линии: корпус приезжает на +7 и ПРИДЕРЖИВАЕТСЯ лепестком; падение
+происходит на следующем шаге, когда лента несёт корпус дальше (между +7
+и +8) — к этому моменту DIST2 уже в нужном канале, DIST1 открыт.
 
 Прогоняет ProductionCycle с **настоящим** Distributor (фейковые оси) и
-проверяет весь маршрут сброса:
+проверяет весь маршрут:
 
-- BAD/CLEANUP: перед движением ленты DIST2 уезжает в нужный канал,
-  DIST1 открывается; после остановки ленты деталь падает и лопасть
-  закрывается (drop_and_close);
-- GOOD: лопасть не двигается вообще (mark_pass), деталь выходит на +7
-  штатно через _pass_good_parts;
+- BAD/CLEANUP: на шаге приезда на +7 распределитель НЕ двигается, корпус
+  остаётся в очереди; на следующем шаге перед движением ленты DIST2 уезжает
+  в нужный канал, DIST1 открывается, корпус падает и лопасть закрывается;
+- GOOD: лопасть не двигается вообще (mark_pass через _pass_good_parts);
 - пустая линия: распределитель не двигается (reset_target);
 - деталь с категорией UNKNOWN на +7 принудительно сбрасывается как BAD.
 
@@ -251,10 +254,36 @@ class DropFlowTest(unittest.TestCase):
         cycle.sm.request_start()
         return cycle
 
+    def test_part_held_at_reject_before_drop(self):
+        """На шаге приезда на +7 корпус придержан: лепесток не двигается."""
+        cycle = self.make_cycle(spider_defects=["contacts_long"])
+        for _ in range(8):
+            cycle._run_once_safe()
+
+        # После 8 шагов корпус стоит на позиции 7 (придержан), а сброс
+        # ещё НЕ выполнен: распределитель не двигался, деталь в очереди.
+        self.assertEqual(cycle.current_step, 8)
+        self.assertEqual(len(cycle.parts), 1)
+        self.assertEqual(cycle.parts[0].id, 1)
+        self.assertEqual(cycle.parts[0].route_category, CATEGORY_BAD)
+        self.assertEqual(cycle.bad_count, 0)
+        self.assertEqual(cycle.distributor.dist1.calls, [])
+        self.assertEqual(cycle.distributor.dist2.calls, [])
+        self.assertIsNone(cycle._pending_drop)
+
+        # Следующий шаг: лента несёт корпус к лотку (7 -> 8) и он падает.
+        cycle._run_once_safe()
+        self.assertEqual(cycle.bad_count, 1)
+        self.assertEqual(cycle.distributor.dist1.calls,
+                         [("move", DIST1_OPEN), ("move", 0)])
+        self.assertEqual(cycle.distributor.dist2.calls,
+                         [("move", DIST2_BAD)])
+        self.assertEqual(cycle.parts, [])
+
     def test_bad_part_dropped(self):
         archive = FakeArchive()
         cycle = self.make_cycle(spider_defects=["contacts_long"], archive=archive)
-        for _ in range(8):
+        for _ in range(9):
             cycle._run_once_safe()
 
         dist = cycle.distributor
@@ -285,8 +314,8 @@ class DropFlowTest(unittest.TestCase):
         # Деталь покинула линию, pending-сброс очищен.
         self.assertEqual(cycle.parts, [])
         self.assertIsNone(cycle._pending_drop)
-        self.assertEqual(cycle.current_step, 8)
-        self.assertEqual(cycle.conveyor.moves, 8)
+        self.assertEqual(cycle.current_step, 9)
+        self.assertEqual(cycle.conveyor.moves, 9)
         # Порядок операций на шаге сброса: DIST2 -> DIST1 OPEN -> движение
         # ленты -> DIST1 CLOSE (сброс после остановки ленты, до съёмки).
         # Всё, что до этого, — обычные шаги с пустым входом (только лента).
@@ -297,10 +326,10 @@ class DropFlowTest(unittest.TestCase):
              ("conveyor", "move", None),
              ("dist1", "move", 0)],
         )
-        # Лента двигалась все 8 шагов; распределитель — только на сбросе.
+        # Лента двигалась все 9 шагов; распределитель — только на сбросе.
         self.assertEqual(
             [e for e in self.log if e[0] == "conveyor"],
-            [("conveyor", "move", None)] * 8,
+            [("conveyor", "move", None)] * 9,
         )
         # В последнем снимке UI деталь уже покинула линию, счётчик брака
         # вырос, а распределитель вернулся в рабочее состояние.
@@ -315,7 +344,7 @@ class DropFlowTest(unittest.TestCase):
     def test_cleanup_part_dropped_to_cleanup_channel(self):
         archive = FakeArchive()
         cycle = self.make_cycle(spider_defects=["glass"], archive=archive)
-        for _ in range(8):
+        for _ in range(9):
             cycle._run_once_safe()
 
         dist = cycle.distributor
@@ -390,7 +419,7 @@ class DropFlowTest(unittest.TestCase):
         )
         cycle.sm.request_start()
 
-        for _ in range(8):
+        for _ in range(9):
             cycle._run_once_safe()
 
         # Ошибка сброса = FAULT, а не «тихий» пропуск детали.

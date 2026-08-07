@@ -6,7 +6,8 @@
 
 Ключевые проверки:
 - каждый шаг снимает кадры один раз и публикует единый снимок;
-- деталь создаётся на входе, на +4 проверяется, на +7 уходит (BAD -> сброс);
+- деталь создаётся на входе, на +4 проверяется, на +7 придерживается
+  лепестком и на следующем шаге (+8) сбрасывается (BAD -> падение);
 - пустые лотки на входе считаются и не создают Part.
 """
 
@@ -218,23 +219,24 @@ class CycleIntegrationTest(unittest.TestCase):
         self.cycle.sm.request_start()
 
     def test_full_cycle(self):
-        # Прогоняем 8 шагов: вход -> +4 (spider) -> +7 (сброс BAD)
-        for _ in range(8):
+        # Прогоняем 9 шагов: вход -> +4 (spider) -> +7 (придержан лепестком)
+        # -> +8 (сброс BAD во время движения ленты)
+        for _ in range(9):
             self.cycle._run_once_safe()
 
         # Ровно одна деталь (первый шаг), остальные входы — пустые лотки
         self.assertEqual(self.cycle.part_counter, 1)
-        self.assertEqual(self.cycle.empty_count, 7)
-        # Деталь с дефектом контактов на +4 -> BAD, на +7 сброшена
+        self.assertEqual(self.cycle.empty_count, 8)
+        # Деталь с дефектом контактов на +4 -> BAD, на +8 сброшена
         self.assertEqual(self.cycle.bad_count, 1)
         self.assertEqual(self.distributor.drops, [(1, "BAD")])
         self.assertEqual(self.cycle.parts, [])
-        self.assertEqual(self.cycle.current_step, 8)
-        self.assertEqual(self.conveyor.moves, 8)
+        self.assertEqual(self.cycle.current_step, 9)
+        self.assertEqual(self.conveyor.moves, 9)
         # Spider проверялся ровно один раз (деталь прошла +4)
         self.assertEqual(self.inspector.spider_calls, 1)
         # Input вызывался на каждом шаге (accepts_new_parts=True)
-        self.assertEqual(self.inspector.input_calls, 8)
+        self.assertEqual(self.inspector.input_calls, 9)
 
     def test_publish_snapshots(self):
         self.cycle._run_once_safe()

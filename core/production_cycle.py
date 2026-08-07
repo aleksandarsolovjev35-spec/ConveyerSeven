@@ -44,6 +44,9 @@ class ProductionCycle:
 
     OFFSET_INPUT  = 0
     OFFSET_SPIDER = 4
+    # Позиция сортировки: корпус приезжает сюда и ПРИДЕРЖИВАЕТСЯ лепестком.
+    # Падение происходит на следующем шаге, когда лента несёт корпус дальше
+    # (между +7 и +8) — к этому моменту DIST2 уже в нужном канале, DIST1 открыт.
     OFFSET_REJECT = 7
 
     JOG_ALLOWED_STATES = ("IDLE", "STOPPED", "PAUSED")
@@ -1067,6 +1070,29 @@ class ProductionCycle:
                 part_id=pending_id,
                 positions=[self.OFFSET_REJECT],
             )
+        else:
+            # Корпус приехал на сортировку (+7) и придержан лепестком;
+            # падение произойдёт на следующем шаге, когда лента понесёт
+            # его к лотку (между +7 и +8).
+            held = [
+                p for p in self.parts
+                if p.step_created + self.OFFSET_REJECT == self.current_step
+            ]
+            if held:
+                all_good = all(
+                    p.route_category == CATEGORY_GOOD for p in held
+                )
+                label = (
+                    "Корпус на сортировке: проход"
+                    if all_good else
+                    "Корпус придержан лепестком до сброса"
+                )
+                self._set_process(
+                    "PART_HOLD",
+                    label,
+                    part_id=held[0].id,
+                    positions=[self.OFFSET_REJECT],
+                )
         self._execute_drop()
         self._check_motion_cancelled()
 
@@ -1466,9 +1492,13 @@ class ProductionCycle:
     # Distributor flow
 
     def _find_pending_drop(self):
-        next_step = self.current_step + 1
+        # Корпус, который УЖЕ стоит на сортировке (+7) и придержан лепестком.
+        # Падение произойдёт в этом шаге: перед движением ленты распределитель
+        # встанет в нужное положение, лента понесёт корпус дальше (7 -> 8),
+        # и он провалится в канал, заданный DIST2. Сам приезд на +7 сбросом
+        # не является — корпус должен сначала встать и быть придержанным.
         for part in self.parts:
-            if part.step_created + self.OFFSET_REJECT == next_step:
+            if part.step_created + self.OFFSET_REJECT == self.current_step:
                 return part
         return None
 
@@ -1539,6 +1569,9 @@ class ProductionCycle:
                 part_id=part.id,
                 positions=[self.OFFSET_REJECT],
             )
+            # Годный корпус проходит без сброса: лепесток не двигается,
+            # в UI показывается «проход».
+            self.distributor.mark_pass(part.id)
             self.good_count += 1
             self._archive_part(part)
             self._register_finished(part)
