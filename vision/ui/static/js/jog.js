@@ -90,19 +90,22 @@ function applyLiveBadge(active) {
     els.modeBadge.classList.remove(
         'is-faded', 'mode-live', 'mode-analysis', 'mode-static',
     );
-    if (state.selectedAnalysisActive) {
+    // Даже «АНАЛИЗ» появляется только когда соответствующий кадр уже
+    // заменил изображение в окне: до этого остаётся бейдж предыдущего кадра.
+    if (state.displayedFrameKind === 'analysis') {
         els.modeBadge.textContent = 'АНАЛИЗ';
         els.modeBadge.classList.add('mode-analysis');
         return;
     }
-    // Живой поток идёт и в JOG, и во время движения ленты в цикле.
-    if (active || state.liveStreaming) {
+    // Статус линии описывает желаемый источник, но img переключается позже.
+    // Не меняем надпись заранее: во время загрузки нового кадра она должна
+    // описывать предыдущий, ещё действительно видимый кадр.
+    if (state.displayedFrameKind === 'live') {
         els.modeBadge.textContent = `ПОТОК · ${formatFrameRate(state.liveFps)}`;
         els.modeBadge.classList.add('mode-live');
         return;
     }
-    // Лента стоит: на экране статичные кадры, по которым считались правила.
-    if (state.liveStatic) {
+    if (state.displayedFrameKind === 'static') {
         els.modeBadge.textContent = (state.mode === 'RAW'
             ? 'СТОП-КАДР · RAW'
             : 'СТОП-КАДР · ПРАВИЛА');
