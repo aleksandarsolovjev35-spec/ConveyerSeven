@@ -1071,9 +1071,8 @@ class ProductionCycle:
                 positions=[self.OFFSET_REJECT],
             )
         else:
-            # Корпус приехал на сортировку (+7) и придержан лепестком;
-            # падение произойдёт на следующем шаге, когда лента понесёт
-            # его к лотку (между +7 и +8).
+            # Корпус приехал на сортировку (+7); падение произойдёт на
+            # следующем шаге, когда лента понесёт его к лотку (между +7 и +8).
             held = [
                 p for p in self.parts
                 if p.step_created + self.OFFSET_REJECT == self.current_step
@@ -1082,11 +1081,18 @@ class ProductionCycle:
                 all_good = all(
                     p.route_category == CATEGORY_GOOD for p in held
                 )
-                label = (
-                    "Корпус на сортировке: проход"
-                    if all_good else
-                    "Корпус придержан лепестком до сброса"
+                # Серия сбросов одной категории продолжается через пустые
+                # лотки: заслонка уже открыта от предыдущего сброса, корпус
+                # не придерживается лепестком, а просто ждёт своей очереди.
+                flap_open = (
+                    self.distributor.status.get("dist1_position", 0) > 0
                 )
+                if all_good:
+                    label = "Корпус на сортировке: проход"
+                elif flap_open:
+                    label = "Корпус на сортировке: следующий в серии сброса"
+                else:
+                    label = "Корпус придержан лепестком до сброса"
                 self._set_process(
                     "PART_HOLD",
                     label,
@@ -1530,19 +1536,26 @@ class ProductionCycle:
             self._pending_drop = None
 
     def _next_part_will_drop(self) -> bool:
-        """Падает ли следующая деталь в тот же канал без паузы.
+        """Следующая деталь в очереди падает в тот же канал без паузы.
 
-        Если сразу после текущей к сортировке (+7) уже подъехала ещё одна
-        деталь на сброс (BAD/CLEANUP), заслонку можно не закрывать: детали
-        одной категории, идущие подряд, обслуживаются одним открытием
-        лопасти, а не открытие-закрытие на каждую.
+        Серия сбросов одной категории (БРАК/ОЧИСТКА) не разрывается пустыми
+        лотками: если следующая деталь в очереди — на сброс, заслонка
+        остаётся открытой и DIST2 не покидает канал, даже когда между
+        деталями есть пустая ячейка. Одно открытие лопасти на всю серию.
+        Между сериями разного маршрута (следующая деталь годная) заслонка
+        закрывается, чтобы следующий корпус придержался на +7.
         """
+        next_part = None
         for p in self.parts:
             if p is self._pending_drop:
                 continue
-            if p.step_created + self.OFFSET_REJECT == self.current_step:
-                return p.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
-        return False
+            # Следующей к сортировке подъедет деталь, созданная раньше всех
+            # остальных (она ближе всех к +7).
+            if next_part is None or p.step_created < next_part.step_created:
+                next_part = p
+        if next_part is None:
+            return False
+        return next_part.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
 
     def _execute_drop(self):
         part = self._pending_drop
@@ -2003,9 +2016,12 @@ class ProductionCycle:
             position = max(0, min(position, self.OFFSET_REJECT))
             # Сброс уже запланирован на этот шаг: деталь придержана на +7,
             # лента несёт её к лотку (между +7 и +8) или она уже падает.
+            # Флаг ставится только деталям на сброс (БРАК/ОЧИСТКА): годные
+            # проходят без участия распределителя и не могут быть «падающими».
             dropping = (
                 self._pending_drop is not None
                 and self._pending_drop is part
+                and part.route_category in (CATEGORY_BAD, CATEGORY_CLEANUP)
             )
             line_parts.append({
                 "id": part.id,
