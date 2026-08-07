@@ -596,10 +596,10 @@ function updateLineCells(lineParts, process = {}) {
 
         if (targetPos === 8) _clearChuteExitTokens();
         const target = rects[targetPos] || rects[meta.position] || rects[0];
-        // Полностью непрозрачный маркер: падающий корпус не должен
-        // «просвечивать» цвет канала лотка (тот же цвет, что и у самого
-        // маркера) — иначе на +7/+8 получается двойная заливка одного цвета.
-        const targetOpacity = '1';
+        // Маркер в лотке «тонет»: гаснет (opacity 0), а не рисуется непрозрачной
+        // плашкой поверх ячейки +8. Так падающий корпус не перекрывает лоток и
+        // не даёт «двойной заливки» с цветом канала, который держит ячейка.
+        const targetOpacity = targetPos === 8 ? '0' : '1';
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
