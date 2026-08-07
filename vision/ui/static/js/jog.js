@@ -169,10 +169,10 @@ function updateJogHardware(ls) {
     const d1State = (ls.dist1_state || 'IDLE').toUpperCase();
     const d1Pos   = ls.dist1_position || 0;
     let d1Class = 'hw-ok';
-    if (d1State === 'MOVING' || d1State === 'OPENING'
-        || d1State === 'CLOSING') {
+    if (d1State === 'MOVING' || d1State === 'MOVING_TO_GOOD'
+        || d1State === 'MOVING_TO_DIST2') {
         d1Class = 'hw-warn';
-    } else if (d1State === 'OPEN') {
+    } else if (d1State === 'TO_DIST2') {
         d1Class = 'hw-bad';
     }
     setHwCell(

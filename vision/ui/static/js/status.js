@@ -84,11 +84,22 @@ async function fetchStatus() {
 
     const lineStatusPayload = status.line_status || {};
     const liveInfo = lineStatusPayload.live || {};
+    const staticRoles = Array.isArray(liveInfo.static_roles) ? liveInfo.static_roles : [];
+    const processInfo = lineStatusPayload.process || {};
+    const inspectionRoles = Array.isArray(processInfo.inspection_roles) ? processInfo.inspection_roles : [];
+    const processPhase = String(processInfo.phase || '').toUpperCase();
+    const inspectionDisplay = inspectionRoles.includes(state.currentCamera)
+        && (processPhase.includes('CAMERA') || processPhase.includes('ANALYSIS') || processPhase === 'PUBLISH');
+    const selectedRoleStatic = liveInfo.all_roles_static === true
+        || staticRoles.includes(state.currentCamera)
+        || inspectionDisplay
+        // Совместимость со статусом backend до ролевых пауз.
+        || (liveInfo.static === true && liveInfo.streaming === false && staticRoles.length === 0);
     const staticPublish = (
         newPublishArrived
         && incomingVersion > 0
         && !state.splashActive
-        && !liveInfo.streaming
+        && selectedRoleStatic
         && state.mainCamMode === 'pull'
     );
     if (staticPublish) {
@@ -186,8 +197,8 @@ function updateLineStatus(ls) {
         const d1Percent = Math.max(0, Math.min(100, d1Pos / d1Max * 100));
         setBladeMarkerPosition(els.dist1Blade, d1Percent);
     }
-    const d1Moving = ['MOVING', 'OPENING', 'CLOSING', 'HOMING'].includes(String(d1State).toUpperCase());
-    const d1TargetLabel = d1Moving ? 'ПЕРЕМЕЩЕНИЕ' : (d1Pos <= 0 ? 'ПРОХОД' : (d1Pos >= d1Max ? 'СБРОС' : `ПОЗИЦИЯ ${d1Pos}`));
+    const d1Moving = ['MOVING', 'MOVING_TO_GOOD', 'MOVING_TO_DIST2', 'HOMING'].includes(String(d1State).toUpperCase());
+    const d1TargetLabel = d1Moving ? 'ПЕРЕМЕЩЕНИЕ' : (d1Pos <= 0 ? 'ГОДНО' : (d1Pos >= d1Max ? 'НА DIST2' : `ПОЗИЦИЯ ${d1Pos}`));
     setIfChanged(els.dist1Target, d1TargetLabel);
 
     const d2State = ls.dist2_state || 'IDLE';
@@ -253,13 +264,17 @@ function tapeShortLabel(process) {
     if (isConveyorTransportPhase(p)) return 'ДВИЖЕНИЕ';
     if (p === 'CONVEYOR_CONFIRMED') return 'СТОЯНКА';
     if (p === 'PART_DROP') return 'СБРОС';
-    if (p === 'PART_HOLD') {
-        if (lbl.includes('серии')) return 'ОЖИДАНИЕ СБРОСА';
-        if (lbl.includes('проход')) return 'ПРОХОД';
-        return 'УДЕРЖАНИЕ';
-    }
+    if (p === 'PART_TRANSFER') return 'ПЕРЕДАЧА';
     if (p === 'SETTLE') return 'СТОЯНКА';
-    if (p === 'CAMERA_CAPTURE') return 'СЪЁМКА';
+    if (p === 'CAMERA_CAPTURE') {
+        const roles = Array.isArray(process.capture_roles) ? process.capture_roles : [];
+        const hasInput = roles.includes('INPUT_LEFT') || roles.includes('INPUT_RIGHT');
+        const hasSpider = roles.some(role => String(role).startsWith('SPIDER_') || role === 'TOP');
+        if (hasInput && hasSpider) return 'СЪЁМКА · ВХОД + КОНТРОЛЬ';
+        if (hasInput) return 'СЪЁМКА · ВХОД';
+        if (hasSpider) return 'СЪЁМКА · КОНТРОЛЬ';
+        return 'СЪЁМКА НЕ НУЖНА';
+    }
     if (p === 'ANALYSIS_REVIEW') return 'ПАУЗА';
     if (p.includes('INPUT_ANALYSIS') || p === 'INPUT_ANALYSIS') return 'АНАЛИЗ ВХОДА';
     if (p.includes('SPIDER')) return 'АНАЛИЗ КОНТРОЛЯ';
@@ -371,11 +386,9 @@ function _updateLineGates(lineParts, process = {}) {
     const held = !!partAtSort.held;
     const dropping = !!partAtSort.dropping;
     const routing = phase.includes('ROUTE') || phase.includes('DROP')
-        || phase.includes('CONVEYOR') || phase.includes('PART_HOLD');
-    // Корпус на сортировке (+7) придержан лепестком или уже падает в
-    // канал: ворота показывают канал маршрута (БРАК/ОЧИСТКА). Годный
-    // корпус проходит без сброса — ворота показывают «проход» весь
-    // период пребывания годного на +7, а не только во время ROUTE.
+        || phase.includes('CONVEYOR') || phase.includes('TRANSFER');
+    // Корпус на +7 ожидает передачи на следующем шаге. Ворота показывают
+    // маршрут, заранее выставленный DIST1/DIST2.
     if (cat === 'BAD' && (held || dropping || routing)) {
         gateOut.classList.add('gate-rejecting');
         gateOut.textContent = '▼ БРАК';
@@ -408,8 +421,8 @@ function _resolveDistributorRoute(ls) {
     if (!ROUTE_CATEGORIES.includes(category)) category = '';
     if (!category) {
         const d1State = String(ls.dist1_state || '').toUpperCase();
-        const d1Open = ['OPEN', 'OPENING'].includes(d1State) || (d1State !== 'CLOSING' && Number(ls.dist1_position || 0) > 0);
-        if (d1Open) category = String(ls.dist2_target || '').toUpperCase() === 'CLEANUP' ? 'CLEANUP' : 'BAD';
+        const d1ToDist2 = ['TO_DIST2', 'MOVING_TO_DIST2'].includes(d1State) || (d1State !== 'MOVING_TO_GOOD' && Number(ls.dist1_position || 0) > 0);
+        if (d1ToDist2) category = String(ls.dist2_target || '').toUpperCase() === 'CLEANUP' ? 'CLEANUP' : 'BAD';
     }
     return category;
 }
@@ -426,8 +439,8 @@ function _updateDistributorRoute(ls) {
     else {
         const lineState = (ls.state || state.lineState || '').toUpperCase();
         const d1State = String(ls.dist1_state || '').toUpperCase();
-        const closingToHome = d1State === 'CLOSING';
-        const parked = ['IDLE', 'STOPPED'].includes(lineState) && (d1State === 'IDLE' || closingToHome) && (Number(ls.dist1_position || 0) === 0 || closingToHome);
+        const movingToGood = d1State === 'MOVING_TO_GOOD';
+        const parked = ['IDLE', 'STOPPED'].includes(lineState) && (d1State === 'GOOD' || movingToGood) && (Number(ls.dist1_position || 0) === 0 || movingToGood);
         if (parked) { panel.classList.add('production-ready'); effective = 'GOOD'; }
     }
     _currentDistributorCategory = effective;
@@ -481,14 +494,10 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
-    // Сортировка +7 по фактической логике: корпус ДОЕХАЛ до последней
-    // ячейки и ждёт сброса следующим шагом (held) либо уже падает в лоток
-    // (dropping) — ячейка +7 получает ограничитель, лоток +8 — цвет канала
-    // маршрута. Флаг held отражает само пребывание на +7 и не зависит от
-    // положения заслонки: у детали серии (DIST1 ещё открыт) оно то же, что
-    // и у первой детали маршрута. При серии через пустую ячейку лоток
-    // сохраняет цвет канала (DIST2 не уходит, DIST1 остаётся открытой),
-    // как и ворота выхода.
+    // Корпус на +7 ожидает следующего движения ленты; механического
+    // удержания нет. Лоток +8 показывает подготовленный маршрут BAD/CLEANUP.
+    // Поле held сохранено только ради обратной совместимости старых снимков
+    // статуса и новым backend больше не выставляется.
     const sortPart = (lineParts || []).find(p => Number(p.position) === 7);
     const sortHeld = !!(sortPart && sortPart.held);
     const sortCat = sortPart ? String(sortPart.category || '').toUpperCase() : '';
@@ -667,7 +676,7 @@ function updateLineCells(lineParts, process = {}) {
         // carries it to +8; otherwise the token flashes a drop arrow at +7
         // before motion and can look as if it jumped through the gate.
         token.dropping = dropAnimationActive;
-        token.held = !!meta.held || (!!meta.dropping && !dropAnimationActive);
+        token.held = !!meta.held;
         if (token.category !== meta.category) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);

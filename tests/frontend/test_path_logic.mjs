@@ -1,14 +1,13 @@
 // test_path_logic.mjs — «Путь корпусов» соответствует фактической логике
-// сортировки: вход 0, контроль +4, сортировка +7 с придержанием лепестком
-// и сброс между +7 и +8.
+// сортировки: вход 0, контроль +4, сортировка +7 с подготовкой маршрута
+// и передачей между +7 и +8.
 //
 // Проверяет:
-// - придержание (held): ячейка +7 получает ограничитель cell-hold, маркер —
-//   token-hold, лоток +8 — цвет канала (chute-bad/chute-cleanup), ворота
-//   выхода показывают канал маршрута;
+// - корпус на +7 не удерживается; лоток +8 и ворота показывают заранее
+//   подготовленный канал маршрута;
 // - сброс (dropping): во время фазы CONVEYOR маркер скользит из +7 в лоток
 //   +8, а при исчезновении детали гаснет на месте, не «выкатываясь» дальше;
-// - годный корпус на +7 не придерживается и проходит без сброса.
+// - GOOD также передаётся следующим шагом через DIST1=0.
 import { createSandbox, loadUI, installStubs, makeEl, runInSandbox } from './harness.mjs';
 
 const sandbox = createSandbox();
@@ -70,31 +69,30 @@ const body = `
         ...extra,
     });
 
-    // ── 1. Придержание: БРАК доехал до +7, лепесток держит ──
-    updateLineCells([part(9, 7, 'BAD', { held: true })], proc('PART_HOLD', { positions: [7] }));
+    // ── 1. BAD на +7 ожидает подготовленный маршрут, без удержания ──
+    updateLineCells([part(9, 7, 'BAD')], proc('ROUTE_WAIT', { positions: [7] }));
 
     const cell7 = findCell(7);
     const cell8 = findCell(8);
-    assert(cell7.classList._set.has('cell-hold'), '+7 marked as hold cell');
+    assert(!cell7.classList._set.has('cell-hold'), '+7 is not a hold cell');
     assert(cell8.classList._set.has('line-cell-chute'), 'chute cell present at +8');
     assert(cell8.classList._set.has('chute-bad'), 'chute shows BAD channel while held');
 
     const token9 = findToken(9);
     assert(token9, 'token #9 exists');
-    assert(token9.classList._set.has('token-hold'), 'held token marked');
-    assert(token9.style.left === '350px', 'held token stays at +7');
+    assert(!token9.classList._set.has('token-hold'), 'token is not held');
+    assert(token9.style.left === '350px', 'waiting token stays at +7');
     assert(token9.style.opacity === '1', 'held token visible');
 
     assert(gates.out.textContent === '▼ БРАК', 'exit gate shows BAD channel: ' + gates.out.textContent);
     assert(gates.out.classList._set.has('gate-rejecting'), 'exit gate rejecting class');
 
-    // Route preparation opens the distributor before the belt starts. The
-    // token must still look held at +7, not flash as a drop at the wrong
-    // coordinate.
+    // Route preparation sets gates before the belt starts. The token remains
+    // at +7 and is not marked as mechanically held.
     updateLineCells([part(9, 7, 'BAD', { dropping: true })], proc('ROUTE_PREPARE', { positions: [7] }));
     const token9prep = findToken(9);
     assert(token9prep.style.left === '350px', 'route preparation keeps token at +7');
-    assert(token9prep.classList._set.has('token-hold'), 'route preparation keeps hold marker');
+    assert(!token9prep.classList._set.has('token-hold'), 'route preparation has no hold marker');
     assert(!token9prep.classList._set.has('token-dropping'), 'route preparation is not yet a visual drop');
     assert(token9prep.style.opacity === '1', 'route preparation keeps token visible');
 
@@ -128,7 +126,7 @@ const body = `
         && child.style.left === '400px');
     assert(chuteTokens.length === 1, 'only one token occupies chute: ' + chuteTokens.length);
 
-    // ── 4. Годный на +7: придержания нет, ворота показывают проход ──
+    // ── 4. GOOD на +7: передачи ещё не было, ворота показывают GOOD ──
     updateLineCells([part(4, 7, 'GOOD')], proc('ROUTE_CHECK', { positions: [7] }));
     const cell7b = findCell(7);
     const cell8b = findCell(8);
@@ -139,8 +137,8 @@ const body = `
     assert(token4 && !token4.classList._set.has('token-hold'), 'GOOD token not marked as held');
     assert(gates.out.textContent === 'ПРОХОД ▸', 'exit gate shows PASS: ' + gates.out.textContent);
 
-    // ── 5. ОЧИСТКА на +7 подсвечивает лоток жёлтым каналом ──
-    updateLineCells([part(6, 7, 'CLEANUP', { held: true })], proc('PART_HOLD', { positions: [7] }));
+    // ── 5. CLEANUP на +7 подсвечивает лоток жёлтым каналом ──
+    updateLineCells([part(6, 7, 'CLEANUP')], proc('ROUTE_WAIT', { positions: [7] }));
     const cell8c = findCell(8);
     assert(cell8c.classList._set.has('chute-cleanup'), 'chute shows CLEANUP channel');
     assert(gates.out.textContent === '▼ ОЧИСТКА', 'exit gate shows CLEANUP: ' + gates.out.textContent);

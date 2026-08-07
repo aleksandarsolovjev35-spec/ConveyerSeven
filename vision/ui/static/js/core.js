@@ -46,9 +46,10 @@ const AXIS_STATE_LABELS = {
     WAITING: 'ОЖИДАНИЕ',
     HOMING: 'ПОИСК НУЛЯ',
     MOVING: 'ПЕРЕМЕЩЕНИЕ',
-    OPENING: 'ОТКРЫТИЕ',
-    OPEN: 'ОТКРЫТО',
-    CLOSING: 'ЗАКРЫТИЕ',
+    MOVING_TO_GOOD: 'К ГОДНОМУ',
+    GOOD: 'ГОДНО',
+    MOVING_TO_DIST2: 'НА DIST2',
+    TO_DIST2: 'НА DIST2',
     FAULT: 'АВАРИЯ',
 };
 
@@ -397,8 +398,8 @@ function distributorActionLabel(value) {
         .replace('PARK FOR PRODUCTION', 'ПОДГОТОВКА К РАБОТЕ')
         .replace('PRODUCTION READY', 'ГОТОВО К РАБОТЕ')
         .replace('DIAGNOSTIC', 'ПРОВЕРКА')
-        .replace('DIST1 -> HOME', 'DIST1 -> ПРОХОД')
-        .replace('DIST1 -> OPEN', 'DIST1 -> СБРОС')
+        .replace('DIST1 -> HOME', 'DIST1 -> ГОДНО')
+        .replace('DIST1 -> OPEN', 'DIST1 -> НА DIST2')
         .replace('DIST2 -> BAD', 'DIST2 -> БРАК')
         .replace('DIST2 -> CLEANUP', 'DIST2 -> ОЧИСТКА')
         .replace('DIST1_HOME', 'DIST1 ПРОХОД')

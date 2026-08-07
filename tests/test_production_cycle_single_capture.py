@@ -26,6 +26,7 @@ def _make_cycle():
     )
     cycle._set_process = Mock()
     cycle._check_motion_cancelled = Mock()
+    cycle.monitor = None
     cycle.parts = []
     cycle.current_step = 1
     cycle.OFFSET_INPUT = 0
@@ -39,21 +40,51 @@ def _frame(value=0):
 
 
 class StageCaptureTest(unittest.TestCase):
-    def test_captures_once(self):
+    INPUT = ("INPUT_LEFT", "INPUT_RIGHT")
+    SPIDER = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
+
+    def make_capture_cycle(self, *, accepts_input, spider_part=False):
         frame = _frame()
         cycle = _make_cycle()
+        cycle.inspector = SimpleNamespace(INPUT_ROLES=self.INPUT, SPIDER_ROLES=self.SPIDER)
+        cycle.parts = [SimpleNamespace(step_created=-3)] if spider_part else []
+        cycle.sm = SimpleNamespace(accepts_new_parts=accepts_input)
         cycle.cameras = SimpleNamespace(
             drain_buffers=Mock(),
-            capture_all=Mock(return_value={"INPUT_LEFT": frame}),
+            capture_roles=Mock(return_value={role: frame for role in (
+                self.INPUT if accepts_input else self.SPIDER
+            )}),
         )
-        cycle.sm = SimpleNamespace(accepts_new_parts=False)
+        return cycle, frame
 
+    def test_captures_only_input_roles_when_only_input_is_active(self):
+        cycle, frame = self.make_capture_cycle(accepts_input=True)
         frame_runs = cycle._stage_capture()
+        cycle.cameras.drain_buffers.assert_called_once_with(roles=self.INPUT)
+        cycle.cameras.capture_roles.assert_called_once_with(self.INPUT)
+        self.assertEqual(set(frame_runs[0]), set(self.INPUT))
 
-        cycle.cameras.capture_all.assert_called_once_with()
-        cycle.cameras.drain_buffers.assert_called_once_with()
-        self.assertEqual(len(frame_runs), 1)
-        self.assertIs(frame_runs[0]["INPUT_LEFT"], frame)
+    def test_captures_only_spider_roles_when_input_is_closed(self):
+        cycle, frame = self.make_capture_cycle(accepts_input=False, spider_part=True)
+        frame_runs = cycle._stage_capture()
+        cycle.cameras.drain_buffers.assert_called_once_with(roles=self.SPIDER)
+        cycle.cameras.capture_roles.assert_called_once_with(self.SPIDER)
+        self.assertEqual(set(frame_runs[0]), set(self.SPIDER))
+
+    def test_captures_all_seven_only_when_two_parts_need_inspection(self):
+        cycle, frame = self.make_capture_cycle(accepts_input=True, spider_part=True)
+        all_roles = self.INPUT + self.SPIDER
+        cycle.cameras.capture_roles.return_value = {role: frame for role in all_roles}
+        frame_runs = cycle._stage_capture()
+        cycle.cameras.capture_roles.assert_called_once_with(all_roles)
+        self.assertEqual(set(frame_runs[0]), set(all_roles))
+
+    def test_does_not_capture_when_no_inspection_position_is_occupied(self):
+        cycle, _ = self.make_capture_cycle(accepts_input=False)
+        frame_runs = cycle._stage_capture()
+        cycle.cameras.drain_buffers.assert_not_called()
+        cycle.cameras.capture_roles.assert_not_called()
+        self.assertEqual(frame_runs, [{}])
 
 
 class StageAnalysisTest(unittest.TestCase):
