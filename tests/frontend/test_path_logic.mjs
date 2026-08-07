@@ -26,8 +26,12 @@ const cellsCache = Array.from({ length: 9 }, (_, index) => {
     return cell;
 });
 const lineCells = sandbox.__els['line-cells'];
+const belt = makeEl('div');
+lineCells.querySelector = (selector) =>
+    selector === '.conveyor-belt' ? belt : null;
 lineCells.querySelectorAll = (selector) =>
     selector === '.line-cell[data-pos]' ? cellsCache : [];
+sandbox._belt = belt;
 
 // Ворота: возвращаем стабильные заглушки, чтобы проверять их классы и текст.
 const gates = { in: null, out: null };
@@ -46,6 +50,7 @@ sandbox._gates = gates;
 const body = `
     const assert = (cond, msg) => { if (!cond) throw new Error('ASSERT: ' + msg); };
     const lineCells = __els['line-cells'];
+    const belt = _belt;
     const gates = _gates;
     const findCell = (pos) => lineCells.querySelectorAll('.line-cell[data-pos]')
         .find(c => c.dataset.pos === String(pos));
@@ -82,6 +87,15 @@ const body = `
 
     assert(gates.out.textContent === '▼ БРАК', 'exit gate shows BAD channel: ' + gates.out.textContent);
     assert(gates.out.classList._set.has('gate-rejecting'), 'exit gate rejecting class');
+
+    // Route preparation opens the distributor before the belt starts. The
+    // token must still look held at +7, not flash as a drop at the wrong
+    // coordinate.
+    updateLineCells([part(9, 7, 'BAD', { dropping: true })], proc('ROUTE_PREPARE', { positions: [7] }));
+    const token9prep = findToken(9);
+    assert(token9prep.style.left === '350px', 'route preparation keeps token at +7');
+    assert(token9prep.classList._set.has('token-hold'), 'route preparation keeps hold marker');
+    assert(!token9prep.classList._set.has('token-dropping'), 'route preparation is not yet a visual drop');
 
     // ── 2. Сброс: лента несёт корпус между +7 и +8 ──
     updateLineCells([part(9, 7, 'BAD', { dropping: true })], proc('CONVEYOR_MOVING', { positions: [0,1,2,3,4,5,6,7] }));
@@ -120,6 +134,25 @@ const body = `
     gates.out.className = '';
     updateLineCells([part(5, 3, 'GOOD')], proc('ANALYSIS_REVIEW'));
     assert(gates.out.textContent === 'ВЫХОД ▸', 'neutral exit gate: ' + gates.out.textContent);
+
+    // ── 7. Подтверждение движения не делает второй визуальный шаг ──
+    // CONVEYOR_CONFIRMED приходит уже после того, как backend увеличил
+    // position. Раньше проверка includes('CONVEYOR') сдвигала маркер
+    // ещё на одну ячейку, а на SETTLE он отскакивал обратно.
+    updateLineCells([part(10, 4, 'BAD')], proc('CONVEYOR_MOVING'));
+    const token10 = findToken(10);
+    assert(token10 && token10.style.left === '250px',
+        'token #10 follows the moving belt to +5');
+    assert(belt.classList._set.has('moving'), 'belt is animated during transport');
+    updateLineCells([part(10, 5, 'BAD')], proc('CONVEYOR_CONFIRMED'));
+    assert(!belt.classList._set.has('moving'), 'belt stops after confirmation');
+    assert(token10.style.left === '250px',
+        'confirmed position does not advance token a second time: ' + token10.style.left);
+    assert(__els['process-phase-label'].textContent === 'СТОЯНКА',
+        'confirmed phase is not shown as moving');
+    updateLineCells([part(10, 5, 'BAD')], proc('SETTLE'));
+    assert(token10.style.left === '250px',
+        'token does not jump back after confirmed phase: ' + token10.style.left);
 
     console.log('TEST PATH LOGIC OK');
 `;

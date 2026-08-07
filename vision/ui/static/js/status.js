@@ -227,12 +227,27 @@ function lineMoveDuration(process = {}) {
     return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
 }
 
+// ``CONVEYOR_CONFIRMED`` is published after the controller has already
+// advanced the logical positions.  Treating every phase containing the word
+// CONVEYOR as motion advances the same token for a second time, then makes it
+// jump back on SETTLE.  Keep the transport phases explicit so the animation
+// has exactly one step per physical move.
+function isConveyorTransportPhase(phase) {
+    const p = String(phase || '').toUpperCase();
+    return p === 'CONVEYOR'
+        || p === 'CONVEYOR_COMMAND'
+        || p === 'CONVEYOR_MOVING'
+        || p === 'MOTION'
+        || p.startsWith('MOTION_');
+}
+
 function tapeShortLabel(process) {
     if (!process || !process.phase) return '';
     const p = String(process.phase).toUpperCase();
     const lbl = String(process.label || '').toLowerCase();
     // Короткие названия без лишних деталей (кандидат, счётчики, таймеры).
-    if (p.includes('CONVEYOR')) return 'ДВИЖЕНИЕ';
+    if (isConveyorTransportPhase(p)) return 'ДВИЖЕНИЕ';
+    if (p === 'CONVEYOR_CONFIRMED') return 'СТОЯНКА';
     if (p === 'PART_DROP') return 'СБРОС';
     if (p === 'PART_HOLD') {
         if (lbl.includes('серии')) return 'ОЖИДАНИЕ СБРОСА';
@@ -250,7 +265,6 @@ function tapeShortLabel(process) {
     if (p === 'START_POSITIONING' || p === 'READY') return 'ГОТОВ';
     if (p === 'INITIAL_INSPECTION') return 'КОНТРОЛЬ';
     if (p === 'ROUTE_PREPARE') return 'ПОДГОТОВКА';
-    if (p === 'CONVEYOR_COMMAND' || p === 'CONVEYOR_CONFIRMED') return 'ДВИЖЕНИЕ';
     if (p === 'DRAINING') return 'ЗАВЕРШЕНИЕ';
     if (p === 'STOPPED' || p === 'IDLE') return 'ОЖИДАНИЕ';
     if (p.includes('PAUSE')) return 'ПАУЗА';
@@ -378,7 +392,8 @@ function _updateDistributorRoute(ls) {
 
 function updateLineCells(lineParts, process = {}) {
     if (!els.lineCells) return;
-    const isConveyorMoving = (process.phase || '').includes('CONVEYOR') || (process.phase || '').includes('MOTION');
+    const phase = String(process.phase || '').toUpperCase();
+    const isConveyorMoving = isConveyorTransportPhase(phase);
     let belt = els.lineCells.querySelector('.conveyor-belt');
     if (!belt) {
         belt = document.createElement('div');
@@ -406,8 +421,7 @@ function updateLineCells(lineParts, process = {}) {
 
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
     const active = Array.isArray(process.positions) ? process.positions : [];
-    const phase = process.phase || '';
-    const phaseUpper = String(phase).toUpperCase();
+    const phaseUpper = phase;
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         cell.className = 'line-cell';
@@ -463,7 +477,9 @@ function updateLineCells(lineParts, process = {}) {
     const geometryReady = !!(containerRect.width && rects[0] && rects[0].width);
     const step = (rects[0] && rects[1]) ? (rects[1].left - rects[0].left) : (rects[0] ? rects[0].width + 3 : 0);
     const duration = lineMoveDuration(process);
-    const isConveyorPhase = phaseUpper.includes('CONVEYOR');
+    const isConveyorPhase = isConveyorTransportPhase(phaseUpper);
+    const isDropPhase = phaseUpper === 'PART_DROP'
+        || phaseUpper === 'CONVEYOR_CONFIRMED';
 
     for (const [id, token] of [..._lineTokens.entries()]) {
         if (wanted.has(id)) continue;
@@ -505,11 +521,15 @@ function updateLineCells(lineParts, process = {}) {
         // исчезновения детали. В остальных случаях лента везёт все корпуса
         // синхронно — во время CONVEYOR каждый маркер скользит на ячейку вправо.
         let targetPos = meta.position;
+        let dropAnimationActive = false;
         if (meta.dropping) {
             const alreadyInChute = !!(token && token.position === 8);
-            if (alreadyInChute) targetPos = 8;
-            else if (!token) targetPos = 8;
-            else if (isConveyorPhase || phaseUpper.includes('PART_DROP')) targetPos = 8;
+            dropAnimationActive = alreadyInChute || isConveyorPhase || isDropPhase;
+            if (dropAnimationActive) targetPos = 8;
+            // ``CONVEYOR_CONFIRMED`` is not a second belt move, but it is a
+            // safe point at which a late first render must still show the
+            // pending body in the chute.  This avoids leaving it at +7 when
+            // the browser missed the short CONVEYOR_MOVING snapshot.
         } else if (isConveyorPhase) {
             targetPos = Math.min(meta.position + 1, 7);
         }
@@ -541,8 +561,12 @@ function updateLineCells(lineParts, process = {}) {
             if (token.el.style.left !== targetLeft) token.el.style.left = targetLeft;
             token.position = targetPos;
         }
-        token.dropping = !!meta.dropping;
-        token.held = !!meta.held;
+        // Backend marks a body as ``dropping`` as soon as the route is
+        // prepared.  Keep the normal hold marker until the belt actually
+        // carries it to +8; otherwise the token flashes a drop arrow at +7
+        // before motion and can look as if it jumped through the gate.
+        token.dropping = dropAnimationActive;
+        token.held = !!meta.held || (!!meta.dropping && !dropAnimationActive);
         if (token.category !== meta.category) {
             token.category = meta.category;
             _applyTokenCategory(token.el, meta.category);
