@@ -483,8 +483,9 @@ function updateLineCells(lineParts, process = {}) {
         token.exitPosition = token.dropping ? 8 : null;
         _lineExitTokens.add(token);
         if (token.dropping) {
-            // Падение: маркер уже уехал в лоток +8 — гаснет на месте.
-            token.el.style.opacity = '0';
+            // Падение: маркер уже уехал в лоток +8 — «ныряет» через CSS
+            // (token-in-chute), номер остаётся видимым. Плашку не гасим
+            // inline-opacity, чтобы число не пропало вместе с ней.
             _scheduleLineTokenRemoval(token, cells, duration + 80);
             continue;
         }
@@ -551,10 +552,10 @@ function updateLineCells(lineParts, process = {}) {
 
         if (targetPos === 8) _clearChuteExitTokens();
         const target = rects[targetPos] || rects[meta.position] || rects[0];
-        // Маркер в лотке «тонет»: гаснет (opacity 0), а не рисуется непрозрачной
-        // плашкой поверх ячейки +8. Так падающий корпус не перекрывает лоток и
-        // не даёт «двойной заливки» с цветом канала, который держит ячейка.
-        const targetOpacity = targetPos === 8 ? '0' : '1';
+        // Маркер в лотке «ныряет» вниз через CSS-анимацию token-sink; плашка
+        // остаётся видимой (opacity 1), чтобы номер корпуса читался весь сброс.
+        // Никакой inline-opacity:0 — иначе число спрячется вместе с плашкой.
+        const targetOpacity = '1';
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
@@ -565,7 +566,12 @@ function updateLineCells(lineParts, process = {}) {
             token = {el, position: targetPos, category: null, dropping: false, held: false};
             _lineTokens.set(id, token);
             els.lineCells.appendChild(el);
-            // Появление корпуса на линии: плавный «поп» (растёт + блик).
+            // Номер корпуса — отдельный span: остаётся видимым, даже когда
+            // плашка маркера «ныряет» в лоток при сбросе.
+            const num = document.createElement('span');
+            num.className = 'line-token-num';
+            el.appendChild(num);
+            // Появление корпуса на линии: плавный подъём от ленты.
             el.classList.add('token-enter');
             if (_lineSyncDone) {
                 el.style.left = `${target.left - step}px`;
@@ -603,7 +609,14 @@ function updateLineCells(lineParts, process = {}) {
         if (token.held) token.el.classList.add('token-hold');
         if (token.dropping) token.el.classList.add('token-dropping');
         if (token.position === 8) token.el.classList.add('token-in-chute');
-        token.el.textContent = `#${id}`;
+        // Номер корпуса обновляем в span (всегда видим, даже при сбросе).
+        let num = token.el.querySelector('.line-token-num');
+        if (!num) {
+            num = document.createElement('span');
+            num.className = 'line-token-num';
+            token.el.appendChild(num);
+        }
+        num.textContent = `#${id}`;
         token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }
 

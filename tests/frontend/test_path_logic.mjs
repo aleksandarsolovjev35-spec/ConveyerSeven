@@ -85,18 +85,19 @@ const body = `
     assert(token9b, 'token #9 still present');
     assert(token9b.classList._set.has('token-dropping'), 'dropping token marked');
     assert(token9b.classList._set.has('token-in-chute'), 'dropping token is marked in chute');
-    assert(token9b.style.opacity === '0',
-        'dropping token sinks in the chute (fades), not drawn on top of the cell: '
+    // Номер корпуса остаётся видимым всё время сброса: плашка не гаснет
+    // inline-opacity (это спрятало бы число), а «ныряет» через CSS.
+    assert(token9b.style.opacity === '1',
+        'dropping token stays visible so its number remains readable: '
         + token9b.style.opacity);
     assert(token9b.style.left === '400px', 'token slid into chute +8: ' + token9b.style.left);
     assert(cell8.classList._set.has('chute-bad'), 'chute stays BAD while dropping');
     assert(cell8.classList._set.has('chute-occupied'), 'chute hides its base symbol while occupied');
 
-    // ── 3. Деталь ушла: маркер гаснет в лотке, а не выкатывается за линию ──
+    // ── 3. Деталь ушла: маркер убирается из лотка, не выкатываясь за линию ──
     updateLineCells([], proc('SETTLE'));
     const token9c = findToken(9);
-    assert(token9c, 'token #9 still in DOM until fade completes');
-    assert(token9c.style.opacity === '0', 'dropped token fades in place');
+    assert(token9c, 'token #9 still in DOM until removal');
     assert(token9c.style.left === '400px', 'dropped token does not roll past the chute');
     assert(cell8.classList._set.has('chute-occupied'), 'chute remains covered during fade');
 
