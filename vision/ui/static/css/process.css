@@ -419,14 +419,19 @@
 }
 
 /* Номер корпуса — отдельный слой внутри маркера: остаётся читаемым, даже
-   когда плашка «ныряет» в лоток при сбросе. */
+   когда плашка уходит в лоток при сбросе. Занимает всю плашку и центрирован,
+   поэтому номер всегда находится в границах ячейки, а не «торчит» наружу. */
 .line-token-num {
     position: relative;
     z-index: 1;
+    display: block;
+    width: 100%;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    text-align: center;
+    line-height: 1;
 }
 
 .line-token.cell-good {
@@ -469,23 +474,23 @@
     box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--warn);
 }
 
-/* Появление корпуса на линии (+0): маркер «вырастает» из ленты — плавно
-   поднимается снизу вверх в свою ячейку с коротким бликом. */
+/* Появление корпуса на линии (+0): маркер плавно опускается сверху в свою
+   ячейку (деталь «подаётся» на ленту) с коротким бликом. */
 @keyframes token-enter {
-    0%   { opacity: 0; transform: translateY(16px) scale(0.85); }
-    60%  { opacity: 1; transform: translateY(-3px) scale(1.04); }
+    0%   { opacity: 0; transform: translateY(-18px) scale(0.85); }
+    60%  { opacity: 1; transform: translateY(2px) scale(1.03); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 .line-token.token-enter {
     animation: token-enter 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-/* Уход корпуса в лоток +8: плашка «ныряет» вниз и растворяется, но номер
-   корпуса (внутренний .line-token-num) остаётся читаемым всё время сброса —
-   он не гаснет вместе с фоном плашки. */
+/* Уход корпуса в лоток +8: плашка уходит вниз (сброс вниз) и растворяется,
+   но номер корпуса (внутренний .line-token-num) остаётся читаемым всё время
+   сброса — он не гаснет вместе с фоном плашки. */
 @keyframes token-sink {
-    0%   { transform: translateY(0) scale(1); }
-    100% { transform: translateY(18px) scale(0.6); }
+    0%   { transform: translateY(0) scale(1); opacity: 1; }
+    100% { transform: translateY(20px) scale(0.55); opacity: 0.4; }
 }
 .line-token.token-in-chute {
     z-index: 6;
@@ -494,11 +499,9 @@
     background: transparent !important;
     border-color: transparent !important;
     box-shadow: none !important;
-    opacity: 1;
 }
 .line-token.token-in-chute .line-token-num {
     color: var(--text);
-    opacity: 1;
 }
 
 /* === Human-readable defect cause (simple & bold) === */

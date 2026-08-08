@@ -86,6 +86,14 @@ def main():
         boot = httpx.get(base + "/api/boot").json()
         check("boot complete", boot["active"] is False)
 
+        # Начальное состояние — как в реальной программе до пуска: линия в
+        # IDLE, лента пустая, деталей нет (start ещё не нажат).
+        st0 = httpx.get(base + "/api/status").json()
+        ls0 = st0.get("line_status", {})
+        check("idle empty before start",
+              ls0.get("state") == "IDLE" and not ls0.get("line_parts"),
+              f"{ls0.get('state')} parts={len(ls0.get('line_parts', []))}")
+
         # Start the cycle
         r = httpx.post(base + "/api/start").json()
         check("start accepted", r.get("ok") is True, str(r))

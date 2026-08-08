@@ -330,7 +330,7 @@ def _rule_row(rule_name, role, part_id, present=True, defects=None):
 class Emulator:
     """Имитация производственной линии поверх настоящего UIServer."""
 
-    def __init__(self, seed=None, review_seconds=4.0, auto_start=True,
+    def __init__(self, seed=None, review_seconds=4.0, auto_start=False,
                  archive_enabled=True, time_scale=1.0):
         self.rng = random.Random(seed)
         if seed is not None:
@@ -1543,11 +1543,11 @@ class Emulator:
         )
         self._live_thread.start()
 
-    def run(self, host="0.0.0.0", port=8000, no_auto_start=False):
+    def run(self, host="0.0.0.0", port=8000, auto_start=None):
         self._boot()
         self.server.start_server(host=host, port=port)
         print(f"EMULATOR UI: http://localhost:{port}  (Ctrl+C для выхода)")
-        self.begin_simulation(start=not no_auto_start)
+        self.begin_simulation(start=auto_start if auto_start is not None else self.auto_start)
 
         try:
             while True:
@@ -1566,8 +1566,9 @@ def _parse_args():
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--review", type=float, default=4.0,
                    help="пауза просмотра анализа, сек (0 = минимум)")
-    p.add_argument("--no-auto-start", action="store_true",
-                   help="не запускать цикл автоматически (нажать ПУСК вручную)")
+    p.add_argument("--auto-start", action="store_true",
+                   help="запустить цикл автоматически (по умолчанию линия "
+                        "стоит в IDLE с пустой лентой, как в реальной программе)")
     p.add_argument("--no-archive", action="store_true",
                    help="отключить запись архива партий")
     p.add_argument("--time-scale", type=float, default=1.0,
@@ -1580,7 +1581,7 @@ def main():
     emu = Emulator(
         seed=args.seed,
         review_seconds=args.review,
-        auto_start=not args.no_auto_start,
+        auto_start=args.auto_start,
         archive_enabled=not args.no_archive,
         time_scale=args.time_scale,
     )
