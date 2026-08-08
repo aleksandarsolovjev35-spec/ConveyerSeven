@@ -256,71 +256,6 @@ html, body {
     z-index: 100;
 }
 
-.state-section {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    min-width: 190px;
-    min-height: 34px;
-    padding: 5px 11px;
-    overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-left: 3px solid var(--text-dim);
-    border-radius: var(--radius-sm);
-    transition: border-color var(--t-normal) var(--ease);
-}
-
-.state-section.state-box-running { border-left-color: var(--ok); }
-.state-section.state-box-paused { border-left-color: var(--warn); }
-.state-section.state-box-stopping { border-left-color: var(--warn); }
-.state-section.state-box-fault,
-.state-section.state-box-offline { border-left-color: var(--bad); }
-.state-section.state-box-idle,
-.state-section.state-box-stopped { border-left-color: var(--text-dim); }
-
-.state-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    transition: all var(--t-normal) var(--ease);
-    flex-shrink: 0;
-}
-
-.state-dot.state-idle {
-    background: var(--text-dim);
-}
-
-.state-dot.state-running {
-    background: var(--ok);
-}
-
-.state-dot.state-paused {
-    background: var(--warn);
-    box-shadow: 0 0 6px var(--warn);
-}
-
-.state-dot.state-stopping {
-    background: var(--warn);
-}
-
-.state-dot.state-stopped {
-    background: var(--text-dim);
-}
-
-.state-label {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.7px;
-    text-transform: uppercase;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text);
-    transition: color var(--t-normal);
-}
-
 .title {
     flex: 1 1 auto;
     min-width: 0;
@@ -400,7 +335,6 @@ html, body {
 
 @media (max-width: 1040px) {
     .header { gap: 8px; padding: 0 10px; }
-    .state-section { min-width: 160px; padding-inline: 8px; }
     .metrics { flex-basis: 270px; min-width: 210px; }
     .metrics > span { padding-inline: 7px; }
     .title { font-size: 14px; letter-spacing: 1px; }

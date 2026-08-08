@@ -76,8 +76,8 @@ export function makeEl(tag = 'div') {
 
 const UI_IDS = [
     'splash', 'splash-message', 'splash-progress-fill', 'splash-error',
-    'splash-error-message', 'splash-exit', 'main', 'state-section',
-    'state-indicator', 'state-label', 'metric-step', 'metric-uptime',
+    'splash-error-message', 'splash-exit', 'main',
+    'metric-step', 'metric-uptime',
     'preview-strip', 'camera-label', 'mode-badge', 'main-camera',
     'camera-overlay', 'view-mode-toggle', 'analyze-selected-frame',
     'dist1-state', 'dist1-pos', 'dist1-max', 'dist1-blade', 'dist1-target',

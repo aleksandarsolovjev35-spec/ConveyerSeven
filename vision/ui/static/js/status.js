@@ -133,8 +133,6 @@ function markUiOffline() {
     state.mainCamMode = 'pull';
     mainBufferLoading = false;
     els.main.classList.add('ui-offline');
-    setIfChanged(els.stateLabel, lineStateLabel('OFFLINE'));
-    if (els.stateSection) els.stateSection.className = 'state-section state-box-offline';
     updateProcessPhaseLabel('OFFLINE');
     showControlError('Нет связи с backend. Все команды заблокированы.');
     releaseJogHoldBestEffort('backend offline');
@@ -150,11 +148,21 @@ function markUiOffline() {
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
-function updateProcessPhaseLabel(lineState) {
+function updateProcessPhaseLabel(lineState, phase) {
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (!phaseEl) return;
     const activeState = String(lineState || 'IDLE').toUpperCase();
-    setIfChanged(phaseEl, lineStateLabel(activeState));
+    let label = lineStateLabel(activeState);
+    // Детальная фаза шага: например «РАБОТАЕТ · ЛЕНТА ДВИЖЕТСЯ». Для
+    // состояний останова/аварии/оффлайн фазу не добавляем — там достаточно
+    // операторского названия состояния.
+    if ((activeState === 'RUNNING' || activeState === 'STOPPING'
+         || activeState === 'PAUSED')
+        && typeof processPhaseLabel === 'function') {
+        const detail = processPhaseLabel(phase);
+        if (detail) label += ' · ' + detail;
+    }
+    setIfChanged(phaseEl, label);
     phaseEl.dataset.lineState = activeState;
     phaseEl.style.opacity = '1';
     if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
@@ -172,10 +180,8 @@ function updateLineStatus(ls) {
     if (!['IDLE', 'STOPPED'].includes(lineState)) state.startPending = false;
     updateOperationalAccordions(lineState);
 
-    if (els.stateIndicator) els.stateIndicator.className = `state-dot state-${lineState.toLowerCase()}`;
-    if (els.stateSection) els.stateSection.className = `state-section state-box-${lineState.toLowerCase()}`;
-    setIfChanged(els.stateLabel, lineStateLabel(lineState));
-    updateProcessPhaseLabel(lineState);
+    const process = ls.process || {};
+    updateProcessPhaseLabel(lineState, process.phase);
     setIfChanged(els.metricStep, ls.step || 0);
 
     state.backendControls = ls.controls || {};
@@ -192,7 +198,6 @@ function updateLineStatus(ls) {
     const inLine = pendingAnalysis ? _appliedInLine : (ls.in_line || 0);
     setIfChanged(els.statInline, `${inLine} / 8`);
 
-    const process = ls.process || {};
     _updateDistributorRoute(ls);
     updateLineCells(ls.line_parts || [], process);
     updateDistributorDiagnosticControls(ls);
@@ -334,51 +339,6 @@ function _updateChuteOccupied(cells) {
     });
 }
 
-function _updateLineGates(lineParts, process = {}) {
-    const gateIn = document.querySelector('.line-gate-in');
-    const gateOut = document.querySelector('.line-gate-out');
-    if (!gateIn || !gateOut) return;
-    gateIn.className = 'line-gate line-gate-in';
-    gateOut.className = 'line-gate line-gate-out';
-    gateOut.textContent = 'ВЫХОД ▸';
-
-    const parts = Array.isArray(lineParts) ? lineParts : [];
-    const partAtInput = parts.find(p => Number(p.position) === 0);
-    if (partAtInput) gateIn.classList.add('gate-active');
-
-    const partAtSort = parts.find(p => Number(p.position) === 7);
-    if (!partAtSort) {
-        // После сброса канал распределителя ещё виден: держим цвет ворота,
-        // чтобы оператор видел, куда только что ушёл корпус.
-        if (_currentDistributorCategory === 'BAD') gateOut.classList.add('gate-rejecting');
-        else if (_currentDistributorCategory === 'CLEANUP') gateOut.classList.add('gate-cleanup');
-        else gateOut.classList.add('gate-active');
-        return;
-    }
-
-    const cat = String(partAtSort.category || '').toUpperCase();
-    const phase = String(process.phase || '').toUpperCase();
-    const held = !!partAtSort.held;
-    const dropping = !!partAtSort.dropping;
-    const routing = phase.includes('ROUTE') || phase.includes('DROP')
-        || phase.includes('CONVEYOR') || phase.includes('TRANSFER');
-    // Корпус на +7 ожидает передачи на следующем шаге. Ворота показывают
-    // маршрут, заранее выставленный DIST1/DIST2.
-    if (cat === 'BAD' && (held || dropping || routing)) {
-        gateOut.classList.add('gate-rejecting');
-        gateOut.textContent = '▼ БРАК';
-    } else if (cat === 'CLEANUP' && (held || dropping || routing)) {
-        gateOut.classList.add('gate-cleanup');
-        gateOut.textContent = '▼ ОЧИСТКА';
-    } else if (cat === 'GOOD') {
-        gateOut.classList.add('gate-active');
-        gateOut.textContent = 'ПРОХОД ▸';
-    } else {
-        gateOut.classList.add('gate-active');
-        gateOut.textContent = 'ВЫХОД ▸';
-    }
-}
-
 const ROUTE_CATEGORIES = ['GOOD', 'BAD', 'CLEANUP'];
 let _currentDistributorCategory = '';
 
@@ -476,11 +436,6 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
-    // Gate labels do not depend on layout measurements. Update them before
-    // the geometry guard so a cold first render still shows the route while
-    // the browser is calculating the grid rectangles.
-    _updateLineGates(lineParts, process);
-
     const pendingAnalysis = state.pendingAnalysisVersion !== null;
     const appliedById = new Map(_appliedLineParts.map(part => [part.id, part.category]));
     const wanted = new Map();
@@ -528,8 +483,9 @@ function updateLineCells(lineParts, process = {}) {
         token.exitPosition = token.dropping ? 8 : null;
         _lineExitTokens.add(token);
         if (token.dropping) {
-            // Падение: маркер уже уехал в лоток +8 — гаснет на месте.
-            token.el.style.opacity = '0';
+            // Падение: маркер уже уехал в лоток +8 — «ныряет» через CSS
+            // (token-in-chute), номер остаётся видимым. Плашку не гасим
+            // inline-opacity, чтобы число не пропало вместе с ней.
             _scheduleLineTokenRemoval(token, cells, duration + 80);
             continue;
         }
@@ -596,9 +552,9 @@ function updateLineCells(lineParts, process = {}) {
 
         if (targetPos === 8) _clearChuteExitTokens();
         const target = rects[targetPos] || rects[meta.position] || rects[0];
-        // Полностью непрозрачный маркер: падающий корпус не должен
-        // «просвечивать» цвет канала лотка (тот же цвет, что и у самого
-        // маркера) — иначе на +7/+8 получается двойная заливка одного цвета.
+        // Маркер в лотке «ныряет» вниз через CSS-анимацию token-sink; плашка
+        // остаётся видимой (opacity 1), чтобы номер корпуса читался весь сброс.
+        // Никакой inline-opacity:0 — иначе число спрячется вместе с плашкой.
         const targetOpacity = '1';
         if (!token) {
             const el = document.createElement('div');
@@ -610,6 +566,13 @@ function updateLineCells(lineParts, process = {}) {
             token = {el, position: targetPos, category: null, dropping: false, held: false};
             _lineTokens.set(id, token);
             els.lineCells.appendChild(el);
+            // Номер корпуса — отдельный span: остаётся видимым, даже когда
+            // плашка маркера «ныряет» в лоток при сбросе.
+            const num = document.createElement('span');
+            num.className = 'line-token-num';
+            el.appendChild(num);
+            // Появление корпуса на линии: плавный подъём от ленты.
+            el.classList.add('token-enter');
             if (_lineSyncDone) {
                 el.style.left = `${target.left - step}px`;
                 el.style.opacity = '0';
@@ -646,7 +609,14 @@ function updateLineCells(lineParts, process = {}) {
         if (token.held) token.el.classList.add('token-hold');
         if (token.dropping) token.el.classList.add('token-dropping');
         if (token.position === 8) token.el.classList.add('token-in-chute');
-        token.el.textContent = `#${id}`;
+        // Номер корпуса обновляем в span (всегда видим, даже при сбросе).
+        let num = token.el.querySelector('.line-token-num');
+        if (!num) {
+            num = document.createElement('span');
+            num.className = 'line-token-num';
+            token.el.appendChild(num);
+        }
+        num.textContent = `#${id}`;
         token.el.title = `Корпус #${id} · ${categoryLabel(meta.category)}`;
     }
 
