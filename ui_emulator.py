@@ -921,6 +921,33 @@ class Emulator:
             positions.setdefault(pos, []).append(part)
         return positions
 
+    # Фазы, в которых лента неподвижна и камеры под деталью держат стоп-кадр
+    # (как в реальном цикле: CAPTURE/ANALYSIS/REVIEW/PUBLISH). В этих фазах
+    # живые камеры не перезаписывают уже снятые инспекционные кадры.
+    STOP_FRAME_PHASES = {
+        "CAMERA_CAPTURE", "INPUT_ANALYSIS", "SPIDER_CHECK",
+        "SPIDER_ANALYSIS", "ANALYSIS_REVIEW", "STEP_COMPLETE",
+        "INITIAL_INSPECTION",
+    }
+
+    def _inspection_roles(self):
+        """Роли камер, под которыми сейчас есть деталь (нужны для стоп-кадра).
+
+        INPUT_LEFT/INPUT_RIGHT — если корпус под входом (+0); пять
+        SPIDER/TOP — если корпус под контролем (+4). Согласовано с тем,
+        как эмулятор рисует деталь в кадре каждой камеры.
+        """
+        positions = self._positions()
+        roles = []
+        if positions.get(OFFSET_INPUT):
+            roles += ["INPUT_LEFT", "INPUT_RIGHT"]
+        if positions.get(OFFSET_SPIDER):
+            roles += [
+                "SPIDER_LEFT", "SPIDER_RIGHT",
+                "SPIDER_IN", "SPIDER_OUT", "TOP",
+            ]
+        return roles
+
     def _part_at(self, position):
         parts = self._positions().get(position)
         return parts[0] if parts else None
@@ -1021,6 +1048,34 @@ class Emulator:
                 "dropping": dropping,
             })
 
+        # Модель живого/стоп-кадра: в неподвижных фазах камеры под деталью
+        # держат стоп-кадр (static_roles), остальные камеры — живой поток.
+        phase = str(self._process.get("phase") or "").upper()
+        running = state_name in ("RUNNING", "STOPPING") or self.jog_active
+        inspection_roles = self._inspection_roles()
+        static_phase = phase in self.STOP_FRAME_PHASES
+        if static_phase and inspection_roles:
+            static_roles = inspection_roles
+            all_roles_static = False
+        elif static_phase and not inspection_roles:
+            # Линия стоит, но под камерами деталей нет — весь кадр статичен.
+            static_roles = []
+            all_roles_static = True
+        else:
+            static_roles = []
+            all_roles_static = False
+        active_static = (
+            state_name in ("RUNNING", "STOPPING")
+            and (all_roles_static
+                 or self._current_camera_role in static_roles)
+        )
+        live_running = running and not self.selected_analysis_active
+
+        # inspection_roles в процессе: фронтенд по ним тоже переключает
+        # стоп-кадр в фазах CAMERA/ANALYSIS/PUBLISH.
+        process_status = dict(self._process)
+        process_status["inspection_roles"] = list(inspection_roles)
+
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
             and not parts_snapshot
@@ -1081,7 +1136,7 @@ class Emulator:
             "axis_position": self.dist1_position,
             "axis_max": DIST1_OPEN,
             "distributor_state": self.dist1_state,
-            "process": dict(self._process),
+            "process": process_status,
             "diagnostic_allowed": diagnostic_allowed,
             "diagnostic_busy": False,
             "controls": controls,
@@ -1090,9 +1145,11 @@ class Emulator:
                 "role": self.selected_analysis_role,
             },
             "live": {
-                "running": state_name in ("RUNNING", "STOPPING") or self.jog_active,
-                "streaming": False,
-                "static": False,
+                "running": live_running,
+                "streaming": live_running and not active_static,
+                "static": active_static,
+                "static_roles": static_roles,
+                "all_roles_static": all_roles_static,
                 "fps": 0.0,
                 "error": None,
             },
@@ -1500,12 +1557,32 @@ class Emulator:
     # ── Live-поток камер (обновление картинки при простое) ─────
 
     def _live_loop(self):
-        last_role = None
-        last_step = None
+        """Живой поток камер при простое/движении.
+
+        В фазах стоп-кадра (CAPTURE/ANALYSIS/REVIEW) живые камеры НЕ
+        перезаписывают уже снятые инспекционные кадры — иначе главная камера
+        «проскакивала» бы, показывая живой поток вместо статичного кадра.
+        """
         while not self._cancel.is_set():
-            frames = self._generate_frames()
-            self.server.update(frames=frames)
-            time.sleep(max(0.05, 1.2 * self.time_scale))
+            if not self.selected_analysis_active:
+                state_name = self.sm.state.value
+                phase = str(self._process.get("phase") or "").upper()
+                frozen = (
+                    state_name in ("RUNNING", "STOPPING")
+                    and phase in self.STOP_FRAME_PHASES
+                )
+                frames = self._generate_frames()
+                if frozen:
+                    # В стоп-кадре не трогаем роли под инспекцией: их кадр
+                    # остаётся замороженным (то, что сняла камера), а камеры
+                    # без детали продолжают живой поток.
+                    inspection = set(self._inspection_roles())
+                    frames = {
+                        role: frame for role, frame in frames.items()
+                        if role not in inspection
+                    }
+                self.server.update(frames=frames)
+            time.sleep(max(0.05, 0.4 * self.time_scale))
 
     # ── Запуск / остановка ─────────────────────────────────────
 
