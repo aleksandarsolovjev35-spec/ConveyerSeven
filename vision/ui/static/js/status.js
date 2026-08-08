@@ -565,6 +565,8 @@ function updateLineCells(lineParts, process = {}) {
             token = {el, position: targetPos, category: null, dropping: false, held: false};
             _lineTokens.set(id, token);
             els.lineCells.appendChild(el);
+            // Появление корпуса на линии: плавный «поп» (растёт + блик).
+            el.classList.add('token-enter');
             if (_lineSyncDone) {
                 el.style.left = `${target.left - step}px`;
                 el.style.opacity = '0';
