@@ -442,7 +442,7 @@ class PartArchive:
                     "pseudo_annotation_files": annotation_files,
                     "annotations_are_model_predictions": True,
                     "sample_count": len(sample_records),
-                    "samples_index": "../samples.jsonl",
+                    "samples_index": "../../samples.jsonl",
                 },
             }
             if extra:
@@ -480,29 +480,13 @@ class PartArchive:
             # committed; a failure here leaves the committed part intact and
             # is surfaced to the caller as a traceability fault.
             self._append_training_samples(sample_records)
-            # Read-only compatibility alias for legacy viewers.  The canonical
-            # committed catalog remains exclusively under parts/; a symlink
-            # does not create a second production copy.
-            legacy_folder = os.path.join(
-                self.batch_folder, self.CATEGORY_DIRS[stored_category], folder_name
-            )
-            try:
-                os.makedirs(os.path.dirname(legacy_folder), exist_ok=True)
-                os.symlink(
-                    os.path.relpath(final_folder, os.path.dirname(legacy_folder)),
-                    legacy_folder,
-                    target_is_directory=True,
-                )
-            except (OSError, NotImplementedError):
-                legacy_folder = final_folder
             self._buffers.pop(part_id, None)
             self._vision_buffers.pop(part_id, None)
             self._frame_stage_buffers.pop(part_id, None)
             relative_folder = os.path.relpath(final_folder, self.batch_folder).replace("\\", "/")
             archived_item = {
                 "part_id": part_id, "category": stored_category, "decision": decision,
-                "folder": legacy_folder.replace("\\", "/"),
-                "committed_folder": final_folder.replace("\\", "/"),
+                "folder": final_folder.replace("\\", "/"),
                 "relative_folder": relative_folder, "roles": roles_saved,
                 "annotation_files": annotation_files, "sample_count": len(sample_records),
                 "time": now.strftime("%H:%M:%S"),
@@ -865,7 +849,7 @@ class PartArchive:
     def _append_training_samples(self, samples: list[dict]):
         if not self.enabled or not samples:
             return
-        path = os.path.join(self.batch_folder, "samples.jsonl")
+        path = os.path.join(self.batch_folder, "parts", "samples.jsonl")
         with open(path, "a", encoding="utf-8") as stream:
             for sample in samples:
                 json.dump(sample, stream, ensure_ascii=False, separators=(",", ":"))
@@ -892,7 +876,7 @@ class PartArchive:
             },
             "runs": list(self._runs),
             "counts": dict(self._batch_stats),
-            "samples_index": "samples.jsonl",
+            "samples_index": "parts/samples.jsonl",
             "parts": [
                 {
                     "part_id": item["part_id"],
@@ -924,6 +908,11 @@ class PartArchive:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
+        # Keep a small index copy at the parts root for read-only archive
+        # viewers; production catalogs remain the category/part directories.
+        parts_root = os.path.join(self.batch_folder, "parts")
+        os.makedirs(parts_root, exist_ok=True)
+        self._write_json_durable(os.path.join(parts_root, "batch.json"), manifest)
         committed_index = {
             "schema_version": self.SCHEMA_VERSION,
             "batch_id": self.batch_id,

@@ -812,6 +812,20 @@ class CameraManager:
             # доверяем запросу и идём дальше (тестовые doubles ведут
             # себя именно так).
             if codec is None or codec == "MJPG":
+                try:
+                    width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    fps = float(cap.get(cv2.CAP_PROP_FPS))
+                except Exception:
+                    width = height = fps = 0.0
+                if width > 0 and height > 0 and (int(width), int(height)) != _EXPECTED_SIZE:
+                    raise RuntimeError(
+                        f"driver negotiated {int(width)}x{int(height)}; expected {_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]}"
+                    )
+                if fps > 0 and abs(fps - _REQUESTED_FPS) > max(1.0, _REQUESTED_FPS * 0.10):
+                    raise RuntimeError(
+                        f"driver negotiated {fps:.2f} FPS; expected {_REQUESTED_FPS:.2f}"
+                    )
                 return
         message = (
             f"драйвер откатился с MJPG на {codec}: поток "

@@ -11,7 +11,7 @@ import re
 import time
 
 
-class MotionContractError(RuntimeError):
+class MotionContractError(RuntimeError, TimeoutError):
     """Telemetry cannot prove exactly one completed production step."""
 
 

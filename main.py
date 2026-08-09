@@ -187,6 +187,12 @@ def main():
             }
             if getattr(cameras, "serials", {}) != expected_serials:
                 raise RuntimeError("camera serial mapping differs from machine_config")
+            expected_transforms = {
+                role: dict(spec.get("transform", {}))
+                for role, spec in machine_config["cameras"].items()
+            }
+            if getattr(cameras, "transforms", {}) != expected_transforms:
+                raise RuntimeError("camera transform mapping differs from machine_config")
             monitor.boot_step_done(
                 "cameras",
                 f"Открыто камер: {len(cameras.cameras)}",
