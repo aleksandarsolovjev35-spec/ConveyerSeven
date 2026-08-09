@@ -1,3 +1,4 @@
+import math
 import time
 
 from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
@@ -34,7 +35,9 @@ class Distributor:
         self.dist1_open_position = dist1_open_position
         self.dist2_bad_position = dist2_bad_position
         self.dist2_cleanup_position = dist2_cleanup_position
-        self.drop_time = drop_time
+        if not isinstance(drop_time, (int, float)) or not math.isfinite(float(drop_time)) or float(drop_time) < 0:
+            raise ValueError("drop_time must be a finite non-negative number")
+        self.drop_time = float(drop_time)
         self.dist1_state = "GOOD"
         self.dist2_state = "IDLE"
         self.dist2_target = CATEGORY_BAD
@@ -69,6 +72,28 @@ class Distributor:
         self.dist2.home(); self._wait_dist2(timeout=30.0); self._check_cancelled()
         self.dist2.verify_homed(); self._dist2_position = 0
         self.dist2_state, self.dist2_target, self.last_action = "IDLE", CATEGORY_BAD, "HOMED"
+        self._notify()
+
+    def verify_routes(self):
+        """BOOT route health gate on an empty physical line.
+
+        Every production target is commanded in the interlocked order and
+        both axes are returned home before READY is exposed.
+        """
+        for category in (CATEGORY_GOOD, CATEGORY_BAD, CATEGORY_CLEANUP):
+            self.prepare_route(category)
+        self.return_home()
+        return True
+
+    def return_home(self):
+        """Return both axes home and prove the postcondition."""
+        self._set_dist1_good()
+        self._move_dist2(CATEGORY_BAD)
+        self.dist1.verify_homed()
+        self.dist2.verify_homed()
+        self.dist1_state = "GOOD"
+        self.dist2_state = "IDLE"
+        self.last_action = "HOME CONFIRMED"
         self._notify()
 
     def park_production(self):
@@ -132,6 +157,12 @@ class Distributor:
         if self.drop_time:
             time.sleep(self.drop_time)
         self._check_cancelled()
+        # No box-presence sensors exist in this machine.  The available
+        # physical confirmation is the interlocked, alarm-free final axis
+        # telemetry with the route still held.
+        self._confirm_current_axis(self.dist1, 0, self._dist1_position)
+        if category in (CATEGORY_BAD, CATEGORY_CLEANUP):
+            self._confirm_current_axis(self.dist2, 1, self._dist2_position)
         self.last_action = f"PART #{part_id} -> {category} DONE"
         self._notify()
 
@@ -140,7 +171,12 @@ class Distributor:
 
     def emergency_stop(self):
         try:
-            self.dist1.transport.send("G25")
+            for axis in (self.dist1, self.dist2):
+                invalidate = getattr(axis, "firmware_stop_or_reset", None)
+                if callable(invalidate):
+                    invalidate("G25")
+                else:
+                    axis.transport.send("G25")
         finally:
             self.dist1_state = self.dist2_state = "FAULT"
             self.last_action = "EMERGENCY STOP"
@@ -149,14 +185,22 @@ class Distributor:
     def _dist2_target_position(self, category):
         return self.dist2_bad_position if category == CATEGORY_BAD else self.dist2_cleanup_position
 
+    def _confirm_current_axis(self, axis, axis_id: int, target: int):
+        read_status = getattr(axis, "read_status", None)
+        if not callable(read_status):
+            return
+        status = read_status()
+        self._assert_axis_telemetry(axis, axis_id, target, status)
+
     def _move_dist2(self, category: str):
         target = self._dist2_target_position(category)
         self._check_cancelled()
         if self._dist2_position == target:
+            self._confirm_current_axis(self.dist2, 1, target)
             print(f"[DIST2] {category} already at POS={target}")
             return
         self.dist2_state = "MOVING"; self._notify()
-        self.dist2.move_absolute(target); self._wait_dist2(); self._check_cancelled()
+        self.dist2.move_absolute(target); self._wait_dist2(expected_target=target); self._check_cancelled()
         if self.dist2.position != target:
             raise RuntimeError(f"DIST2 target mismatch: expected {target}, got {self.dist2.position}")
         self._dist2_position = target
@@ -167,10 +211,11 @@ class Distributor:
     def _set_dist1_to_dist2(self):
         self._check_cancelled()
         if self._dist1_position == self.dist1_open_position:
+            self._confirm_current_axis(self.dist1, 0, self.dist1_open_position)
             print("[DIST1] already TO_DIST2")
             return
         self.dist1_state = "MOVING_TO_DIST2"; self._notify()
-        self.dist1.move_absolute(self.dist1_open_position); self._wait_dist1(); self._check_cancelled()
+        self.dist1.move_absolute(self.dist1_open_position); self._wait_dist1(expected_target=self.dist1_open_position); self._check_cancelled()
         if self.dist1.position != self.dist1_open_position:
             raise RuntimeError(f"DIST1 DIST2 mismatch: expected {self.dist1_open_position}, got {self.dist1.position}")
         self._dist1_position, self.dist1_state = self.dist1_open_position, "TO_DIST2"
@@ -180,10 +225,11 @@ class Distributor:
     def _set_dist1_good(self):
         self._check_cancelled()
         if self._dist1_position == 0:
+            self._confirm_current_axis(self.dist1, 0, 0)
             self.dist1_state = "GOOD"
             return
         self.dist1_state = "MOVING_TO_GOOD"; self._notify()
-        self.dist1.move_absolute(0); self._wait_dist1(); self._check_cancelled()
+        self.dist1.move_absolute(0); self._wait_dist1(expected_target=0); self._check_cancelled()
         if self.dist1.position != 0:
             raise RuntimeError(f"DIST1 GOOD mismatch: expected 0, got {self.dist1.position}")
         self._dist1_position, self.dist1_state = 0, "GOOD"
@@ -194,11 +240,50 @@ class Distributor:
         if self.cancel_check is not None and self.cancel_check():
             raise RuntimeError("Distributor operation cancelled")
 
-    def _wait_dist1(self, timeout=12.0):
-        self.dist1.wait_stop(timeout=timeout, progress_callback=self._update_dist1_position)
+    def _wait_dist1(self, timeout=12.0, expected_target=None):
+        try:
+            status = self.dist1.wait_stop(
+                timeout=timeout,
+                progress_callback=self._update_dist1_position,
+                expected_target=expected_target,
+            )
+        except TypeError:
+            status = self.dist1.wait_stop(
+                timeout=timeout, progress_callback=self._update_dist1_position
+            )
+        self._assert_axis_telemetry(self.dist1, 0, expected_target, status)
+        return status
 
-    def _wait_dist2(self, timeout=12.0):
-        self.dist2.wait_stop(timeout=timeout, progress_callback=self._update_dist2_position)
+    def _wait_dist2(self, timeout=12.0, expected_target=None):
+        try:
+            status = self.dist2.wait_stop(
+                timeout=timeout,
+                progress_callback=self._update_dist2_position,
+                expected_target=expected_target,
+            )
+        except TypeError:
+            status = self.dist2.wait_stop(
+                timeout=timeout, progress_callback=self._update_dist2_position
+            )
+        self._assert_axis_telemetry(self.dist2, 1, expected_target, status)
+        return status
+
+    @staticmethod
+    def _assert_axis_telemetry(axis, axis_id, expected_target, status):
+        """Require all available real-axis safety fields before conveyor move."""
+        if isinstance(status, dict):
+            for name in ("moving", "alarm", "error"):
+                if name in status and status[name] not in (None, 0):
+                    raise RuntimeError(f"Axis {axis_id}: {name}={status[name]}")
+            if expected_target is not None:
+                if status.get("position") != expected_target or status.get("target") != expected_target:
+                    raise RuntimeError(
+                        f"Axis {axis_id}: actual/target mismatch after route: {status}"
+                    )
+            if status.get("homed") is not None and status.get("homed") != 1:
+                raise RuntimeError(f"Axis {axis_id}: homed state lost: {status}")
+            if status.get("limits_enabled") is not None and status.get("limits_enabled") != 1:
+                raise RuntimeError(f"Axis {axis_id}: limits disabled: {status}")
 
     def _update_dist1_position(self, position, moving):
         self._check_cancelled()

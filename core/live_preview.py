@@ -1,16 +1,14 @@
 """Живой просмотр камер параллельно с работой производственной линии.
 
-Кадры для оператора и кадры для инспекции берутся с одних и тех же камер,
-поэтому доступ разграничен :class:`LiveCaptureGate`. Правило простое:
+Физический CameraManager читает все семь камер непрерывно и публикует
+последний кадр в role-buffer. Инспекция копирует immutable snapshot из этого
+буфера; она никогда не отбирает `VideoCapture` у live-потока. В legacy/test
+адаптерах `LiveCaptureGate` по-прежнему защищает прямые чтения.
 
-* линия **движется** — работает live-просмотр, оператор видит поток;
-* линия **стоит** — live-чтения запрещены, кадры забирает инспекция,
-  и только по этим статичным кадрам считаются defect rules.
-
-Инспекция всегда приоритетна: :meth:`LiveCaptureGate.pause` не просто
-выставляет флаг, а дожидается завершения уже начатых live-чтений. Без
-этого ожидания трёхкратный синхронный захват мог бы конкурировать с
-live-потоком за одну и ту же камеру.
+* линия **движется** — HMI показывает live;
+* во время capture/analysis — HMI также остаётся live;
+* только после атомарной публикации результата реальные роли получают UI
+  стоп-кадр на REVIEW, а физическое чтение продолжается.
 
 Раскладка потоков повторяет реальную нагрузку USB: выбранная оператором
 камера обновляется с частотой ``LIVE_TARGET_FPS``, остальные шесть — одним
@@ -163,6 +161,10 @@ class LivePreview:
         self._monitor = monitor
         self._get_active_role = get_active_role
         self.gate = gate if gate is not None else LiveCaptureGate()
+        # CameraManager owns a continuous physical reader and exposes
+        # get_live_snapshot().  In that mode a UI pause must never pause the
+        # physical stream: it only affects which roles the UI displays.
+        self._buffered_capture = callable(getattr(cameras, "get_live_snapshot", None))
 
         # _lifecycle_lock сериализует start/stop целиком; _state_lock
         # защищает только поля, которые читают рабочие потоки и UI.
@@ -260,16 +262,22 @@ class LivePreview:
     # Пауза на время статической инспекции
 
     def pause(self, timeout: float = LIVE_PAUSE_DRAIN_TIMEOUT) -> bool:
+        if self._buffered_capture:
+            return True
         return self.gate.pause(timeout)
 
     def resume(self):
-        self.gate.resume()
+        if not self._buffered_capture:
+            self.gate.resume()
 
     def pause_roles(self, roles, timeout: float = LIVE_PAUSE_DRAIN_TIMEOUT) -> bool:
+        if self._buffered_capture:
+            return True
         return self.gate.pause_roles(roles, timeout)
 
     def resume_roles(self, roles):
-        self.gate.resume_roles(roles)
+        if not self._buffered_capture:
+            self.gate.resume_roles(roles)
 
     def reset_pause(self):
         self.gate.reset()

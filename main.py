@@ -6,6 +6,7 @@ import time
 import webview
 
 from config import load_calibration, load_archive_config
+from config.machine_config import load_machine_config
 
 from hardware.serial_transport import SerialTransport
 from hardware.port_discovery   import find_controller
@@ -22,10 +23,13 @@ from vision.ui                         import LiveMonitor
 from domain.threshold_loader  import ThresholdLoader
 from core.decision_engine     import DecisionEngine
 from core.production_cycle    import ProductionCycle
+from core.operational_log      import OperationalLog
+from core.boot                 import BootCoordinator, sha256_file
 
 from inspection.debug_recorder import DebugRecorder
 from inspection.inspector      import Inspector
 from inspection.part_archive   import PartArchive
+from inspection.model_worker   import run_in_terminating_worker
 
 
 CYCLE_JOIN_TIMEOUT   = 15.0
@@ -35,6 +39,8 @@ COMPRESS_TIMEOUT     = 60.0
 
 
 def main():
+
+    boot_coordinator = BootCoordinator(marker_path=".production_process.json", app_version=os.environ.get("APP_VERSION", "dev"))
 
     if not os.path.exists("camera_mapping.json") and not launch_camera_calibrator(
         "camera_mapping.json"
@@ -51,6 +57,22 @@ def main():
         exit_callback=None,
         fullscreen=True,
     )
+
+    try:
+        previous = boot_coordinator.detect_previous_unclean()
+    except Exception as exc:
+        monitor.boot_step_error("init", f"Маркер предыдущего процесса повреждён: {exc}")
+        previous = {"error": str(exc)}
+    if previous is not None:
+        # The UI must expose the incident and wait for an explicit manual
+        # cleanup acknowledgement; no automatic restart/resume is allowed.
+        monitor.boot_step_error(
+            "init",
+            "Предыдущий batch "
+            f"{previous.get('batch_id', 'unknown') if isinstance(previous, dict) else 'unknown'} "
+            "завершён нештатно. Требуется ручная очистка линии.",
+        )
+        print(f"[BOOT] Previous unclean process: {previous}")
 
     monitor.server.start_server(
         host=monitor.host,
@@ -137,6 +159,9 @@ def main():
         try:
             _ensure_initialization_active()
             calib = load_calibration()
+            machine_config, machine_config_sha = load_machine_config("machine_config.json")
+            if machine_config["conveyor"]["production_target"] != calib["normal_steps"] * 2:
+                raise RuntimeError("machine_config conveyor geometry disagrees with calibration")
             _ensure_initialization_active()
 
             # Cameras
@@ -156,6 +181,12 @@ def main():
                 )
                 _report_startup_failure()
                 return
+            expected_serials = {
+                role: spec["serial"]
+                for role, spec in machine_config["cameras"].items()
+            }
+            if getattr(cameras, "serials", {}) != expected_serials:
+                raise RuntimeError("camera serial mapping differs from machine_config")
             monitor.boot_step_done(
                 "cameras",
                 f"Открыто камер: {len(cameras.cameras)}",
@@ -181,6 +212,11 @@ def main():
                     "camera_warmup",
                     f"Прогрев камер: {total_reads} кадров",
                 )
+                # From this BOOT boundary until process close every one of
+                # the seven physical streams remains live.  REVIEW/snapshot
+                # later copies from these buffers and never takes ownership
+                # of VideoCapture.
+                cameras.start_live()
             except Exception as e:
                 monitor.boot_step_error(
                     "camera_warmup",
@@ -195,7 +231,15 @@ def main():
                 "models_load", "Загрузка моделей",
             )
             try:
-                vision = VisionCluster(device="cpu")
+                isolated_workers = (
+                    os.environ.get("INFERENCE_ISOLATED_WORKERS", "1").strip().lower()
+                    not in ("0", "false", "off")
+                )
+                vision = VisionCluster(
+                    device="cpu",
+                    worker_runner=(run_in_terminating_worker if isolated_workers else None),
+                    worker_timeout=float(os.environ.get("MODEL_TIMEOUT", "30.0")),
+                )
             except Exception as e:
                 monitor.boot_step_error(
                     "models_load",
@@ -259,6 +303,11 @@ def main():
                 )
                 monitor.server.archive = archive
                 monitor.server.archive_config_path = "archive_config.json"
+                if archive.enabled:
+                    if archive.startup_error:
+                        raise RuntimeError(f"archive startup failed: {archive.startup_error}")
+                    archive.validate_root(archive.root_folder)
+                    archive.require_space()
 
                 # Редактор порогов правил: сервер отдаёт текущие значения
                 # (GET /api/thresholds), а применение изменений пересоздаёт
@@ -285,7 +334,7 @@ def main():
 
                 monitor.thresholds_reload_callback = _thresholds_reload_from_file
 
-                def _thresholds_apply(role, values, labels):
+                def _thresholds_apply(role, values, labels=None):
                     if cycle is None or inspector is None:
                         raise RuntimeError(
                             "Система контроля ещё не инициализирована"
@@ -299,37 +348,20 @@ def main():
                         raise RuntimeError(
                             "Нельзя менять пороги во время движения ленты"
                         )
+                    if labels:
+                        raise ValueError("labels не входят в operator write API")
                     if not isinstance(values, dict) or not values:
                         raise ValueError("Нет изменённых порогов")
-                    updated = dict(inspector.decision.thresholds)
-                    changed = []
-                    for key, value in values.items():
-                        full_key = (
-                            f"{role}.{key}"
-                            if not str(key).startswith(f"{role}.")
-                            else str(key)
-                        )
-                        if full_key not in updated:
-                            raise ValueError(f"Неизвестный порог: {full_key}")
-                        updated[full_key] = value
-                        changed.append(full_key)
-                    # Полная валидация, как при загрузке файла
-                    ThresholdLoader.validate(updated)
-                    # Понятные названия порогов для оператора: сохраняются
-                    # вместе со значениями, на логику правил не влияют.
-                    full_labels = dict(monitor.server.threshold_labels or {})
-                    for key, name in (labels or {}).items():
-                        full_key = (
-                            f"{role}.{key}"
-                            if not str(key).startswith(f"{role}.")
-                            else str(key)
-                        )
-                        if name is None or not str(name).strip():
-                            full_labels.pop(full_key, None)
-                        else:
-                            full_labels[full_key] = str(name).strip()
+                    updated = ThresholdLoader.operator_update(
+                        dict(inspector.decision.thresholds), role, values
+                    )
+                    changed = [
+                        key if str(key).startswith(f"{role}.") else f"{role}.{key}"
+                        for key in values
+                    ]
                     ThresholdLoader.save_file(
-                        "thresholds.json", updated, labels=full_labels,
+                        "thresholds.json", updated,
+                        labels=dict(monitor.server.threshold_labels or {}),
                     )
                     # Правила пересоздаются: Inspector берёт decision каждый
                     # раз заново, поэтому замена объекта применяется сразу.
@@ -380,9 +412,9 @@ def main():
                 transport = SerialTransport(
                     port=found_port, baudrate=serial_baud,
                 )
-                # Start from a stopped controller before any configuration.
-                transport.send("G1")
-                transport.send("G25")
+                # BOOT does not guess or repeat a zeroing command.  The
+                # controller's reset telemetry is verified by START, while
+                # distributor axes are homed once in the hardware gate below.
             except Exception as e:
                 monitor.boot_step_error(
                     "serial",
@@ -477,7 +509,34 @@ def main():
                 _ensure_initialization_active()
                 print("[HARDWARE] Homing distributor axes...")
                 distributor.initialize()
+                print("[HARDWARE] Verifying GOOD/CLEANUP/BAD routes...")
+                distributor.verify_routes()
+                # No conveyor movement is used to establish the logical zero;
+                # Conveyor START preflight proves POS=TGT=0 directly.
+                conveyor.verify_reset_state()
                 _ensure_initialization_active()
+                model_identity = {}
+                for model_path in getattr(vision, "models", {}):
+                    try:
+                        model_identity[str(model_path)] = sha256_file(model_path)
+                    except OSError as exc:
+                        raise RuntimeError(f"model identity unavailable: {model_path}: {exc}") from exc
+                manifest = {
+                    "app_version": os.environ.get("APP_VERSION", "dev"),
+                    "rules_version": os.environ.get("RULES_VERSION", "production"),
+                    "models_sha256": model_identity,
+                    "machine_config_sha256": machine_config_sha,
+                    "threshold_sha256": sha256_file("thresholds.json"),
+                }
+                if archive is not None:
+                    archive.identity_manifest = dict(manifest)
+                journal = OperationalLog(
+                    path=os.path.join(
+                        archive.root_folder if archive and archive.enabled else ".",
+                        "production_operational.jsonl",
+                    ),
+                    enabled=True,
+                )
                 cycle = ProductionCycle(
                     conveyor=conveyor,
                     cameras=cameras,
@@ -489,7 +548,13 @@ def main():
                     settle_seconds=calib["settle_time"],
                     stage_trace_seconds=calib["stage_trace_time"],
                     review_seconds=calib["review_time"],
+                    journal=journal,
+                    manifest=manifest,
+                    threshold_revision=manifest["threshold_sha256"],
+                    initial_frame_max_age=float(os.environ.get("INITIAL_FRAME_MAX_AGE", "5.0")),
                 )
+                monitor.server.command_dispatcher = cycle.dispatch_command
+                monitor.server.on_hmi_lost = cycle.request_pause
                 monitor.start_callback  = cycle.request_start
                 monitor.stop_callback   = cycle.request_stop
                 monitor.pause_callback  = cycle.request_pause
@@ -564,6 +629,10 @@ def main():
                 monitor.boot_step_done(
                     "preview", "Начальные кадры получены",
                 )
+                # UI live publication starts before READY and remains alive
+                # across IDLE/STOPPED; physical CameraManager readers already
+                # started immediately after camera BOOT.
+                cycle.live.start()
             except Exception as e:
                 monitor.boot_step_error(
                     "preview", f"Ошибка получения начальных кадров: {e}",
@@ -572,6 +641,10 @@ def main():
                 return
 
             _ensure_initialization_active()
+
+            # A process marker is written only after every BOOT gate passes;
+            # an unclean process therefore remains visible on next launch.
+            boot_coordinator.mark_process_open(archive.batch_id if archive else "unknown")
 
             # Start cycle thread
             monitor.boot_step_start(
@@ -596,10 +669,30 @@ def main():
             monitor.boot_step_error(current, str(e))
             _report_startup_failure()
 
-    init_thread = threading.Thread(
-        target=initialize_system, daemon=True,
-    )
-    init_thread.start()
+    init_thread = None
+    if previous is None:
+        init_thread = threading.Thread(
+            target=initialize_system, daemon=True,
+        )
+        init_thread.start()
+    else:
+        def acknowledge_cleanup_and_restart(confirmed=True):
+            nonlocal init_thread
+            boot_coordinator.acknowledge_manual_cleanup(bool(confirmed))
+            with monitor.server.lock:
+                monitor.server.boot_error = None
+                monitor.server.boot_current = None
+                monitor.server.boot_message = "Ручная очистка подтверждена; запуск нового batch"
+                monitor.server.boot_steps = {
+                    key: "pending" for key, _ in monitor.server.BOOT_STEPS
+                }
+            init_thread = threading.Thread(
+                target=initialize_system, daemon=True,
+            )
+            init_thread.start()
+            return True
+        monitor.server.on_manual_cleanup = acknowledge_cleanup_and_restart
+        monitor.server.manual_cleanup_required = True
 
     # Signal handler
 
@@ -632,7 +725,9 @@ def main():
 
         print("[UI] Окно закрыто, завершение...")
 
-        if cycle and not cycle.force_exit_requested:
+        if cycle and not cycle.force_exit_requested and not (
+            cycle.exit_requested and cycle.state == "STOPPED"
+        ):
             cycle.request_force_exit()
 
         if cycle_thread and cycle_thread.is_alive():
@@ -661,7 +756,9 @@ def main():
                     f"{INIT_JOIN_TIMEOUT}s"
                 )
 
-        if cycle and not cycle.force_exit_requested:
+        if cycle and not cycle.force_exit_requested and not (
+            cycle.exit_requested and cycle.state == "STOPPED"
+        ):
             cycle.request_force_exit()
         if cycle_thread and cycle_thread.is_alive():
             cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
@@ -677,10 +774,20 @@ def main():
         )
 
         phase_started = time.monotonic()
+        if archive is not None:
+            try:
+                archive.close_batch(
+                    "CLOSED" if cycle is not None and cycle.state == "STOPPED"
+                    and not cycle.force_exit_requested else "ABORTED"
+                )
+            except Exception as exc:
+                print(f"[SHUTDOWN] Batch close failed: {exc}")
         if cycle_thread and cycle_thread.is_alive():
             print("[SHUTDOWN] Cycle still active; archive compression skipped")
-        else:
+        elif cycle is not None and cycle.state == "STOPPED" and not cycle.force_exit_requested:
             _shutdown_compress(archive)
+        else:
+            print("[SHUTDOWN] Aborted shutdown: secondary ZIP skipped")
         print(
             f"[SHUTDOWN] Архив: "
             f"{time.monotonic() - phase_started:.2f} с"
@@ -715,6 +822,16 @@ def main():
             f"{time.monotonic() - phase_started:.2f} с"
         )
 
+        try:
+            if archive is not None:
+                status = "closed" if (
+                    cycle is not None
+                    and cycle.state == "STOPPED"
+                    and not cycle.force_exit_requested
+                ) else "aborted"
+                boot_coordinator.close_process(batch_id=archive.batch_id, status=status)
+        except Exception as exc:
+            print(f"[SHUTDOWN] Process marker close failed: {exc}")
         print(
             f"[SHUTDOWN] Готово за "
             f"{time.monotonic() - shutdown_started:.2f} с."
