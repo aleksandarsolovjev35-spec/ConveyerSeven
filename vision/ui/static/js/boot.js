@@ -22,6 +22,18 @@ async function fetchBoot() {
         if (els.splashError) els.splashError.classList.remove('is-hidden');
         setIfChanged(els.splashErrorMsg, boot.error);
     }
+    if (els.splashCleanup) {
+        const required = boot.manual_cleanup_required === true;
+        els.splashCleanup.classList.toggle('is-hidden', !required);
+        if (required && !els.splashCleanup.dataset.bound) {
+            els.splashCleanup.dataset.bound = '1';
+            els.splashCleanup.addEventListener('click', async () => {
+                els.splashCleanup.disabled = true;
+                const result = await apiPostJson('/api/boot/manual-cleanup', {confirmed: true}, true);
+                if (!result) els.splashCleanup.disabled = false;
+            });
+        }
+    }
 
     if (!boot.active && !state.bootDone) {
         state.bootDone = true;

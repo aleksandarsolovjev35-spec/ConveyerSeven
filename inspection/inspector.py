@@ -1,4 +1,5 @@
 from domain.defect_rules import InputPartPresenceRule
+from domain.defect_rules.base import RuleResult
 
 from vision.overlay.raw_overlay import RawOverlay
 
@@ -38,6 +39,7 @@ class Inspector:
         step: int,
         frame_runs,
         force_bad: bool = False,
+        on_presence=None,
     ) -> InspectionResult:
         """INPUT-инспекция по одному свежему набору кадров.
 
@@ -107,6 +109,12 @@ class Inspector:
                 run_rule_results=[[]],
             )
 
+        # Presence is a physical identity boundary.  The callback runs before
+        # any ordinary INPUT defect rule so the Part is already journaled and
+        # tracked if a later rule fails.
+        if callable(on_presence):
+            on_presence(presence_result)
+
         rule_results_by_run = [
             self.decision.evaluate_all_detailed(
                 vision_results,
@@ -126,6 +134,22 @@ class Inspector:
 
         # Правило присутствия идёт первым в списке результатов для INPUT.
         final_rule_results = [presence_result] + final_rule_results
+        if presence_result.details.get("presence_mismatch"):
+            final_rule_results.append(
+                RuleResult(
+                    "input_presence_mismatch",
+                    triggered=True,
+                    details={
+                        "presence_by_role": dict(
+                            presence_result.details.get("presence_by_role", {})
+                        ),
+                        "count_by_role": dict(
+                            presence_result.details.get("count_by_role", {})
+                        ),
+                    },
+                    drawings=[],
+                )
+            )
 
         # Картинка строится по замеру, ближе всего к порогу (в норме),
         # либо ближайшему к порогу браку.
@@ -314,11 +338,11 @@ class Inspector:
 
     # Empty tray detector
 
-    def _evaluate_part_presence(self, vision_results: dict):
+    def _evaluate_part_presence(self, vision_results: dict, *, production: bool = True):
         rule = InputPartPresenceRule(thresholds=self.decision.thresholds)
         if not rule.enabled:
-            raise RuntimeError("part_presence rule is disabled")
-        return rule.check(vision_results)
+            raise RuntimeError("part_presence rule is unavailable")
+        return rule.check(vision_results, production=production)
 
     @staticmethod
     def _raw_overlays(stage_frames: dict, vision_results: dict) -> dict:

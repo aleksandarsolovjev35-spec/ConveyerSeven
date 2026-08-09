@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import os
 import sys
 import threading
@@ -17,6 +18,7 @@ from vision.overlay.debug_overlay import DebugOverlay
 from vision.ui.server.routes_frames  import setup_frame_routes
 from vision.ui.server.routes_api     import setup_api_routes
 from vision.ui.server.routes_archive import setup_archive_routes
+from core.hmi_watchdog import HMIWatchdog
 
 
 _UI_DIR        = Path(__file__).parent.parent
@@ -83,6 +85,10 @@ class UIServer:
         # Правила стадии: кадр размечается drawings этих правил, чтобы
         # оверлей совпадал с кадром. Один элемент — список строк отчёта.
         self.run_rule_results: list = []
+        # Roles currently shown from the immutable REVIEW snapshot. Physical
+        # live frames may continue arriving, but they must not replace these
+        # UI pixels until PUBLISH clears the run set.
+        self._frozen_roles: set[str] = set()
         self.vision_results: dict = {}
         self.rule_results: list   = []
         self.line_status: dict    = {}
@@ -102,6 +108,10 @@ class UIServer:
         self.active_camera_role: str | None = None
 
         self.on_active_camera_changed: callable | None = None
+
+        self.command_dispatcher: callable | None = None
+        self.on_manual_cleanup: callable | None = None
+        self.manual_cleanup_required = False
 
         self.on_start:  callable | None = None
         self.on_stop:   callable | None = None
@@ -146,6 +156,11 @@ class UIServer:
         # Кэш JPEG для pull-механики (/frame): ключ (role, mode, size)
         self._jpeg_cache: dict = {}
         self._cache_version = 0
+        # Logical state ordering is independent from per-role/frame ordering.
+        self._state_version = 0
+        self._state_snapshot = {
+            "line_status": {}, "recent_parts": [],
+        }
 
         # Версия каждого кадра (растёт при update)
         self._latest_frames_ver: dict = {}
@@ -154,6 +169,9 @@ class UIServer:
         self._latest_stream_jpeg: dict = {}
 
         self.lock = threading.Lock()
+        self.on_hmi_lost: callable | None = None
+        self.hmi_watchdog = HMIWatchdog(on_lost=self._notify_hmi_lost)
+        self.hmi_watchdog.start()
 
         self.app = FastAPI(title="Роботехнический комплекс конвейерного типа 7")
 
@@ -162,6 +180,18 @@ class UIServer:
 
         self._server_thread: threading.Thread | None = None
         self._uvicorn_server: uvicorn.Server | None = None
+
+    def _notify_hmi_lost(self):
+        callback = self.on_hmi_lost
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception as exc:
+            print(f"[HMI] reconnect watchdog callback failed: {exc}")
+
+    def touch_hmi(self):
+        self.hmi_watchdog.touch()
 
     # Public API
 
@@ -272,6 +302,11 @@ class UIServer:
                     self.run_frames, incoming_run_frames,
                 ):
                     self.run_frames = incoming_run_frames
+                    self._frozen_roles = set(
+                        role
+                        for run in incoming_run_frames
+                        for role in run
+                    )
                     # Кадры прогонов новые: правила старых прогонов к ним
                     # не относятся (см. _get_or_render по run). Заполняются
                     # тем же вызовом (run_rule_results) ниже.
@@ -288,7 +323,18 @@ class UIServer:
                     self.run_rule_results = incoming_run_rules
                     should_invalidate = True
             if frames is not None:
+                incoming_frozen = {
+                    role
+                    for run in (run_frames or [])
+                    if isinstance(run, dict)
+                    for role in run
+                }
                 for role, frame in frames.items():
+                    # A live tick can never overwrite a role currently shown
+                    # from the REVIEW snapshot.  The atomic result call itself
+                    # is allowed to install its frame.
+                    if role in self._frozen_roles and role not in incoming_frozen:
+                        continue
                     if self.frames.get(role) is not frame:
                         self.frames[role] = frame
                         self._latest_frames_ver[role] = (
@@ -309,15 +355,33 @@ class UIServer:
                     should_invalidate = True
                     stream_overlay_changed = True
             if line_status is not None:
-                self.line_status = line_status
-                self._apply_custom_threshold_labels(line_status)
+                # A logical publication is one immutable lightweight snapshot.
+                # Do not expose mutable producer dictionaries to request threads.
+                self.line_status = copy.deepcopy(line_status)
+                self._apply_custom_threshold_labels(self.line_status)
             if recent_parts is not None:
-                self.recent_parts = list(recent_parts)
+                self.recent_parts = copy.deepcopy(list(recent_parts))
+            if line_status is not None or recent_parts is not None:
+                self._state_version += 1
+                self._state_snapshot = {
+                    "state_version": self._state_version,
+                    "line_status": copy.deepcopy(self.line_status),
+                    "recent_parts": copy.deepcopy(self.recent_parts),
+                }
             if should_invalidate:
                 self._jpeg_cache.clear()
                 if stream_overlay_changed:
                     self._latest_stream_jpeg.clear()
                 self._cache_version += 1
+
+    def get_state_snapshot(self) -> dict:
+        """Return the latest complete logical snapshot after reconnect."""
+        with self.lock:
+            return copy.deepcopy({
+                "state_version": self._state_version,
+                "line_status": self.line_status,
+                "recent_parts": self.recent_parts,
+            })
 
     def _apply_custom_threshold_labels(self, line_status: dict) -> None:
         """Подставить ручные названия порогов (_label.*) в анализ кадра.
@@ -563,6 +627,15 @@ class UIServer:
                 "Изменение порогов доступно только до пуска "
                 "и после полной остановки"
             )
+        if labels:
+            raise ValueError("labels are not part of the operator write API")
+        if not isinstance(role, str) or role not in {
+            "INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT",
+            "SPIDER_IN", "SPIDER_OUT", "TOP",
+        }:
+            raise ValueError("unknown camera role")
+        if not isinstance(values, dict) or not values:
+            raise ValueError("values must be a non-empty object")
         # Синхронизация с файлом перед применением: база порогов не должна
         # затирать внешние правки thresholds.json.
         self.reload_thresholds_from_file()
@@ -620,7 +693,10 @@ class UIServer:
             return True, None
         try:
             archive.validate_root(archive.root_folder)
-        except ValueError as exc:
+            require_space = getattr(archive, "require_space", None)
+            if callable(require_space):
+                require_space()
+        except (ValueError, RuntimeError) as exc:
             return False, str(exc)
         return True, None
 
@@ -748,6 +824,7 @@ class UIServer:
         print(f"[UI SERVER] http://{host}:{port}")
 
     def stop_server(self, timeout: float = 5.0):
+        self.hmi_watchdog.stop()
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
         thread = self._server_thread
@@ -781,6 +858,11 @@ class UIServer:
         cache_key = (role, actual_mode)
         with self.lock:
             frame = self.frames.get(role)
+            if role in self._frozen_roles and self.run_frames:
+                for run in self.run_frames:
+                    if role in run:
+                        frame = run[role]
+                        break
             if frame is None:
                 return None, 0
 
@@ -863,10 +945,16 @@ class UIServer:
                     and role in self.run_frames[run_index]
                 ):
                     frame = self.run_frames[run_index][role]
-            # Не подменяем запрошенный кадр прогона текущим live/evidence
-            # кадром. Это особенно важно при переключении трёх кадров: если
-            # роль отсутствует в наборе стадии, fallback показывал старую
-            # деталь и выглядел как случайно «не тот» прогон.
+            # During REVIEW the default endpoint also serves the immutable
+            # role snapshot, so the browser does not need a second hidden
+            # ``run=1`` contract.
+            if frame is None and role in self._frozen_roles and self.run_frames:
+                for run in self.run_frames:
+                    if role in run:
+                        frame = run[role]
+                        break
+            # Не подменяем кадр прогона текущим live/evidence кадром when a
+            # requested run does contain this role.
             if frame is None:
                 frame = self.frames.get(role)
             if frame is None:

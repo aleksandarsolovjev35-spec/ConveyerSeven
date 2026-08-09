@@ -112,6 +112,7 @@ const state = {
     lineState:           'IDLE',
     serverExitRequested: false,
     lastSeenVersion:     -1,
+    lastStateVersion:    -1,
     currentVersion:      0,
     frameVersions:       {},
     bootDone:            false,
@@ -197,10 +198,12 @@ const els = {
     splashError:      $('splash-error'),
     splashErrorMsg:   $('splash-error-message'),
     splashExit:       $('splash-exit'),
+    splashCleanup:    $('splash-cleanup'),
 
     main:             $('main'),
 
     metricStep:       $('metric-step'),
+    simulationBadge:  $('simulation-badge'),
     metricUptime:     $('metric-uptime'),
 
     previewStrip:     $('preview-strip'),
