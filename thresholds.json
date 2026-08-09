@@ -1,6 +1,5 @@
 {
     "INPUT_LEFT": {
-        "input_part_presence_false_positive_max_count": 2,
         "input_window_geometry_min_confidence": 0.4,
         "input_window_geometry_expected_count": 7,
         "input_window_geometry_top_px_min": 15,
@@ -10,11 +9,10 @@
         "input_window_geometry_center_zone_ratio": 0.5,
         "input_window_sinks_min_confidence": 0.4,
         "input_window_sinks_window_min_confidence": 0.15,
-        "input_window_sinks_overlap_min_px": 5
+        "input_window_sinks_overlap_min_px": 5,
+        "presence_min_count": 3
     },
-
     "INPUT_RIGHT": {
-        "input_part_presence_false_positive_max_count": 2,
         "input_window_geometry_min_confidence": 0.4,
         "input_window_geometry_expected_count": 7,
         "input_window_geometry_top_px_min": 15,
@@ -24,9 +22,9 @@
         "input_window_geometry_center_zone_ratio": 0.5,
         "input_window_sinks_min_confidence": 0.4,
         "input_window_sinks_window_min_confidence": 0.15,
-        "input_window_sinks_overlap_min_px": 5
+        "input_window_sinks_overlap_min_px": 5,
+        "presence_min_count": 3
     },
-
     "SPIDER_LEFT": {
         "spider_contacts_long_min_confidence": 0.3,
         "spider_contacts_long_expected_count": 5,
@@ -41,7 +39,6 @@
         "spider_long_omission_top_line_max_residual_px": 5,
         "spider_long_omission_top_line_min_inlier_ratio": 0.9
     },
-
     "SPIDER_RIGHT": {
         "spider_contacts_long_min_confidence": 0.3,
         "spider_contacts_long_expected_count": 5,
@@ -56,7 +53,6 @@
         "spider_long_omission_top_line_max_residual_px": 5,
         "spider_long_omission_top_line_min_inlier_ratio": 0.9
     },
-
     "SPIDER_IN": {
         "spider_contacts_short_min_confidence": 0.3,
         "spider_contacts_short_expected_count": 2,
@@ -71,7 +67,6 @@
         "spider_short_omission_top_line_max_residual_px": 5,
         "spider_short_omission_top_line_min_inlier_ratio": 0.9
     },
-
     "SPIDER_OUT": {
         "spider_contacts_short_min_confidence": 0.28,
         "spider_contacts_short_expected_count": 2,
@@ -86,7 +81,6 @@
         "spider_short_omission_top_line_max_residual_px": 5,
         "spider_short_omission_top_line_min_inlier_ratio": 0.9
     },
-
     "TOP": {
         "top_contacts_min_confidence": 0.3,
         "top_contacts_expected_count": 14,
@@ -115,6 +109,5 @@
         "top_glass_case_central_min_confidence": 0.3,
         "top_glass_pin_min_confidence": 0.3
     },
-
-    "disabled_rules": []
+    "schema_version": 2
 }

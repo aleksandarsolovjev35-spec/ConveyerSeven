@@ -23,7 +23,7 @@ DEFAULTS = {
     "zip_compression": "deflated",
     "zip_level": 6,
     "compress_on_shutdown": True,
-    "delete_original_after_zip": True,
+    "delete_original_after_zip": False,
 }
 
 

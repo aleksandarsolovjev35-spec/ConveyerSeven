@@ -5,13 +5,13 @@
 буквально всю производственную линию без камер, моделей, контроллера и
 распределителя:
 
-- появление корпуса решает случайно каждая из двух первых камер
-  (INPUT_LEFT / INPUT_RIGHT), как в реальном правиле part_presence: деталь
-  засчитывается, только если её видят ОБЕ входные камеры;
+- появление корпуса решают две первые камеры (INPUT_LEFT / INPUT_RIGHT):
+  обе отрицательные дают пустую ячейку, одиночное положительное создаёт Part
+  с input_presence_mismatch, как в production;
 - при наличии корпуса входные defect-правила (window_geometry, window_sinks)
   дают дефекты входа, на +4 spider-правила — дефекты контроля, а маршрут
   GOOD / BAD / CLEANUP вычисляется строго как в Part._recompute() (нет
-  дефектов → GOOD; только glass/glass_glare → CLEANUP; иначе BAD);
+  дефектов → GOOD; только glass/glass → CLEANUP; иначе BAD);
 - лента движется по шагам, позиции корпусов анимируются в «Пути корпусов»;
 - распределитель DIST1/DIST2 выставляет маршрут строго по
   ``DISTRIBUTOR_LOGIC.md`` до каждого шага ленты;
@@ -51,7 +51,7 @@ from domain.part import (
     CATEGORY_GOOD,
     CATEGORY_BAD,
     CATEGORY_CLEANUP,
-    CATEGORY_UNKNOWN,
+    CATEGORY_IN_PROGRESS,
 )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -154,11 +154,11 @@ RULE_METRICS = {
 # ячеек под первыми двумя камерами».
 INPUT_CAMERA_PRESENT_PROB = 0.93
 # Порог присутствия детали на каждой камере (совпадает со смыслом
-# input_part_presence_false_positive_max_count + 1 = 3).
+# presence_min_count = 3).
 INPUT_PRESENCE_THRESHOLD = 3
 
 # Дефекты, которые приводят на CLEANUP (как в domain/part.py).
-CLEANUP_DEFECTS = {"glass", "glass_glare"}
+CLEANUP_DEFECTS = {"glass"}
 
 # INPUT defect-правила (вход +0): их срабатывание даёт дефекты входа.
 INPUT_RULES = ("window_geometry", "window_sinks")
@@ -259,7 +259,7 @@ def _generate_metrics(rule_name, triggered):
 def _rule_row(rule_name, role, part_id, present=True, defects=None):
     """Строка правила для панели «Анализ кадра».
 
-    ``present`` — подтверждено ли присутствие корпуса обеими входными камерами;
+    ``present`` — подтверждено ли присутствие корпуса хотя бы одной входной камерой;
     ``defects`` — сработавшие defect-правила этого корпуса (на текущей стадии).
     ``triggered`` для правила берётся из ``defects``, как в реальной инспекции.
     """
@@ -297,7 +297,7 @@ def _rule_row(rule_name, role, part_id, present=True, defects=None):
             "run_cards": [[{
                 "role": role, "ok": True, "verdict": "корпус виден",
                 "metrics": [
-                    _metric("flatness", "12", "30", True, "false_positive_max_count"),
+                    _metric("flatness", "12", "30", True, "presence_min_count"),
                     _metric("Зачтено, шт", "12", None, None, "effective_flatness"),
                 ],
             }]],
@@ -1115,6 +1115,7 @@ class Emulator:
 
         return {
             "state": state_name,
+            "simulation": True,
             "exit_requested": self.sm.exit_requested,
             "fault_reason": None,
             "step": self.current_step,
@@ -1383,7 +1384,9 @@ class Emulator:
         """
         left = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
         right = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
-        return (left and right), left, right
+        # Both negatives are empty; one-sided positive is a real part with
+        # an INPUT mismatch defect.
+        return bool(left or right), left, right
 
     def _run_defect_rules(self, rule_names):
         """Сработавшие defect-правила: правило сработало -> его имя в списке."""
@@ -1395,14 +1398,14 @@ class Emulator:
     def _recompute_route(self, part):
         """Категория корпуса строго как в Part._recompute().
 
-        - нет дефектов: GOOD только после полной инспекции, иначе UNKNOWN;
-        - только glass/glass_glare -> CLEANUP;
+        - нет дефектов: GOOD только после полной инспекции, иначе IN_PROGRESS;
+        - только glass/glass -> CLEANUP;
         - любой другой дефект -> BAD.
         """
         defects = part["input_defects"] + part["spider_defects"]
         fully = part["input_inspected"] and part["spider_inspected"]
         if not defects:
-            part["category"] = CATEGORY_GOOD if fully else CATEGORY_UNKNOWN
+            part["category"] = CATEGORY_GOOD if fully else CATEGORY_IN_PROGRESS
             return
         if all(d in CLEANUP_DEFECTS for d in defects):
             part["category"] = CATEGORY_CLEANUP
@@ -1412,8 +1415,9 @@ class Emulator:
     def _spawn_input_part(self):
         """Обработать вход +0: присутствие -> входные правила -> корпус.
 
-        Если деталь не подтверждена обеими камерами — пустой лоток (Part и
-        архив не создаются). Иначе создаётся корпус, проходят INPUT
+        Если деталь не подтверждена ни одной камерой — пустой лоток (Part и
+        архив не создаются). Иначе создаётся корпус; одиночное подтверждение
+        получает input_presence_mismatch, затем проходят INPUT
         defect-правила (window_geometry, window_sinks) и предварительно
         пересчитывается маршрут (полная инспекция завершится на +4).
         """
@@ -1427,10 +1431,12 @@ class Emulator:
             return None
         self.part_counter += 1
         input_defects = self._run_defect_rules(INPUT_RULES)
+        if left != right:
+            input_defects.insert(0, "input_presence_mismatch")
         part = {
             "id": self.part_counter,
             "step_created": self.current_step,
-            "category": CATEGORY_UNKNOWN,
+            "category": CATEGORY_IN_PROGRESS,
             "input_defects": input_defects,
             "spider_defects": [],
             "input_inspected": True,

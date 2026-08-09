@@ -14,11 +14,26 @@ DEFAULT_IOU    = 0.45
 AGGRESSIVE_IOU = 0.10
 
 
+class MalformedVisionResult(RuntimeError):
+    """A model produced structurally invalid evidence."""
+
+
 class VisionCluster:
 
-    def __init__(self, device: str = "cpu", verbose: bool = True):
+    def __init__(
+        self,
+        device: str = "cpu",
+        verbose: bool = True,
+        *,
+        worker_runner=None,
+        worker_timeout: float = 30.0,
+    ):
         self.device = device
         self.verbose = verbose
+        self.worker_runner = worker_runner
+        self.worker_timeout = float(worker_timeout)
+        if self.worker_timeout <= 0:
+            raise ValueError("worker_timeout must be positive")
         self.models = {}
         self.last_health = []
         self._load_all_models()
@@ -60,12 +75,24 @@ class VisionCluster:
                 f"Model class mismatch for {path}: actual={actual}, expected={expected}"
             )
 
+    def _predict(self, model, frame, **kwargs):
+        """Run a model call directly or through an injected terminating worker."""
+        if self.worker_runner is None:
+            return model.predict(frame, **kwargs)
+        return self.worker_runner(
+            model.predict,
+            frame,
+            timeout=self.worker_timeout,
+            **kwargs,
+        )
+
     def warmup(self):
         dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
         errors = []
         for path, model in self.models.items():
             try:
-                model.predict(
+                self._predict(
+                    model,
                     dummy,
                     device=self.device,
                     verbose=False,
@@ -107,7 +134,8 @@ class VisionCluster:
 
                 started = time.perf_counter()
                 try:
-                    preds = model.predict(
+                    preds = self._predict(
+                        model,
                         frame,
                         device=self.device,
                         conf=conf,
@@ -150,14 +178,11 @@ class VisionCluster:
                     )
                 detections.extend(parsed)
 
-            valid = [d for d in detections if self._is_valid(d)]
-            if len(valid) != len(detections):
-                print(
-                    f"[VISION WARN] {role}: dropped "
-                    f"{len(detections) - len(valid)} invalid detections"
-                )
-
-            results[role] = valid
+            # Invalid evidence is a technical fault.  It must never be
+            # silently removed and converted into an empty/GOOD result.
+            for detection in detections:
+                self._require_valid(detection, role)
+            results[role] = detections
 
         self.last_health = health
         return results
@@ -178,7 +203,9 @@ class VisionCluster:
             cls_ids = boxes.cls.cpu().numpy().astype(int)
 
             mask_polys = None
-            if masks is not None and masks.xy is not None:
+            if masks is not None:
+                if masks.xy is None or len(masks.xy) < len(xyxy):
+                    raise MalformedVisionResult("model returned incomplete segmentation masks")
                 mask_polys = masks.xy
 
             for i in range(len(xyxy)):
@@ -201,24 +228,50 @@ class VisionCluster:
         return out
 
     @staticmethod
-    def _is_valid(det: dict) -> bool:
-        """Проверка минимальной корректности детекции."""
+    def _require_valid(det: dict, role: str = "unknown") -> None:
+        """Raise on malformed model evidence; never repair or drop it."""
         if not isinstance(det, dict):
-            return False
-        if "class" not in det or "confidence" not in det:
-            return False
+            raise MalformedVisionResult(f"{role}: detection is not an object")
+        if not isinstance(det.get("class"), str) or not det.get("class"):
+            raise MalformedVisionResult(f"{role}: detection has no class")
         confidence = det.get("confidence")
-        if not isinstance(confidence, (int, float)) or not math.isfinite(confidence):
-            return False
-
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(float(confidence))
+        ):
+            raise MalformedVisionResult(f"{role}: non-finite confidence")
         bbox = det.get("bbox")
-        if bbox is not None:
-            if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-                return False
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            raise MalformedVisionResult(f"{role}: invalid bbox")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in bbox
+        ):
+            raise MalformedVisionResult(f"{role}: non-finite bbox coordinate")
+        mask = det.get("mask")
+        if mask is None:
+            return
+        if not isinstance(mask, (list, tuple)) or len(mask) < 3:
+            raise MalformedVisionResult(f"{role}: invalid mask")
+        for point in mask:
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                raise MalformedVisionResult(f"{role}: invalid mask coordinate")
             if any(
-                not isinstance(v, (int, float)) or not math.isfinite(v)
-                for v in bbox
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in point
             ):
-                return False
+                raise MalformedVisionResult(f"{role}: non-finite mask coordinate")
 
+    @staticmethod
+    def _is_valid(det: dict) -> bool:
+        """Compatibility predicate; production calls _require_valid."""
+        try:
+            VisionCluster._require_valid(det)
+        except MalformedVisionResult:
+            return False
         return True

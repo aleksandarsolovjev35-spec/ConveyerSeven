@@ -89,7 +89,7 @@ def build_demo_frame_analysis():
                 "run_cards": [[{
                     "role": "INPUT_LEFT", "ok": True, "verdict": "корпус виден",
                     "metrics": [
-                        metric("flatness", "12", "30", True, "false_positive_max_count"),
+                        metric("flatness", "12", "30", True, "presence_min_count"),
                         metric("Зачтено, шт", "12", None, None, "effective_flatness"),
                     ],
                 }]],
