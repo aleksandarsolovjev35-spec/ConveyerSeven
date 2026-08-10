@@ -1,7 +1,8 @@
-"""Настройки хранения и сжатия архива партий.
+"""Настройки хранения архива партий.
 
-Архив не является частью калибровки: калибровка описывает механику и камеры,
-а этот файл — операторское место хранения и политику сохранения доказательств.
+Упрощённая версия: папка хранения, качество JPEG и флаг «сжимать партию
+при выходе». Метод/уровень ZIP убраны — используется один совместимый
+deflated.
 """
 
 from __future__ import annotations
@@ -12,16 +13,11 @@ from pathlib import Path
 
 
 ARCHIVE_CONFIG_FILE = "archive_config.json"
-COMPRESSION_METHODS = ("deflated", "stored", "lzma")
 
 DEFAULTS = {
     "enabled": True,
     "root_path": "archive",
-    # 92 сохраняет текущую политику качества. Для экономии места оператор
-    # может выбрать 88–90, не меняя структуру и состав доказательств.
     "jpeg_quality": 92,
-    "zip_compression": "deflated",
-    "zip_level": 6,
     "compress_on_shutdown": True,
     "delete_original_after_zip": True,
 }
@@ -35,7 +31,6 @@ def _normalise_root(value) -> str:
 
 
 def normalise_archive_config(data: dict | None) -> dict:
-    """Вернуть проверенную конфигурацию, добавив значения новых полей."""
     source = data if isinstance(data, dict) else {}
     result = dict(DEFAULTS)
     result["enabled"] = bool(source.get("enabled", result["enabled"]))
@@ -48,19 +43,6 @@ def normalise_archive_config(data: dict | None) -> dict:
     except (TypeError, ValueError):
         quality = result["jpeg_quality"]
     result["jpeg_quality"] = max(70, min(98, quality))
-
-    method = str(
-        source.get("zip_compression", result["zip_compression"])
-    ).lower()
-    result["zip_compression"] = (
-        method if method in COMPRESSION_METHODS else DEFAULTS["zip_compression"]
-    )
-
-    try:
-        level = int(source.get("zip_level", result["zip_level"]))
-    except (TypeError, ValueError):
-        level = result["zip_level"]
-    result["zip_level"] = max(0, min(9, level))
 
     result["compress_on_shutdown"] = bool(
         source.get("compress_on_shutdown", result["compress_on_shutdown"])
@@ -75,7 +57,6 @@ def normalise_archive_config(data: dict | None) -> dict:
 
 
 def load_archive_config(path: str = ARCHIVE_CONFIG_FILE) -> dict:
-    """Загрузить настройки; при отсутствии/повреждении вернуть безопасные defaults."""
     try:
         with open(path, encoding="utf-8") as stream:
             data = json.load(stream)
@@ -100,7 +81,6 @@ def load_archive_config(path: str = ARCHIVE_CONFIG_FILE) -> dict:
 
 
 def save_archive_config(path: str, data: dict) -> dict:
-    """Атомарно сохранить настройки и вернуть нормализованный вариант."""
     result = normalise_archive_config(data)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)

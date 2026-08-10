@@ -288,21 +288,6 @@
                         <span class="archive-settings-hint">70–98 · ниже = меньше размер</span>
                     </div>
                 </div>
-                <div class="archive-settings-row">
-                    <label for="archive-zip-compression">МЕТОД ZIP</label>
-                    <select id="archive-zip-compression">
-                        <option value="deflated">DEFLATED · баланс</option>
-                        <option value="stored">STORED · быстрее для JPEG</option>
-                        <option value="lzma">LZMA · медленнее</option>
-                    </select>
-                </div>
-                <div class="archive-settings-row">
-                    <label for="archive-zip-level">УРОВЕНЬ ZIP</label>
-                    <div class="archive-settings-inline">
-                        <input id="archive-zip-level" type="number" min="0" max="9" step="1">
-                        <span class="archive-settings-hint">0–9 · влияет в основном на JSON</span>
-                    </div>
-                </div>
                 <label class="archive-settings-check"><input id="archive-enabled" type="checkbox"> <span>СОХРАНЯТЬ АРХИВ</span></label>
                 <label class="archive-settings-check"><input id="archive-compress-on-shutdown" type="checkbox"> <span>СЖИМАТЬ ПАРТИЮ ПРИ ВЫХОДЕ</span></label>
                 <label class="archive-settings-check"><input id="archive-delete-original" type="checkbox"> <span>УДАЛЯТЬ РАСПАКОВАННУЮ ПАПКУ ПОСЛЕ ZIP</span></label>

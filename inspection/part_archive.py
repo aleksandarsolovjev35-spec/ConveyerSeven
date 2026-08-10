@@ -1,26 +1,21 @@
-"""
-Архивация результатов инспекции каждой детали.
+"""Архивация результатов инспекции каждой детали.
 
-Для каждой детали создаётся папка с:
-  - сырыми кадрами со всех камер
-  - кадрами с сырыми детекциями нейросети (raw overlay)
-  - аннотированными кадрами (правила)
-  - meta.json с метаданными
+Упрощённая версия: для каждой детали в папке партии сохраняются только
+исходные кадры, кадры с разметкой правил и ``meta.json``. ZIP-опций на
+выбор метода и dataset-разметки (``samples.jsonl``, detection JSON) нет.
 
-Структура (во время работы):
-  <root>/<date>/<batch>/
-    batch.json
-    GOOD/part_<id>/
-    BAD/part_<id>/
-    CLEANUP/part_<id>/
-      meta.json
-      <ROLE>.jpg
-      <ROLE>_raw.jpg
-      <ROLE>_debug.jpg
+Структура::
 
-После завершения работы compress() упаковывает папку партии в:
-  <root>/<date>/<batch>.zip
-и при включённой политике удаляет распакованную папку.
+    <root>/<date>/<batch>/
+      batch.json
+      stats.json            (на уровень выше, в <root>)
+      GOOD/part_0001/
+      BAD/part_0002/
+      CLEANUP/part_0003/
+        meta.json
+        <ROLE>.jpg          — исходный кадр
+        <ROLE>_raw.jpg      — сырые детекции нейросети (если есть)
+        <ROLE>_debug.jpg    — разметка правил (если есть)
 """
 
 import contextlib
@@ -35,11 +30,7 @@ import cv2
 
 
 class PartArchive:
-    """
-    Архиватор деталей.
-    Накапливает кадры по стадиям, при финализации сохраняет всё на диск.
-    При завершении работы сжимает папку партии в zip.
-    """
+    """Архиватор деталей: копит кадры по стадиям и пишет их на диск."""
 
     JPEG_QUALITY = 92
     SCHEMA_VERSION = 2
@@ -53,9 +44,6 @@ class PartArchive:
         "BAD": "БРАК",
         "CLEANUP": "ОЧИСТКА",
     }
-
-    # Накопительная статистика по корпусам (годные / брак / очистка):
-    # ведётся между запусками в <root>/stats.json.
     STATS_FILE = "stats.json"
 
     def __init__(
@@ -64,6 +52,7 @@ class PartArchive:
         batch_id: str | None = None,
         enabled: bool = True,
         jpeg_quality: int = JPEG_QUALITY,
+        # Совместимость со старым вызовом: эти параметры больше не влияют.
         zip_compression: str = "deflated",
         zip_level: int = 6,
         compress_on_shutdown: bool = True,
@@ -74,39 +63,23 @@ class PartArchive:
         )
         self.enabled = bool(enabled)
         self.jpeg_quality = max(70, min(98, int(jpeg_quality)))
-        self.zip_compression = str(zip_compression).lower()
-        if self.zip_compression not in ("deflated", "stored", "lzma"):
-            self.zip_compression = "deflated"
-        self.zip_level = max(0, min(9, int(zip_level)))
+        # Простая опция: сжимать партию в один ZIP при завершении.
         self.compress_on_shutdown = bool(compress_on_shutdown)
         self.delete_original_after_zip = bool(delete_original_after_zip)
 
         if batch_id is None:
             batch_id = datetime.now().strftime("batch_%Y%m%d_%H%M%S")
         self.batch_id = self._safe_name(batch_id)
-
         self.date_folder = datetime.now().strftime("%Y-%m-%d")
         self.batch_started_at = datetime.now().isoformat(timespec="seconds")
 
-        # Буфер хранит уже JPEG-encoded bytes, а не тяжёлые numpy frames.
+        # Буфер хранит уже JPEG-encoded bytes по ролям.
         self._buffers: dict[int, dict] = {}
-
-        # Список архивированных деталей (для UI). Он живёт в памяти текущего
-        # запуска; batch.json является постоянным индексом партии.
         self._archived: list[dict] = []
         self._batch_parts: list[dict] = []
         self._batch_stats = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
-        # Сырые выходы моделей хранятся отдельно от debug-кадров: их можно
-        # просматривать и превращать в датасет, не обучаясь на красных
-        # обводках и прочей визуальной разметке.
-        self._vision_buffers: dict[int, dict[str, list]] = {}
-        self._frame_stage_buffers: dict[int, dict[str, str]] = {}
-
-        # Счётчик сохранённых деталей
         self._finalized_count = 0
 
-        # Статистика по корпусам: восстанавливается из stats.json,
-        # обновляется при каждой финализации.
         self.stats: dict = self._load_stats()
 
         self.startup_error = None
@@ -114,9 +87,9 @@ class PartArchive:
             try:
                 os.makedirs(self.root_folder, exist_ok=True)
             except OSError as exc:
-                # Не роняем splash: оператор должен иметь возможность
-                # выбрать другой диск в настройках архива.
                 self.startup_error = str(exc)
+
+    # ---------- свойства ----------
 
     @property
     def batch_folder(self) -> str:
@@ -124,17 +97,11 @@ class PartArchive:
 
     @classmethod
     def normalise_category(cls, category: str) -> str:
-        """Свести маршрут к одному из трёх архивных разделов.
-
-        Неизвестный/аварийный маршрут попадает в BAD, но исходное значение
-        сохраняется в meta.json как requested_category.
-        """
         value = str(category or "").upper()
         return value if value in cls.CATEGORY_DIRS else "BAD"
 
     @classmethod
     def validate_root(cls, root_folder: str) -> dict:
-        """Проверить, что каталог можно создать и в него можно писать."""
         candidate = os.path.abspath(
             os.path.expandvars(os.path.expanduser(str(root_folder or "")))
         )
@@ -162,22 +129,12 @@ class PartArchive:
         }
 
     def can_reconfigure(self) -> bool:
-        """Путь можно менять до появления данных текущей партии."""
         return not self._buffers and not self._archived and not os.path.exists(
             self.batch_folder
         )
 
-    def reconfigure(
-        self,
-        *,
-        root_folder: str,
-        enabled: bool,
-        jpeg_quality: int,
-        zip_compression: str,
-        zip_level: int,
-        compress_on_shutdown: bool,
-        delete_original_after_zip: bool,
-    ) -> dict:
+    def reconfigure(self, *, root_folder, enabled, jpeg_quality, **_ignored) -> dict:
+        """Изменить настройки до начала партии (лишние kwargs игнорируются)."""
         if not self.can_reconfigure():
             raise RuntimeError(
                 "Настройки архива можно менять только до начала партии"
@@ -187,12 +144,6 @@ class PartArchive:
         self.startup_error = None
         self.enabled = bool(enabled)
         self.jpeg_quality = max(70, min(98, int(jpeg_quality)))
-        self.zip_compression = str(zip_compression).lower()
-        if self.zip_compression not in ("deflated", "stored", "lzma"):
-            raise ValueError("Недопустимый метод сжатия архива")
-        self.zip_level = max(0, min(9, int(zip_level)))
-        self.compress_on_shutdown = bool(compress_on_shutdown)
-        self.delete_original_after_zip = bool(delete_original_after_zip)
         self.stats = self._load_stats()
         if self.enabled:
             os.makedirs(self.root_folder, exist_ok=True)
@@ -204,13 +155,15 @@ class PartArchive:
             try:
                 validation = self.validate_root(self.root_folder)
             except ValueError as exc:
-                validation = {"path": self.root_folder, "writable": False, "error": str(exc)}
+                validation = {
+                    "path": self.root_folder,
+                    "writable": False,
+                    "error": str(exc),
+                }
         return {
             "enabled": self.enabled,
             "root_path": self.root_folder,
             "jpeg_quality": self.jpeg_quality,
-            "zip_compression": self.zip_compression,
-            "zip_level": self.zip_level,
             "compress_on_shutdown": self.compress_on_shutdown,
             "delete_original_after_zip": self.delete_original_after_zip,
             "batch_id": self.batch_id,
@@ -220,7 +173,7 @@ class PartArchive:
             "validation": validation,
         }
 
-    # Public API
+    # ---------- public API ----------
 
     def store_frames(
         self,
@@ -229,94 +182,24 @@ class PartArchive:
         raw_frames: dict,
         annotated_frames: dict,
         raw_overlay_frames: dict | None = None,
-        run_frames: list | None = None,
-        run_rule_results: list | None = None,
-        run_vision_results: list | None = None,
+        run_frames=None,
+        run_rule_results=None,
+        run_vision_results=None,
     ):
-        """
-        Сохранить кадры одной стадии инспекции в буфер.
-
-        Args:
-            part_id: номер детали.
-            stage: "input" или "spider".
-            raw_frames: {role: frame} — чистые кадры.
-            annotated_frames: {role: frame} — обрисовка правил.
-            raw_overlay_frames: {role: frame} — сырые детекции нейросети.
-            run_frames: список словарей кадров прогонов (один элемент).
-            run_rule_results: список списков результатов правил по прогонам.
-            run_vision_results: список словарей детекций по прогонам.
-        """
+        """Сохранить кадры стадии в буфер (JPEG-bytes)."""
         if not self.enabled:
             return
 
-        if part_id not in self._buffers:
-            self._buffers[part_id] = {}
+        buf = self._buffers.setdefault(part_id, {})
 
-        buf = self._buffers[part_id]
-        stage_key = str(stage or "unknown").lower()
-        stage_map = self._frame_stage_buffers.setdefault(part_id, {})
+        for role, frame in (raw_frames or {}).items():
+            buf.setdefault(role, {})["raw"] = self._encode_image(frame)
 
-        if run_vision_results:
-            self._vision_buffers.setdefault(part_id, {})[stage_key] = [
-                self._json_safe(run_result)
-                for run_result in run_vision_results
-            ]
+        for role, frame in (annotated_frames or {}).items():
+            buf.setdefault(role, {})["debug"] = self._encode_image(frame)
 
-        for role, frame in raw_frames.items():
-            stage_map[role] = stage_key
-            if role not in buf:
-                buf[role] = {}
-            buf[role]["raw"] = self._encode_image(frame)
-
-        for role, frame in annotated_frames.items():
-            stage_map[role] = stage_key
-            if role not in buf:
-                buf[role] = {}
-            buf[role]["debug"] = self._encode_image(frame)
-
-        if raw_overlay_frames:
-            for role, frame in raw_overlay_frames.items():
-                stage_map[role] = stage_key
-                if role not in buf:
-                    buf[role] = {}
-                buf[role]["raw_overlay"] = self._encode_image(frame)
-
-        # Сохранение набора прогонов для каждого ракурса
-        if run_frames:
-            for idx, r_frames in enumerate(run_frames):
-                run_num = idx + 1
-                r_rules = run_rule_results[idx] if (run_rule_results and idx < len(run_rule_results)) else []
-                r_vision = run_vision_results[idx] if (run_vision_results and idx < len(run_vision_results)) else {}
-
-                for role, frame in r_frames.items():
-                    stage_map[role] = stage_key
-                    if role not in buf:
-                        buf[role] = {}
-
-                    # 1. Сырой кадр прогона
-                    buf[role][f"raw_run{run_num}"] = self._encode_image(frame)
-
-                    # 2. Обрисовка правил прогона
-                    try:
-                        from vision.overlay.debug_overlay import DebugOverlay
-                        debug_frame = DebugOverlay.render_frame(frame, role, r_rules)
-                    except Exception as e:
-                        print(f"[ARCHIVE] Error rendering debug frame for {role} run {run_num}: {e}")
-                        debug_frame = frame
-                    buf[role][f"debug_run{run_num}"] = self._encode_image(debug_frame)
-
-                    # 3. Сырые детекции прогона
-                    r_dets = r_vision.get(role, []) if isinstance(r_vision, dict) else []
-                    try:
-                        from vision.overlay.raw_overlay import RawOverlay
-                        if r_dets:
-                            raw_overlay_frame = RawOverlay.render(frame, r_dets)
-                        else:
-                            raw_overlay_frame = frame.copy()
-                    except Exception as e:
-                        print(f"[ARCHIVE] Error rendering raw overlay for {role} run {run_num}: {e}")
-                        raw_overlay_frame = frame
-                    buf[role][f"raw_overlay_run{run_num}"] = self._encode_image(raw_overlay_frame)
+        for role, frame in (raw_overlay_frames or {}).items():
+            buf.setdefault(role, {})["raw_overlay"] = self._encode_image(frame)
 
     def finalize(
         self,
@@ -327,90 +210,31 @@ class PartArchive:
         step: int,
         extra: dict | None = None,
     ) -> str | None:
-        """
-        Финализировать деталь: записать все кадры и метаданные на диск.
-
-        Returns:
-            Путь к папке детали или None если архивация отключена.
-        """
+        """Записать все кадры детали и meta.json на диск."""
         if not self.enabled:
             return None
 
         requested_category = str(category or "").upper()
         stored_category = self.normalise_category(requested_category)
-        category_folder = self.CATEGORY_DIRS[stored_category]
         folder_name = f"part_{part_id:04d}"
-
         folder_path = os.path.join(
-            self.batch_folder,
-            category_folder,
-            folder_name,
+            self.batch_folder, self.CATEGORY_DIRS[stored_category], folder_name,
         )
         os.makedirs(folder_path, exist_ok=True)
 
         roles_saved = []
-        annotation_files = []
-        # Keep the buffer until every image, model annotation and meta.json
-        # are written. A disk/JPEG failure must not silently lose the part data.
         buf = self._buffers.get(part_id, {})
-
         for role, frames in buf.items():
-            raw = frames.get("raw")
-            raw_overlay = frames.get("raw_overlay")
-            debug = frames.get("debug")
-
-            if raw is not None:
-                self._save_image(
-                    raw,
-                    os.path.join(folder_path, f"{role}.jpg"),
-                )
-
-            if raw_overlay is not None:
-                self._save_image(
-                    raw_overlay,
-                    os.path.join(folder_path, f"{role}_raw.jpg"),
-                )
-
-            if debug is not None:
-                self._save_image(
-                    debug,
-                    os.path.join(folder_path, f"{role}_debug.jpg"),
-                )
-
-            # Сохранение отдельных прогонов на диск
-            for r in (1, 2, 3):
-                r_raw = frames.get(f"raw_run{r}")
-                if r_raw is not None:
-                    self._save_image(
-                        r_raw,
-                        os.path.join(folder_path, f"{role}_run{r}.jpg"),
-                    )
-
-                r_raw_overlay = frames.get(f"raw_overlay_run{r}")
-                if r_raw_overlay is not None:
-                    self._save_image(
-                        r_raw_overlay,
-                        os.path.join(folder_path, f"{role}_run{r}_raw.jpg"),
-                    )
-
-                r_debug = frames.get(f"debug_run{r}")
-                if r_debug is not None:
-                    self._save_image(
-                        r_debug,
-                        os.path.join(folder_path, f"{role}_run{r}_debug.jpg"),
-                    )
-
+            for kind, filename in (
+                ("raw", f"{role}.jpg"),
+                ("raw_overlay", f"{role}_raw.jpg"),
+                ("debug", f"{role}_debug.jpg"),
+            ):
+                content = frames.get(kind)
+                if content is not None:
+                    self._save_image(content, os.path.join(folder_path, filename))
             roles_saved.append(role)
 
-        annotation_files = self._save_vision_annotations(part_id, folder_path)
-        sample_records = self._build_training_samples(
-            part_id=part_id,
-            folder_path=folder_path,
-            category=stored_category,
-            decision=decision,
-            annotation_files=annotation_files,
-        )
-        self._append_training_samples(sample_records)
         now = datetime.now()
         meta = {
             "schema_version": self.SCHEMA_VERSION,
@@ -427,68 +251,33 @@ class PartArchive:
             "defects": defects,
             "roles": roles_saved,
             "folder": folder_path.replace("\\", "/"),
-            "training": {
-                "raw_images": (
-                    [
-                        f"{role}.jpg"
-                        for role in roles_saved
-                        if os.path.exists(os.path.join(folder_path, f"{role}.jpg"))
-                    ]
-                    + [
-                        f"{role}_run{run}.jpg"
-                        for role in roles_saved
-                        for run in (1, 2, 3)
-                        if os.path.exists(
-                            os.path.join(folder_path, f"{role}_run{run}.jpg")
-                        )
-                    ]
-                ),
-                "pseudo_annotation_files": annotation_files,
-                "annotations_are_model_predictions": True,
-                "sample_count": len(sample_records),
-                "samples_index": "samples.jsonl",
-            },
         }
-
         if extra:
             meta.update(extra)
 
         meta_path = os.path.join(folder_path, "meta.json")
-        temp_meta_path = meta_path + ".tmp"
-        with open(temp_meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_meta_path, meta_path)
+        self._write_json(meta_path, meta)
 
         self._buffers.pop(part_id, None)
-        self._vision_buffers.pop(part_id, None)
-        self._frame_stage_buffers.pop(part_id, None)
         relative_folder = os.path.relpath(
             folder_path, self.batch_folder,
         ).replace("\\", "/")
-        archived_item = {
+        item = {
             "part_id": part_id,
             "category": stored_category,
             "decision": decision,
             "folder": folder_path.replace("\\", "/"),
             "relative_folder": relative_folder,
             "roles": roles_saved,
-            "annotation_files": annotation_files,
-            "sample_count": len(sample_records),
             "time": now.strftime("%H:%M:%S"),
         }
-        self._archived.append(archived_item)
-        self._batch_parts.append(dict(archived_item))
-
+        self._archived.append(item)
+        self._batch_parts.append(dict(item))
         self._finalized_count += 1
 
-        # Статистика по корпусам: годные / брак / очистка.
         self.stats["total"] = int(self.stats.get("total") or 0) + 1
         category_key = {
-            "GOOD": "good",
-            "BAD": "bad",
-            "CLEANUP": "cleanup",
+            "GOOD": "good", "BAD": "bad", "CLEANUP": "cleanup",
         }[stored_category]
         self.stats[category_key] = int(self.stats.get(category_key) or 0) + 1
         self._batch_stats["total"] += 1
@@ -500,287 +289,43 @@ class PartArchive:
             f"[ARCHIVE] Деталь #{part_id} -> {folder_path} "
             f"({len(roles_saved)} ролей)"
         )
-
         return folder_path
 
     def get_part_info(self, part_id: int) -> dict | None:
-        """Получить информацию об архивированной детали."""
         for item in self._archived:
             if item["part_id"] == part_id:
                 return item
         return None
 
     def get_part_images(self, part_id: int) -> dict:
-        """
-        Получить пути к изображениям детали.
-
-        Returns:
-            {role: {"raw": path, "raw_overlay": path, "debug": path, "raw_run1": path, ...}, ...}
-        """
         info = self.get_part_info(part_id)
         if not info:
             return {}
-
         folder = info["folder"]
         result = {}
-
         for role in info.get("roles", []):
             entry = {}
-
-            raw_path = os.path.join(folder, f"{role}.jpg")
-            if os.path.exists(raw_path):
-                entry["raw"] = raw_path
-
-            raw_overlay_path = os.path.join(folder, f"{role}_raw.jpg")
-            if os.path.exists(raw_overlay_path):
-                entry["raw_overlay"] = raw_overlay_path
-
-            debug_path = os.path.join(folder, f"{role}_debug.jpg")
-            if os.path.exists(debug_path):
-                entry["debug"] = debug_path
-
-            # Пути к изображениям по прогонам (1, 2, 3)
-            for r in (1, 2, 3):
-                r_raw_path = os.path.join(folder, f"{role}_run{r}.jpg")
-                if os.path.exists(r_raw_path):
-                    entry[f"raw_run{r}"] = r_raw_path
-
-                r_raw_overlay_path = os.path.join(folder, f"{role}_run{r}_raw.jpg")
-                if os.path.exists(r_raw_overlay_path):
-                    entry[f"raw_overlay_run{r}"] = r_raw_overlay_path
-
-                r_debug_path = os.path.join(folder, f"{role}_run{r}_debug.jpg")
-                if os.path.exists(r_debug_path):
-                    entry[f"debug_run{r}"] = r_debug_path
-
+            for kind, filename in (
+                ("raw", f"{role}.jpg"),
+                ("raw_overlay", f"{role}_raw.jpg"),
+                ("debug", f"{role}_debug.jpg"),
+            ):
+                path = os.path.join(folder, filename)
+                if os.path.exists(path):
+                    entry[kind] = path
             if entry:
                 result[role] = entry
-
         return result
-
-    def _save_vision_annotations(self, part_id: int, folder_path: str) -> list[str]:
-        """Сохранить сырые выходы моделей рядом с кадрами для датасета.
-
-        Это именно pseudo-labels: модельные детекции не считаются
-        подтверждённой разметкой и должны быть проверены человеком перед
-        дообучением. JSON оставляет маски, bbox, confidence и model_path,
-        поэтому позже его можно конвертировать в YOLO/COCO без повторного
-        запуска камер.
-        """
-        records = self._vision_buffers.get(part_id, {})
-        saved = []
-        for stage, runs in records.items():
-            for run_index, run_results in enumerate(runs, start=1):
-                if not isinstance(run_results, dict):
-                    continue
-                for role, detections in run_results.items():
-                    safe_role = self._safe_name(role)
-                    filename = (
-                        f"{stage}_{safe_role}_run{run_index}_detections.json"
-                    )
-                    path = os.path.join(folder_path, filename)
-                    payload = {
-                        "schema_version": 1,
-                        "kind": "model_predictions",
-                        "part_id": part_id,
-                        "batch_id": self.batch_id,
-                        "stage": stage,
-                        "role": role,
-                        "run": run_index,
-                        "image": f"{role}_run{run_index}.jpg",
-                        "pseudo_labels": True,
-                        "detections": self._json_safe(detections or []),
-                    }
-                    temp_path = path + ".tmp"
-                    with open(temp_path, "w", encoding="utf-8") as stream:
-                        json.dump(payload, stream, indent=2, ensure_ascii=False)
-                        stream.write("\n")
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.replace(temp_path, path)
-                    saved.append(filename)
-        return saved
-
-    @staticmethod
-    def _json_safe(value):
-        """Преобразовать numpy/tuple-значения в стабильный JSON."""
-        if value is None or isinstance(value, (str, int, bool)):
-            return value
-        if isinstance(value, float):
-            return value if value == value and abs(value) != float("inf") else None
-        if isinstance(value, dict):
-            return {str(key): PartArchive._json_safe(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [PartArchive._json_safe(item) for item in value]
-        tolist = getattr(value, "tolist", None)
-        if callable(tolist):
-            return PartArchive._json_safe(tolist())
-        item = getattr(value, "item", None)
-        if callable(item):
-            try:
-                return PartArchive._json_safe(item())
-            except Exception:
-                pass
-        return str(value)
-
-    def _build_training_samples(
-        self,
-        *,
-        part_id: int,
-        folder_path: str,
-        category: str,
-        decision: str,
-        annotation_files: list[str],
-    ) -> list[dict]:
-        """Построить лёгкие ссылки на raw-кадры и их pseudo-labels."""
-        records = self._vision_buffers.get(part_id, {})
-        stage_map = self._frame_stage_buffers.get(part_id, {})
-        annotation_set = set(annotation_files)
-        samples = []
-        used_images = set()
-        used_roles = set()
-        part_folder = os.path.relpath(
-            folder_path, self.batch_folder,
-        ).replace("\\", "/")
-
-        for stage, runs in records.items():
-            for run_index, run_results in enumerate(runs, start=1):
-                if not isinstance(run_results, dict):
-                    continue
-                for role in run_results:
-                    safe_role = self._safe_name(role)
-                    annotation_name = (
-                        f"{stage}_{safe_role}_run{run_index}_detections.json"
-                    )
-                    image_name = f"{role}_run{run_index}.jpg"
-                    if not os.path.exists(os.path.join(folder_path, image_name)):
-                        image_name = f"{role}.jpg"
-                    image_path = os.path.join(folder_path, image_name)
-                    if not os.path.exists(image_path):
-                        continue
-                    if image_name in used_images:
-                        continue
-                    used_images.add(image_name)
-                    used_roles.add(role)
-                    samples.append({
-                        "schema_version": 1,
-                        "sample_id": f"{part_id}:{stage}:{role}:{run_index}",
-                        "part_id": part_id,
-                        "batch_id": self.batch_id,
-                        "category": category,
-                        "decision": decision,
-                        "stage": stage,
-                        "role": role,
-                        "run": run_index,
-                        "image": f"{part_folder}/{image_name}",
-                        "annotation": (
-                            f"{part_folder}/{annotation_name}"
-                            if annotation_name in annotation_set else None
-                        ),
-                        "labels": (
-                            "pseudo" if annotation_name in annotation_set
-                            else "unannotated"
-                        ),
-                        "verified": False,
-                    })
-
-        # Если для роли нет model_predictions, raw evidence всё равно остаётся
-        # полноценным кандидатом для ручной разметки.
-        for role in self._buffers.get(part_id, {}):
-            if role in used_roles:
-                continue
-            image_name = f"{role}.jpg"
-            image_path = os.path.join(folder_path, image_name)
-            if not os.path.exists(image_path) or image_name in used_images:
-                continue
-            used_images.add(image_name)
-            stage = stage_map.get(role, "unknown")
-            samples.append({
-                "schema_version": 1,
-                "sample_id": f"{part_id}:{stage}:{role}:evidence",
-                "part_id": part_id,
-                "batch_id": self.batch_id,
-                "category": category,
-                "decision": decision,
-                "stage": stage,
-                "role": role,
-                "run": None,
-                "image": f"{part_folder}/{image_name}",
-                "annotation": None,
-                "labels": "unannotated",
-                "verified": False,
-            })
-        return samples
-
-    def _append_training_samples(self, samples: list[dict]):
-        if not self.enabled or not samples:
-            return
-        path = os.path.join(self.batch_folder, "samples.jsonl")
-        with open(path, "a", encoding="utf-8") as stream:
-            for sample in samples:
-                json.dump(sample, stream, ensure_ascii=False, separators=(",", ":"))
-                stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-
-    def _save_batch_manifest(self, status: str = "OPEN"):
-        """Атомарно обновить постоянный индекс текущей партии."""
-        if not self.enabled:
-            return
-        os.makedirs(self.batch_folder, exist_ok=True)
-        manifest = {
-            "schema_version": self.SCHEMA_VERSION,
-            "batch_id": self.batch_id,
-            "date": self.date_folder,
-            "started_at": self.batch_started_at,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-            "status": status,
-            "root_path": self.root_folder,
-            "counts": dict(self._batch_stats),
-            "samples_index": "samples.jsonl",
-            "parts": [
-                {
-                    "part_id": item["part_id"],
-                    "category": item["category"],
-                    "decision": item["decision"],
-                    "folder": item["relative_folder"],
-                    "time": item["time"],
-                    "annotation_files": item.get("annotation_files", []),
-                    "sample_count": item.get("sample_count", 0),
-                }
-                for item in self._batch_parts
-            ],
-            "training": {
-                "raw_images_are_training_inputs": True,
-                "annotations": "pseudo-labels from the production models; review before training",
-                "image_quality": self.jpeg_quality,
-            },
-            "compression": {
-                "jpeg_quality": self.jpeg_quality,
-                "zip_compression": self.zip_compression,
-                "zip_level": self.zip_level,
-            },
-        }
-        path = os.path.join(self.batch_folder, "batch.json")
-        temp_path = path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as stream:
-            json.dump(manifest, stream, indent=2, ensure_ascii=False)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, path)
 
     def get_batch_stats(self) -> dict:
         return dict(self._batch_stats)
 
-    # Statistics
-
     def get_stats(self) -> dict:
-        """Накопительная статистика по корпусам: total/good/bad/cleanup."""
         return dict(self.stats)
 
+    # ---------- статистика и манифест ----------
+
     def _load_stats(self) -> dict:
-        """Восстановить статистику корпусов из stats.json (если есть)."""
         stats = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
         if not self.enabled:
             return stats
@@ -799,167 +344,84 @@ class PartArchive:
         return stats
 
     def _save_stats(self):
-        """Атомарно сохранить статистику корпусов в stats.json."""
         if not self.enabled:
             return
-        path = os.path.join(self.root_folder, self.STATS_FILE)
-        temp_path = path + ".tmp"
-        try:
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(self.stats, f, indent=2, ensure_ascii=False)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, path)
-        except OSError as exc:
-            print(f"[ARCHIVE] Не удалось сохранить статистику: {exc}")
+        self._write_json(
+            os.path.join(self.root_folder, self.STATS_FILE), self.stats,
+        )
 
-    # Compression
+    def _save_batch_manifest(self, status: str = "OPEN"):
+        if not self.enabled:
+            return
+        os.makedirs(self.batch_folder, exist_ok=True)
+        manifest = {
+            "schema_version": self.SCHEMA_VERSION,
+            "batch_id": self.batch_id,
+            "date": self.date_folder,
+            "started_at": self.batch_started_at,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "status": status,
+            "root_path": self.root_folder,
+            "counts": dict(self._batch_stats),
+            "parts": [
+                {
+                    "part_id": item["part_id"],
+                    "category": item["category"],
+                    "decision": item["decision"],
+                    "folder": item["relative_folder"],
+                    "time": item["time"],
+                }
+                for item in self._batch_parts
+            ],
+        }
+        self._write_json(os.path.join(self.batch_folder, "batch.json"), manifest)
+
+    # ---------- сжатие ----------
 
     def compress(self, delete_original: bool | None = None) -> str | None:
-        """
-        Сжать папку текущей партии в ZIP-архив.
-
-        JPEG уже сжат внутри себя, поэтому смена ZIP-метода почти не
-        уменьшает изображения. Существенная экономия задаётся jpeg_quality;
-        метод ZIP влияет в основном на JSON и скорость упаковки.
-        """
+        """Упаковать папку партии в один ZIP (deflated)."""
         if not self.enabled:
             return None
         if delete_original is None:
             delete_original = self.delete_original_after_zip
 
         batch_folder = self.batch_folder
-
-        if not os.path.exists(batch_folder):
-            print("[ARCHIVE] Нечего сжимать — папка не существует")
+        if not os.path.isdir(batch_folder):
             return None
-
-        # Проверить что папка не пустая, гарантированно закрыв iterator.
         with os.scandir(batch_folder) as entries:
-            is_empty = not any(entries)
-        if is_empty:
-            print("[ARCHIVE] Нечего сжимать — папка пустая")
-            return None
+            if not any(entries):
+                return None
 
-        # Сначала фиксируем финальную статистику, чтобы batch.json попал
-        # внутрь ZIP уже с корректными счётчиками.
         self._save_batch_manifest(status="CLOSED")
-
         zip_path = batch_folder + ".zip"
-        temp_zip_path = zip_path + ".tmp"
-
-        print(
-            f"[ARCHIVE] Сжатие {batch_folder} -> {zip_path} "
-            f"({self._finalized_count} деталей)..."
-        )
-
-        start_time = time.time()
-
+        temp_zip = zip_path + ".tmp"
         try:
-            if os.path.exists(temp_zip_path):
-                os.remove(temp_zip_path)
-            self._create_zip(
-                batch_folder,
-                temp_zip_path,
-                compression=self.zip_compression,
-                level=self.zip_level,
-            )
-            with zipfile.ZipFile(temp_zip_path, "r") as archive:
-                bad_member = archive.testzip()
-                if bad_member is not None:
-                    raise RuntimeError(
-                        f"ZIP CRC verification failed: {bad_member}"
-                    )
-            os.replace(temp_zip_path, zip_path)
-        except Exception as e:
-            print(f"[ARCHIVE] Ошибка сжатия: {e}")
-            if os.path.exists(temp_zip_path):
-                try:
-                    os.remove(temp_zip_path)
-                except OSError as remove_error:
-                    print(
-                        "[ARCHIVE] Не удалён временный zip "
-                        f"{temp_zip_path}: {remove_error}"
-                    )
+            with zipfile.ZipFile(
+                temp_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=6,
+            ) as zf:
+                for root, _dirs, files in os.walk(batch_folder):
+                    for filename in files:
+                        file_path = os.path.join(root, filename)
+                        arcname = os.path.relpath(file_path, batch_folder)
+                        zf.write(file_path, arcname)
+            with zipfile.ZipFile(temp_zip, "r") as archive:
+                bad = archive.testzip()
+                if bad is not None:
+                    raise RuntimeError(f"ZIP CRC failed: {bad}")
+            os.replace(temp_zip, zip_path)
+        except Exception as exc:
+            print(f"[ARCHIVE] Ошибка сжатия: {exc}")
+            if os.path.exists(temp_zip):
+                with contextlib.suppress(OSError):
+                    os.remove(temp_zip)
             return None
-
-        elapsed = time.time() - start_time
-        zip_size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-
-        # Размер оригинала
-        original_size_mb = self._dir_size_mb(batch_folder)
-
-        print(
-            f"[ARCHIVE] Сжатие завершено за {elapsed:.1f}с: "
-            f"{original_size_mb:.1f} MB -> {zip_size_mb:.1f} MB "
-            f"({self._compression_ratio(original_size_mb, zip_size_mb)})"
-        )
 
         if delete_original:
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(batch_folder)
-                print(f"[ARCHIVE] Оригинал удалён: {batch_folder}")
-            except Exception as e:
-                print(
-                    f"[ARCHIVE] Не удалось удалить оригинал: {e}"
-                )
-
         return zip_path
 
-    @staticmethod
-    def _create_zip(
-        source_folder: str,
-        zip_path: str,
-        compression: str = "deflated",
-        level: int = 6,
-    ):
-        """Рекурсивно упаковать папку партии в ZIP.
-
-        ``deflated`` — совместимый сбалансированный вариант, ``stored``
-        быстрее и почти не уступает для JPEG, ``lzma`` полезен только для
-        больших текстовых метаданных и может быть медленным на слабом ПК.
-        """
-        methods = {
-            "deflated": zipfile.ZIP_DEFLATED,
-            "stored": zipfile.ZIP_STORED,
-            "lzma": zipfile.ZIP_LZMA,
-        }
-        method = methods.get(str(compression).lower(), zipfile.ZIP_DEFLATED)
-        kwargs = {"compression": method}
-        if method in (zipfile.ZIP_DEFLATED, zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
-            kwargs["compresslevel"] = max(0, min(9, int(level)))
-
-        with zipfile.ZipFile(zip_path, "w", **kwargs) as zf:
-            for root, _dirs, files in os.walk(source_folder):
-                for filename in files:
-                    file_path = os.path.join(root, filename)
-                    arcname = os.path.relpath(
-                        file_path, source_folder
-                    )
-                    zf.write(file_path, arcname)
-
-    @staticmethod
-    def _dir_size_mb(path: str) -> float:
-        """Размер директории в МБ."""
-        total = 0
-        for root, _dirs, files in os.walk(path):
-            for f in files:
-                fp = os.path.join(root, f)
-                with contextlib.suppress(OSError):
-                    total += os.path.getsize(fp)
-        return total / (1024 * 1024)
-
-    @staticmethod
-    def _compression_ratio(original_mb: float, compressed_mb: float) -> str:
-        """Строка с коэффициентом сжатия."""
-        if original_mb <= 0:
-            return "—"
-        ratio = (1 - compressed_mb / original_mb) * 100
-        if ratio >= 0:
-            return f"-{ratio:.0f}%"
-        return f"+{abs(ratio):.0f}%"
-
-    # Internal
+    # ---------- внутреннее ----------
 
     def _encode_image(self, frame) -> bytes:
         try:
@@ -988,6 +450,15 @@ class PartArchive:
                 with contextlib.suppress(OSError):
                     os.remove(temp_path)
             raise
+
+    @staticmethod
+    def _write_json(path: str, payload):
+        temp_path = path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, path)
 
     @staticmethod
     def _safe_name(name: str) -> str:

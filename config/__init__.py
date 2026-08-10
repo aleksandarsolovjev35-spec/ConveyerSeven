@@ -1,6 +1,5 @@
 from config.archive_config import (
     ARCHIVE_CONFIG_FILE,
-    COMPRESSION_METHODS,
     load_archive_config,
     normalise_archive_config,
     save_archive_config,
@@ -17,7 +16,6 @@ __all__ = [
     "load_calibration",
     "DEFAULTS",
     "ARCHIVE_CONFIG_FILE",
-    "COMPRESSION_METHODS",
     "load_archive_config",
     "normalise_archive_config",
     "save_archive_config",
