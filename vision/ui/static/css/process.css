@@ -596,3 +596,42 @@
 .line-token { overflow: hidden; padding: 0 10px 0 3px; text-overflow: ellipsis; white-space: nowrap; }
 .axis-route span { flex: 1 1 auto; }
 .axis-route b, .dist-route { display: block; }
+
+
+/* ─── Carriage stencil: final process-line model ──────────────────────
+   The route block contains only neutral apertures and body fragments. */
+.process-line-head { justify-content: flex-start; }
+.line-gates, .conveyor-belt, .chute-symbol { display: none !important; }
+.line-conveyor-track { background: var(--bg-2); border-radius: 4px; }
+.production-line-cells .line-cell {
+    overflow: hidden;
+    background: rgba(15, 19, 23, .32);
+    border-color: var(--border-strong);
+    box-shadow: 0 1px 2px rgba(0,0,0,.25);
+}
+.production-line-cells .line-cell::before { z-index: 3; }
+/* One .line-token-piece per aperture: the cell clips it like a real window. */
+.line-token-piece {
+    position: absolute;
+    z-index: 1;
+    top: 7px;
+    height: 20px;
+    border: 1px solid var(--text-muted);
+    border-radius: 3px;
+    background: var(--bg-1);
+    box-shadow: 0 1px 2px rgba(0,0,0,.35);
+    transition: left var(--move-duration, 420ms) cubic-bezier(.25,.1,.25,1),
+                transform 260ms var(--ease), opacity 180ms ease;
+    will-change: left, transform, opacity;
+    pointer-events: none;
+}
+.line-token-piece.cell-good { background: var(--ok-bg); border-color: var(--ok); }
+.line-token-piece.cell-bad { background: var(--bad-bg); border-color: var(--bad); }
+.line-token-piece.cell-cleanup { background: var(--warn-bg); border-color: var(--warn); }
+.line-token-piece.token-entering { transform: translateY(-46px); }
+.line-token-piece.token-exiting { transform: translateY(56px); opacity: 0; }
+.line-token-piece.is-hidden-by-conflict { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+    .line-token-piece { transition-duration: 1ms !important; }
+}
