@@ -957,7 +957,6 @@ class ProductionCycle:
         Владелец камер меняется только на границах фаз, поэтому кадры для
         defect rules физически не могут быть сняты во время движения.
         """
-        self._check_pause_barrier()
         self._check_motion_cancelled()
         print(f"\nШАГ {self.current_step + 1}")
 
@@ -974,8 +973,9 @@ class ProductionCycle:
         # Фоновых прогонов моделей для пропуска CAPTURE нет: это исключает
         # смешивание кадров разных моментов и гонки за last_health.
         pending_id = self._stage_motion()
-        self._stage_settle(pending_id)
-        frame_runs = self._stage_capture()
+        self._stage_settle(pending_id, accept_input_for_this_step)
+        self._check_pause_barrier()
+        frame_runs = self._stage_capture(accept_input_for_this_step)
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
         )
@@ -1028,7 +1028,7 @@ class ProductionCycle:
         self.current_step += 1
         return pending_id
 
-    def _stage_settle(self, pending_id):
+    def _stage_settle(self, pending_id, accept_input_for_this_step: bool = False):
         """SETTLE: подтвердить передачу корпуса и погасить вибрацию."""
         self._set_process(
             "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
@@ -1042,14 +1042,14 @@ class ProductionCycle:
         self._execute_drop()
         self._check_motion_cancelled()
         active_cam_positions = []
-        if self.sm.accepts_new_parts: active_cam_positions.append(self.OFFSET_INPUT)
+        if accept_input_for_this_step: active_cam_positions.append(self.OFFSET_INPUT)
         if any(p.step_created + self.OFFSET_SPIDER == self.current_step for p in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
         self._set_process("SETTLE", "Ожидание затухания вибрации перед съёмкой", positions=active_cam_positions)
         self.stages.enter_settle()
         self._check_motion_cancelled()
 
-    def _capture_roles_for_current_step(self) -> tuple[str, ...]:
+    def _capture_roles_for_current_step(self, accept_input_for_this_step: bool = False) -> tuple[str, ...]:
         """Вернуть только камеры, под которыми сейчас есть корпус.
 
         Один Part собирается в два разных момента: INPUT получает 2 кадра
@@ -1062,7 +1062,7 @@ class ProductionCycle:
         # INPUT всегда входит в официальный CAPTURE текущего шага, если
         # линия принимает новые детали. Решение о пустом лотке принимается
         # тем же свежим кадром внутри общего pipeline.
-        if self.sm.accepts_new_parts:
+        if accept_input_for_this_step:
             roles.extend(self.inspector.INPUT_ROLES)
         if any(
             part.step_created + self.OFFSET_SPIDER == self.current_step
@@ -1071,15 +1071,15 @@ class ProductionCycle:
             roles.extend(self.inspector.SPIDER_ROLES)
         return tuple(roles)
 
-    def _stage_capture(self):
+    def _stage_capture(self, accept_input_for_this_step: bool = False):
         """CAPTURE: получить frozen snapshot для текущих инспекций."""
-        roles = self._capture_roles_for_current_step()
+        roles = self._capture_roles_for_current_step(accept_input_for_this_step)
         self._inspection_display_roles = roles
         # Пауза только у ролей, которые сейчас дают inspection-кадр.
         # Остальные камеры продолжают live-поток для оператора.
         self.stages.enter_capture(roles)
         active_cam_positions = []
-        if self.sm.accepts_new_parts:
+        if accept_input_for_this_step:
             active_cam_positions.append(self.OFFSET_INPUT)
         if any(part.step_created + self.OFFSET_SPIDER == self.current_step for part in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
