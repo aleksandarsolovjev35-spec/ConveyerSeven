@@ -15,7 +15,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
     padding: 6px 10px;
-    height: 54px;
+    height: 78px;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -134,16 +134,25 @@
     background: var(--panel);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
-    padding: 6px 12px;
-    height: 54px;
+    padding: 6px 10px;
+    height: 78px;
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: 2px;
-    flex: 0 0 280px;
-    min-width: 200px;
-    max-width: 320px;
+    flex: 0 0 340px;
+    min-width: 240px;
+    max-width: 380px;
     overflow: hidden;
+}
+
+.process-phase-head,
+.process-phase-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
 }
 
 .process-phase-title {
@@ -157,7 +166,19 @@
     text-overflow: ellipsis;
 }
 
+.process-phase-step,
+.process-phase-code {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.35px;
+    white-space: nowrap;
+}
+
+.process-phase-row { align-items: baseline; }
+
 .process-phase-label {
+    min-width: 0;
     font-family: var(--font-mono);
     font-size: 10.5px;
     font-weight: 700;
@@ -169,17 +190,77 @@
     transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
 
+.process-phase-detail {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-dim);
+    font: 8px var(--font-mono);
+    letter-spacing: 0.15px;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.process-stage-track {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 2px;
+    min-width: 0;
+    margin-top: 2px;
+}
+
+.process-stage-track span {
+    min-width: 0;
+    padding: 2px 1px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    font: 700 7px var(--font-mono);
+    letter-spacing: 0.15px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+        color var(--t-fast) var(--ease),
+        background-color var(--t-fast) var(--ease),
+        border-color var(--t-fast) var(--ease);
+}
+
+.process-stage-track span.is-done {
+    color: var(--ok);
+    border-color: var(--ok);
+    background: var(--ok-bg);
+}
+
+.process-stage-track span.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-glow);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.process-stage-track.is-paused span.is-active {
+    color: var(--warn);
+    border-color: var(--warn);
+    background: var(--warn-bg);
+    box-shadow: inset 0 0 0 1px var(--warn);
+}
+
 @media (max-height: 600px) {
-    .history,
-    .process-phase-panel { height: 48px; }
+    .history { height: 70px; }
+    .process-phase-panel { height: 70px; }
 }
 
 @media (max-height: 500px) {
-    .history,
-    .process-phase-panel { height: 42px; }
+    .history { height: 42px; }
+    .process-phase-panel { height: 60px; }
     .history-title,
     .process-phase-title { font-size: 8px; }
     .process-phase-label { font-size: 9.5px; }
+    .process-phase-detail { font-size: 7px; }
+    .process-stage-track span { font-size: 6px; }
 }
 
 @media (max-width: 1100px) {

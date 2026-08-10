@@ -123,6 +123,14 @@ class ProductionCycle:
             "updated_at": time.time(),
         }
 
+        # Инспектор сообщает внутренние этапы (модели, геометрия,
+        # решение, запись) в тот же telemetry-поток, что и движение линии.
+        set_progress_callback = getattr(
+            self.inspector, "set_progress_callback", None,
+        )
+        if callable(set_progress_callback):
+            set_progress_callback(self._on_inspection_progress)
+
         # Живой просмотр: работает и в JOG, и во время движения ленты.
         self.live = LivePreview(
             cameras=cameras,
@@ -182,6 +190,34 @@ class ProductionCycle:
             "updated_at": time.time(),
         }
         self._refresh_monitor()
+
+    def _on_inspection_progress(
+        self,
+        phase: str,
+        label: str,
+        *,
+        part_id=None,
+        roles=(),
+    ):
+        """Показать внутренний этап инспекции в статусе линии.
+
+        Callback наблюдательный: решение уже выполняется Inspector'ом, а
+        этот метод только публикует текущую фазу для HMI и не меняет порядок
+        обработки.
+        """
+        prefix = str(phase or "").upper()
+        positions = (
+            [self.OFFSET_INPUT]
+            if prefix.startswith("INPUT")
+            else [self.OFFSET_SPIDER]
+        )
+        self._set_process(
+            prefix,
+            label,
+            part_id=part_id,
+            positions=positions,
+            capture_roles=roles,
+        )
 
     def _on_conveyor_progress(self, status: dict):
         current = self._process
@@ -1304,6 +1340,11 @@ class ProductionCycle:
             for role in self.inspector.INPUT_ROLES:
                 self._last_vision_results[role] = []
             self._last_rule_results.extend(result.rule_results)
+            self._set_process(
+                "INPUT_RESULT_RECORDED",
+                "INPUT: пустой лоток записан",
+                positions=[self.OFFSET_INPUT],
+            )
             print(
                 f"[EMPTY] Пустой лоток на step {self.current_step} "
                 f"(total empty: {self.empty_count})"
@@ -1337,6 +1378,12 @@ class ProductionCycle:
                 run_rule_results=getattr(result, "run_rule_results", None),
                 run_vision_results=getattr(result, "run_vision_results", None),
             )
+        self._set_process(
+            "INPUT_RESULT_RECORDED",
+            "INPUT: решение стадии записано",
+            part_id=part.id,
+            positions=[self.OFFSET_INPUT],
+        )
 
         print(
             f"[INPUT] Деталь #{part.id} "
@@ -1395,6 +1442,12 @@ class ProductionCycle:
                     run_rule_results=getattr(result, "run_rule_results", None),
                     run_vision_results=getattr(result, "run_vision_results", None),
                 )
+            self._set_process(
+                "SPIDER_RESULT_RECORDED",
+                "SPIDER/TOP: окончательное решение записано",
+                part_id=part.id,
+                positions=[self.OFFSET_SPIDER],
+            )
 
             print(
                 f"[SPIDER] Деталь #{part.id} "
@@ -1444,6 +1497,12 @@ class ProductionCycle:
             self.cleanup_count += 1
             print(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
         self._archive_part(part)
+        self._set_process(
+            "FINAL_DECISION_ARCHIVED",
+            f"Финальное решение #{part.id}: {category} записано в архив",
+            part_id=part.id,
+            positions=[self.OFFSET_REJECT],
+        )
         self._register_finished(part)
         self._remove_part(part)
         self._pending_drop = None

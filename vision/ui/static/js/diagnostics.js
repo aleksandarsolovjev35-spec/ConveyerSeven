@@ -71,7 +71,7 @@ function updateSelectedAnalysisStatus(ls) {
     const inspectionRoles = Array.isArray(process.inspection_roles) ? process.inspection_roles : [];
     const phase = String(process.phase || '').toUpperCase();
     const inspectionDisplay = inspectionRoles.includes(state.currentCamera)
-        && (phase.includes('CAMERA') || phase.includes('ANALYSIS') || phase === 'PUBLISH');
+        && isInspectionDisplayPhase(phase);
     const selectedRoleStatic = live.all_roles_static === true
         || staticRoles.includes(state.currentCamera)
         || inspectionDisplay

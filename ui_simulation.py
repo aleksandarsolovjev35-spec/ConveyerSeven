@@ -25,18 +25,48 @@ from vision.ui.server.server import CAMERA_ORDER, UIServer
 
 PROCESS_LABELS = {
     "IDLE": "Система готова к пуску",
+    "START_POSITIONING": "Возврат распределителя в рабочее положение",
     "READY": "Цикл запущен",
+    "INITIAL_INSPECTION": "Контроль корпуса под INPUT без движения",
     "ROUTE_PREPARE": "Подготовка маршрута распределителя",
+    "CONVEYOR_COMMAND": "Команда движения ленты отправлена",
+    "CONVEYOR_MOVING": "Лента перемещает корпуса на следующую позицию",
     "MOTION": "Горизонтальное движение ленты",
+    "CONVEYOR_CONFIRMED": "Позиции корпусов подтверждены контроллером",
+    "PART_TRANSFER": "Корпус прошёл распределитель",
     "SETTLE": "Ожидание затухания вибрации",
+    "CAMERA_CAPTURE": "Синхронный захват камер",
     "CAPTURE": "Захват стоп-кадра камеры",
+    "INPUT_ANALYSIS": "INPUT: анализ свежего кадра",
+    "INPUT_MODELS": "INPUT: запуск моделей",
+    "INPUT_PRESENCE": "INPUT: проверка наличия корпуса",
+    "INPUT_GEOMETRY": "INPUT: построение геометрии и измерений",
+    "INPUT_DECISION": "INPUT: решение правил сформировано",
+    "INPUT_FRAME_RECORD": "INPUT: запись кадра и разметки",
+    "INPUT_FRAME_RECORDED": "INPUT: кадр и разметка подготовлены",
+    "INPUT_RESULT_RECORDED": "INPUT: решение стадии записано",
+    "SPIDER_CHECK": "SPIDER/TOP: подготовка контроля",
+    "SPIDER_ANALYSIS": "SPIDER/TOP: анализ свежего кадра",
+    "SPIDER_MODELS": "SPIDER/TOP: запуск моделей",
+    "SPIDER_GEOMETRY": "SPIDER/TOP: построение геометрии и измерений",
+    "SPIDER_DECISION": "SPIDER/TOP: окончательное решение сформировано",
+    "SPIDER_FRAME_RECORD": "SPIDER/TOP: запись кадра и разметки",
+    "SPIDER_FRAME_RECORDED": "SPIDER/TOP: кадр и разметка подготовлены",
+    "SPIDER_RESULT_RECORDED": "SPIDER/TOP: окончательное решение записано",
     "ANALYSIS": "Анализ моделей и правил",
+    "ANALYSIS_REVIEW": "Просмотр результатов анализа",
+    "STEP_COMPLETE": "Шаг полностью завершён",
     "PUBLISH": "Публикация результата контроля",
+    "FINAL_DECISION_ARCHIVED": "Финальное решение записано в архив",
     "STOPPING": "Остановка",
     "STOPPED": "Линия остановлена и пуста",
     "PAUSED": "Пауза линии",
     "JOG": "Ручное перемещение",
     "SELECTED_ANALYSIS": "Анализ выбранного стоп-кадра",
+    "DISTRIBUTOR_DIAGNOSTIC": "Проверка распределителя",
+    "CAMERA_DIAGNOSTIC": "Проверка семи камер",
+    "VISION_RULE_DIAGNOSTIC": "Проверка моделей и правил",
+    "DIAGNOSTIC_DONE": "Диагностика завершена",
 }
 
 
@@ -67,6 +97,7 @@ class LineSimulation:
     # finish before another horizontal step starts.
     POST_STOP_SECONDS = 0.86
     CAMERA_STAGE_SECONDS = 0.13
+    REVIEW_SECONDS = 2.0
     CATEGORIES = ("GOOD", "BAD", "CLEANUP", "GOOD", "GOOD", "BAD")
     INPUT_STAGES = ("INPUT_LEFT", "INPUT_RIGHT")
     CONTROL_STAGES = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
@@ -270,18 +301,19 @@ class LineSimulation:
         self.archive_compressed = True
 
     def _run_camera_stages(self) -> bool:
-        """Run the production stage contract: CAPTURE → ANALYSIS → PUBLISH.
+        """Run the visible production chain in the same order as hardware.
 
-        The browser derives LIVE/stop-frame visibility from ``live.static``
-        and ``static_roles`` below, exactly as it does with ProductionCycle.
+        CAPTURE is followed by MODELS, GEOMETRY, DECISION and RECORD for each
+        occupied inspection position. INPUT is intentionally processed before
+        SPIDER/TOP, matching ``ProductionCycle._stage_analysis``.
         """
         batches: list[tuple[SimPart, tuple[str, ...]]] = []
-        control = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
         input_part = next((part for part in self.parts if part.position == 0), None)
-        if control is not None:
-            batches.append((control, self.CONTROL_STAGES))
+        control = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
         if input_part is not None:
             batches.append((input_part, self.INPUT_STAGES))
+        if control is not None:
+            batches.append((control, self.CONTROL_STAGES))
         if not batches:
             return True
 
@@ -296,13 +328,30 @@ class LineSimulation:
                     if self.state not in ("RUNNING", "STOPPING"):
                         return False
 
-        self._publish("ANALYSIS", captured_roles)
-        if self._stop.wait(self.CAMERA_STAGE_SECONDS):
-            return False
-        with self._lock:
-            for part, roles in batches:
+        for part, roles in batches:
+            prefix = "INPUT" if roles == self.INPUT_STAGES else "SPIDER"
+            self._publish(f"{prefix}_MODELS", list(roles))
+            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+                return False
+            self._publish(f"{prefix}_GEOMETRY", list(roles))
+            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+                return False
+            with self._lock:
                 if roles == self.CONTROL_STAGES:
                     self._inspect_part(part)
+            self._publish(f"{prefix}_DECISION", list(roles))
+            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+                return False
+            self._publish(
+                f"{prefix}_RESULT_RECORDED",
+                list(roles),
+            )
+            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+                return False
+
+        self._publish("ANALYSIS_REVIEW", captured_roles)
+        if self._stop.wait(self.REVIEW_SECONDS):
+            return False
         self._publish("PUBLISH", captured_roles)
         if self._stop.wait(self.CAMERA_STAGE_SECONDS):
             return False
@@ -382,9 +431,18 @@ class LineSimulation:
                     active_roles = list(self.INPUT_STAGES)
                 elif any(part.position == 4 for part in self.parts):
                     active_roles = list(self.CONTROL_STAGES)
-            inspection_static = phase in ("CAPTURE", "ANALYSIS", "PUBLISH")
+            inspection_static = phase in {
+                "CAPTURE", "ANALYSIS", "PUBLISH", "ANALYSIS_REVIEW",
+                "INPUT_MODELS", "INPUT_GEOMETRY", "INPUT_DECISION",
+                "INPUT_RESULT_RECORDED", "SPIDER_MODELS", "SPIDER_GEOMETRY",
+                "SPIDER_DECISION", "SPIDER_RESULT_RECORDED",
+            }
             self.process_revision += 1
-            capture_roles = active_roles if phase == "CAPTURE" else []
+            capture_roles = active_roles if phase in {
+                "CAPTURE", "ANALYSIS_REVIEW", "INPUT_MODELS", "INPUT_GEOMETRY",
+                "INPUT_DECISION", "INPUT_RESULT_RECORDED", "SPIDER_MODELS",
+                "SPIDER_GEOMETRY", "SPIDER_DECISION", "SPIDER_RESULT_RECORDED",
+            } else []
             status = {
                 "state": state,
                 "exit_requested": False,

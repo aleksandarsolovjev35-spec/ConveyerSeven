@@ -22,10 +22,31 @@ class Inspector:
         "TOP",
     )
 
-    def __init__(self, vision, decision, recorder):
+    def __init__(self, vision, decision, recorder, on_progress=None):
         self.vision = vision
         self.decision = decision
         self.recorder = recorder
+        # Наблюдатель не участвует в принятии решения: его исключения не
+        # должны ломать инспекцию. ProductionCycle использует callback для
+        # отображения внутренних этапов в HMI.
+        self.on_progress = on_progress
+
+    def set_progress_callback(self, callback):
+        self.on_progress = callback
+
+    def _notify_progress(self, phase, label, *, part_id=None, roles=()):
+        callback = self.on_progress
+        if not callable(callback):
+            return
+        try:
+            callback(
+                phase,
+                label,
+                part_id=part_id,
+                roles=tuple(roles or ()),
+            )
+        except Exception as exc:
+            print(f"[INSPECTION] Ошибка отображения этапа {phase}: {exc}")
 
     # ProductionCycle передаёт один набор кадров как [frames]. Инспектор
     # проверяет этот контракт и обрабатывает единственный элемент.
@@ -41,14 +62,32 @@ class Inspector:
         # наличия (gate) -> геометрия/defect rules -> разметка -> результат.
         # Все последующие шаги используют ровно этот ``frames`` snapshot.
         frames = self._single_stage_frames(frame_runs, self.INPUT_ROLES, "input")
+        self._notify_progress(
+            "INPUT_MODELS",
+            "INPUT: запуск моделей по свежему кадру",
+            part_id=part_id,
+            roles=self.INPUT_ROLES,
+        )
         vision_results, model_health = self._run_vision(frames, self.INPUT_ROLES)
 
+        self._notify_progress(
+            "INPUT_PRESENCE",
+            "INPUT: проверка наличия корпуса",
+            part_id=part_id,
+            roles=self.INPUT_ROLES,
+        )
         presence_result = self._evaluate_part_presence(vision_results)
         presence_result, presence_vote, _ = combine_presence_results(
             [presence_result]
         )
 
         if bool(presence_result.details.get("empty_tray")):
+            self._notify_progress(
+                "INPUT_DECISION",
+                "INPUT: лоток пуст, решение наличия принято",
+                part_id=part_id,
+                roles=self.INPUT_ROLES,
+            )
             consensus = {
                 "runs": 1,
                 "required_votes": 1,
@@ -75,8 +114,20 @@ class Inspector:
                 run_rule_results=[[]],
             )
 
+        self._notify_progress(
+            "INPUT_GEOMETRY",
+            "INPUT: построение геометрии и измерений",
+            part_id=part_id,
+            roles=self.INPUT_ROLES,
+        )
         defect_results, consensus, _evidence = combine_rule_results(
             [self.decision.evaluate_all_detailed(vision_results, frames=frames)]
+        )
+        self._notify_progress(
+            "INPUT_DECISION",
+            "INPUT: решение правил сформировано",
+            part_id=part_id,
+            roles=self.INPUT_ROLES,
         )
         consensus["part_presence"] = presence_vote
 
@@ -108,10 +159,28 @@ class Inspector:
         # кадрах, затем правила, которые строят геометрию и принимают
         # измерительное решение, и только после этого создаётся разметка.
         frames = self._single_stage_frames(frame_runs, self.SPIDER_ROLES, "spider")
+        self._notify_progress(
+            "SPIDER_MODELS",
+            "SPIDER/TOP: запуск моделей по свежему кадру",
+            part_id=part_id,
+            roles=self.SPIDER_ROLES,
+        )
         vision_results, model_health = self._run_vision(frames, self.SPIDER_ROLES)
 
+        self._notify_progress(
+            "SPIDER_GEOMETRY",
+            "SPIDER/TOP: построение геометрии и измерений",
+            part_id=part_id,
+            roles=self.SPIDER_ROLES,
+        )
         rule_results, consensus, _evidence = combine_rule_results(
             [self.decision.evaluate_all_detailed(vision_results, frames=frames)]
+        )
+        self._notify_progress(
+            "SPIDER_DECISION",
+            "SPIDER/TOP: окончательное решение правил сформировано",
+            part_id=part_id,
+            roles=self.SPIDER_ROLES,
         )
         consensus["picture_run"] = 1
         consensus["picture_reason"] = describe_picture_run(rule_results, 0)
@@ -180,6 +249,13 @@ class Inspector:
         # накладываются на исходный snapshot. Служебный part_presence
         # ничего не рисует.
         markup = markup_rule_results if markup_rule_results is not None else rule_results
+        progress_prefix = "INPUT" if stage == "input" else "SPIDER"
+        self._notify_progress(
+            f"{progress_prefix}_FRAME_RECORD",
+            f"{progress_prefix}: запись кадра и геометрической разметки",
+            part_id=part_id,
+            roles=frames.keys(),
+        )
         annotated = self.recorder.process(
             part_id=part_id,
             step=step,
@@ -187,6 +263,12 @@ class Inspector:
             rule_results=markup,
         )
         raw_overlay_frames = self._raw_overlays(frames, vision_results)
+        self._notify_progress(
+            f"{progress_prefix}_FRAME_RECORDED",
+            f"{progress_prefix}: кадр и разметка подготовлены",
+            part_id=part_id,
+            roles=frames.keys(),
+        )
         return InspectionResult(
             stage=stage,
             defects=defects,

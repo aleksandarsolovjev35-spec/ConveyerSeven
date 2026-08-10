@@ -4,6 +4,19 @@
 // - синхронизация монитор->UI сохранена
 'use strict';
 
+function isInspectionDisplayPhase(phase) {
+    const value = String(phase || '').toUpperCase();
+    return value.includes('CAMERA')
+        || value.includes('ANALYSIS')
+        || value.includes('MODELS')
+        || value.includes('GEOMETRY')
+        || value.includes('PRESENCE')
+        || value.includes('DECISION')
+        || value.includes('RECORD')
+        || value === 'SPIDER_CHECK'
+        || value === 'PUBLISH';
+}
+
 function updateOperationalAccordions(lineState) {
     const fullyStopped = lineState === 'IDLE' || lineState === 'STOPPED';
     if (els.statsBody) els.statsBody.classList.remove('is-collapsed');
@@ -89,7 +102,7 @@ async function fetchStatus() {
     const inspectionRoles = Array.isArray(processInfo.inspection_roles) ? processInfo.inspection_roles : [];
     const processPhase = String(processInfo.phase || '').toUpperCase();
     const inspectionDisplay = inspectionRoles.includes(state.currentCamera)
-        && (processPhase.includes('CAMERA') || processPhase.includes('ANALYSIS') || processPhase === 'PUBLISH');
+        && isInspectionDisplayPhase(processPhase);
     const selectedRoleStatic = liveInfo.all_roles_static === true
         || staticRoles.includes(state.currentCamera)
         || inspectionDisplay
@@ -151,34 +164,135 @@ function markUiOffline() {
 }
 
 const PROCESS_PHASE_LABELS = {
+    START_POSITIONING: 'ПОДГОТОВКА · ПОЗИЦИОНИРОВАНИЕ',
     READY: 'ЦИКЛ ЗАПУЩЕН',
-    ROUTE_PREPARE: 'ПОДГОТОВКА МАРШРУТА',
-    MOTION: 'ЛЕНТА ДВИЖЕТСЯ',
-    SETTLE: 'ЛЕНТА ОСТАНОВЛЕНА',
-    CAPTURE: 'СТОП-КАДР · ЗАХВАТ',
-    ANALYSIS: 'АНАЛИЗ КАДРА',
-    PUBLISH: 'ПУБЛИКАЦИЯ РЕЗУЛЬТАТА',
-    STOPPING: 'ЗАВЕРШЕНИЕ КОРПУСОВ',
-    STOPPED: 'ЛЕНТА ОСТАНОВЛЕНА',
-    JOG: 'РУЧНОЕ ПЕРЕМЕЩЕНИЕ',
-    SELECTED_ANALYSIS: 'АНАЛИЗ ВЫБРАННОГО КАДРА',
+    INITIAL_INSPECTION: 'СТАРТ · КОНТРОЛЬ ПОД INPUT',
+    ROUTE_PREPARE: 'ДВИЖЕНИЕ · ПОДГОТОВКА МАРШРУТА',
+    CONVEYOR_COMMAND: 'ДВИЖЕНИЕ · КОМАНДА ЛЕНТЕ',
+    CONVEYOR_MOVING: 'ДВИЖЕНИЕ · ЛЕНТА В ХОДЕ',
+    MOTION: 'ДВИЖЕНИЕ · ЛЕНТА В ХОДЕ',
+    CONVEYOR_CONFIRMED: 'СТОП · ОСТАНОВКА ПОДТВЕРЖДЕНА',
+    PART_TRANSFER: 'СТОП · ПЕРЕДАЧА ЧЕРЕЗ РАСПРЕДЕЛИТЕЛЬ',
+    SETTLE: 'СТОП · ЗАТУХАНИЕ ВИБРАЦИИ',
+    CAMERA_CAPTURE: 'КАДР · ЗАХВАТ СТОП-КАДРА',
+    CAPTURE: 'КАДР · ЗАХВАТ СТОП-КАДРА',
+    INPUT_ANALYSIS: 'INPUT · АНАЛИЗ',
+    INPUT_MODELS: 'INPUT · МОДЕЛИ',
+    INPUT_PRESENCE: 'INPUT · ПРОВЕРКА НАЛИЧИЯ',
+    INPUT_GEOMETRY: 'INPUT · ПОСТРОЕНИЕ ГЕОМЕТРИИ',
+    INPUT_DECISION: 'INPUT · РЕШЕНИЕ ПРАВИЛ',
+    INPUT_FRAME_RECORD: 'INPUT · ЗАПИСЬ РАЗМЕТКИ',
+    INPUT_FRAME_RECORDED: 'INPUT · РАЗМЕТКА ГОТОВА',
+    INPUT_RESULT_RECORDED: 'INPUT · РЕШЕНИЕ ЗАПИСАНО',
+    SPIDER_CHECK: 'SPIDER/TOP · ПОДГОТОВКА',
+    SPIDER_ANALYSIS: 'SPIDER/TOP · АНАЛИЗ',
+    SPIDER_MODELS: 'SPIDER/TOP · МОДЕЛИ',
+    SPIDER_GEOMETRY: 'SPIDER/TOP · ПОСТРОЕНИЕ ГЕОМЕТРИИ',
+    SPIDER_DECISION: 'SPIDER/TOP · ОКОНЧАТЕЛЬНОЕ РЕШЕНИЕ',
+    SPIDER_FRAME_RECORD: 'SPIDER/TOP · ЗАПИСЬ РАЗМЕТКИ',
+    SPIDER_FRAME_RECORDED: 'SPIDER/TOP · РАЗМЕТКА ГОТОВА',
+    SPIDER_RESULT_RECORDED: 'SPIDER/TOP · РЕШЕНИЕ ЗАПИСАНО',
+    ANALYSIS: 'АНАЛИЗ · МОДЕЛИ И ГЕОМЕТРИЯ',
+    ANALYSIS_REVIEW: 'РЕВЬЮ · ПРОСМОТР РЕЗУЛЬТАТА',
+    STEP_COMPLETE: 'ИТОГ · ШАГ ЗАВЕРШЁН',
+    PUBLISH: 'ИТОГ · ПУБЛИКАЦИЯ РЕЗУЛЬТАТА',
+    FINAL_DECISION_ARCHIVED: 'ИТОГ · РЕШЕНИЕ В АРХИВЕ',
+    PAUSE_REQUESTED: 'ПАУЗА · ОЖИДАНИЕ ГРАНИЦЫ ШАГА',
+    RESUMED: 'ВОЗОБНОВЛЕНИЕ · СВЕЖИЙ CAPTURE',
+    STOPPING: 'ОСТАНОВКА · ВЫВОД КОРПУСОВ',
+    DRAINING: 'ОСТАНОВКА · ВЫВОД КОРПУСОВ',
+    STOPPED: 'ОСТАНОВЛЕНО · ЛИНИЯ ПУСТА',
+    JOG: 'JOG · РУЧНОЕ ПЕРЕМЕЩЕНИЕ',
+    JOG_HOLD: 'JOG · УДЕРЖИВАЕМОЕ ДВИЖЕНИЕ',
+    JOG_STOPPED: 'JOG · ДВИЖЕНИЕ ОСТАНОВЛЕНО',
+    SELECTED_ANALYSIS: 'ДИАГНОСТИКА · АНАЛИЗ КАДРА',
+    SELECTED_MODEL_ANALYSIS: 'ДИАГНОСТИКА · МОДЕЛИ И ПРАВИЛА',
+    SELECTED_MODEL_READY: 'ДИАГНОСТИКА · РЕЗУЛЬТАТ ГОТОВ',
+    CAMERA_DIAGNOSTIC: 'ДИАГНОСТИКА · КАМЕРЫ',
+    VISION_RULE_DIAGNOSTIC: 'ДИАГНОСТИКА · МОДЕЛИ И ПРАВИЛА',
+    DISTRIBUTOR_DIAGNOSTIC: 'ДИАГНОСТИКА · РАСПРЕДЕЛИТЕЛЬ',
+    DIAGNOSTIC_DONE: 'ДИАГНОСТИКА · ПРОВЕРКА ЗАВЕРШЕНА',
+    FAULT: 'АВАРИЯ · ЦИКЛ ОСТАНОВЛЕН',
+    OFFLINE: 'НЕТ СВЯЗИ',
 };
+
+const PROCESS_STAGE_ORDER = ['MOTION', 'SETTLE', 'CAPTURE', 'ANALYSIS', 'REVIEW', 'PUBLISH'];
+const PROCESS_STAGE_PHASES = {
+    MOTION: new Set(['START_POSITIONING', 'READY', 'INITIAL_INSPECTION', 'ROUTE_PREPARE', 'CONVEYOR_COMMAND', 'CONVEYOR_MOVING', 'MOTION']),
+    SETTLE: new Set(['CONVEYOR_CONFIRMED', 'PART_TRANSFER', 'SETTLE']),
+    CAPTURE: new Set(['CAMERA_CAPTURE', 'CAPTURE']),
+    ANALYSIS: new Set([
+        'ANALYSIS', 'INPUT_ANALYSIS', 'INPUT_MODELS', 'INPUT_PRESENCE',
+        'INPUT_GEOMETRY', 'INPUT_DECISION', 'INPUT_FRAME_RECORD',
+        'INPUT_FRAME_RECORDED', 'INPUT_RESULT_RECORDED', 'SPIDER_CHECK',
+        'SPIDER_ANALYSIS', 'SPIDER_MODELS', 'SPIDER_GEOMETRY',
+        'SPIDER_DECISION', 'SPIDER_FRAME_RECORD', 'SPIDER_FRAME_RECORDED',
+        'SPIDER_RESULT_RECORDED', 'VISION_RULE_DIAGNOSTIC',
+        'SELECTED_MODEL_ANALYSIS', 'SELECTED_MODEL_READY',
+    ]),
+    REVIEW: new Set(['ANALYSIS_REVIEW']),
+    PUBLISH: new Set(['STEP_COMPLETE', 'PUBLISH', 'FINAL_DECISION_ARCHIVED']),
+};
+
+function processStageForPhase(phase) {
+    return PROCESS_STAGE_ORDER.find(stage => PROCESS_STAGE_PHASES[stage].has(phase)) || null;
+}
+
+function updateProcessStageTrack(stage, lineState) {
+    const track = els.processStageTrack || document.getElementById('process-stage-track');
+    if (!track) return;
+    const activeState = String(lineState || 'IDLE').toUpperCase();
+    track.classList.toggle('is-paused', activeState === 'PAUSED');
+    track.dataset.lineState = activeState;
+    const resetTrack = !stage && ['IDLE', 'STOPPED', 'OFFLINE'].includes(activeState);
+    const effectiveStage = stage || (resetTrack ? null : (track.dataset.activeStage || null));
+    track.dataset.activeStage = effectiveStage || '';
+    const activeIndex = PROCESS_STAGE_ORDER.indexOf(effectiveStage);
+    track.querySelectorAll('[data-process-stage]').forEach(node => {
+        const nodeStage = String(node.dataset.processStage || '').toUpperCase();
+        const nodeIndex = PROCESS_STAGE_ORDER.indexOf(nodeStage);
+        node.classList.toggle('is-active', nodeStage === effectiveStage);
+        node.classList.toggle('is-done', activeIndex >= 0 && nodeIndex >= 0 && nodeIndex < activeIndex);
+    });
+}
 
 function updateProcessPhaseLabel(lineState, process = {}) {
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (!phaseEl) return;
     const activeState = String(lineState || 'IDLE').toUpperCase();
     const phase = String(process.phase || '').toUpperCase();
-    const useProcessPhase = activeState === 'RUNNING' && !!PROCESS_PHASE_LABELS[phase];
-    const label = useProcessPhase ? PROCESS_PHASE_LABELS[phase] : lineStateLabel(activeState);
+    const processLabel = String(process.label || '').trim();
+    const mappedLabel = PROCESS_PHASE_LABELS[phase];
+    const hasProcessPhase = !!phase && phase !== 'IDLE' && phase !== activeState;
+    const label = hasProcessPhase
+        ? (mappedLabel || processLabel || phase.replace(/_/g, ' '))
+        : lineStateLabel(activeState);
+    const detailParts = [];
+    if (processLabel && processLabel !== label) detailParts.push(processLabel);
+    if (process.part_id != null) detailParts.push(`КОРПУС #${process.part_id}`);
+    const captureRoles = Array.isArray(process.capture_roles) ? process.capture_roles : [];
+    if (captureRoles.length && isInspectionDisplayPhase(phase)) {
+        detailParts.push(`КАМЕР: ${captureRoles.length}`);
+    }
+    if (!detailParts.length && hasProcessPhase) detailParts.push(`ФАЗА ${phase}`);
+    const detail = detailParts.join(' · ') || (
+        activeState === 'IDLE' ? 'Ожидание команды оператора' : lineStateLabel(activeState)
+    );
+    const code = phase || activeState;
+    const processStep = process.step != null ? process.step : null;
     setIfChanged(phaseEl, label);
+    if (els.processPhaseDetail) setIfChanged(els.processPhaseDetail, detail);
+    if (els.processPhaseCode) setIfChanged(els.processPhaseCode, code);
+    if (els.processPhaseStep && processStep !== null) setIfChanged(els.processPhaseStep, `ШАГ ${processStep}`);
     phaseEl.dataset.lineState = activeState;
     phaseEl.dataset.processPhase = phase;
+    phaseEl.title = detail;
     phaseEl.style.opacity = '1';
+    updateProcessStageTrack(processStageForPhase(phase), activeState);
     if (activeState === 'FAULT' || activeState === 'OFFLINE') phaseEl.style.color = 'var(--bad)';
     else if (activeState === 'PAUSED' || activeState === 'STOPPING') phaseEl.style.color = 'var(--warn)';
-    else if (phase === 'CAPTURE' || phase === 'SETTLE') phaseEl.style.color = 'var(--warn)';
-    else if (phase === 'ANALYSIS' || phase === 'PUBLISH') phaseEl.style.color = 'var(--accent)';
+    else if (processStageForPhase(phase) === 'CAPTURE' || processStageForPhase(phase) === 'SETTLE') phaseEl.style.color = 'var(--warn)';
+    else if (processStageForPhase(phase) === 'ANALYSIS' || processStageForPhase(phase) === 'REVIEW') phaseEl.style.color = 'var(--accent)';
     else if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
     else phaseEl.style.color = 'var(--text-dim)';
 }
