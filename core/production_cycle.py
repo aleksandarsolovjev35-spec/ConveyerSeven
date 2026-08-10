@@ -1386,6 +1386,10 @@ class ProductionCycle:
         if not self._pause_frame_active:
             self._pause_frame_active = True
         self.enter_jog()
+        # Пауза происходит ДО анализа изображения. Разметка предыдущего
+        # шага построена по статичному кадру и на live-изображении из JOG
+        # указывала бы мимо детали — убираем её немедленно.
+        self.live.clear_overlays()
         print("[PAUSE] линия остановлена на границе шага после полной остановки")
         self._set_process(
             "PAUSED",
