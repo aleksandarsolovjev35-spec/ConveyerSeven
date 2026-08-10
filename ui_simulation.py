@@ -81,10 +81,25 @@ class LineSimulation:
         self.counts = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
         self.thread = threading.Thread(target=self._run, name="ui-simulation", daemon=True)
 
+    def _open_next_archive_batch(self) -> None:
+        """A new production launch must never append to a closed ZIP batch."""
+        archive = self.server.archive
+        if archive is None or not self.archive_compressed:
+            return
+        self.server.archive = PartArchive(
+            root_folder=archive.root_folder,
+            enabled=archive.enabled,
+            jpeg_quality=archive.jpeg_quality,
+            compress_on_shutdown=archive.compress_on_shutdown,
+            delete_original_after_zip=archive.delete_original_after_zip,
+        )
+        self.archive_compressed = False
+
     def start(self) -> bool:
         with self._lock:
-            if self.state in ("RUNNING", "PAUSED"):
+            if self.state in ("RUNNING", "PAUSED", "STOPPING"):
                 return False
+            self._open_next_archive_batch()
             self.jog_active = False
             self.stop_requested = False
             self.state = "RUNNING"
