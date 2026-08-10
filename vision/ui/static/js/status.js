@@ -269,11 +269,31 @@ let _lineSyncDone = false;
 let _appliedLineParts = [];
 let _appliedInLine = 0;
 
+const LINE_APPEAR_DURATION_MS = 560;
+const LINE_MOVE_SLOWDOWN = 1.5;
+const LINE_MOVE_MIN_MS = 420;
+const LINE_MOVE_MAX_MS = 900;
+const LINE_DROP_MIN_MS = 720;
+const LINE_DROP_MAX_MS = 1100;
+
 function lineMoveDuration(process = {}) {
     const conv = process.conveyor || {};
     const speed = Number(conv.speed) || 0;
-    if (!speed) return 420;
-    return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
+    if (!speed) return 630;
+    // Keep the visual step deliberately slower than the physical speed so
+    // the arrival, horizontal transfer and exit remain easy to follow.
+    const physicalDuration = 8400000 / speed;
+    return Math.max(
+        LINE_MOVE_MIN_MS,
+        Math.min(LINE_MOVE_MAX_MS, Math.round(physicalDuration * LINE_MOVE_SLOWDOWN)),
+    );
+}
+
+function lineDropDuration(process = {}) {
+    return Math.max(
+        LINE_DROP_MIN_MS,
+        Math.min(LINE_DROP_MAX_MS, Math.round(lineMoveDuration(process) * 1.1)),
+    );
 }
 
 // ``CONVEYOR_CONFIRMED`` is published after the controller has already
@@ -375,7 +395,10 @@ function updateLineCells(lineParts, process = {}) {
     const phase = String(process.phase || '').toUpperCase();
     const moving = isConveyorTransportPhase(phase);
     const duration = lineMoveDuration(process);
+    const dropDuration = lineDropDuration(process);
+    els.lineCells.style.setProperty('--appear-duration', `${LINE_APPEAR_DURATION_MS}ms`);
     els.lineCells.style.setProperty('--move-duration', `${duration}ms`);
+    els.lineCells.style.setProperty('--drop-duration', `${dropDuration}ms`);
 
     const pendingAnalysis = state.pendingAnalysisVersion !== null;
     const appliedById = new Map(_appliedLineParts.map(part => [part.id, part.category]));
@@ -403,7 +426,7 @@ function updateLineCells(lineParts, process = {}) {
         _lineTokens.delete(id);
         if (token.position === 8) {
             token.pieces.forEach(piece => piece.classList.add('token-exiting'));
-            token.exitTimer = setTimeout(() => _removeStencilToken(token), duration);
+            token.exitTimer = setTimeout(() => _removeStencilToken(token), dropDuration);
         } else if (token.position === 7) {
             // The logical list may release a body at sorting before the next
             // step. Keep its physical body visible until that step reaches +8.
@@ -425,7 +448,7 @@ function updateLineCells(lineParts, process = {}) {
             token.exitTimer = setTimeout(() => {
                 _lineDepartingTokens.delete(token);
                 _removeStencilToken(token);
-            }, duration);
+            }, dropDuration);
         }
     }
 

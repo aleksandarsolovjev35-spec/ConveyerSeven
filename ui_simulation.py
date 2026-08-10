@@ -59,11 +59,13 @@ class LineSimulation:
     """Small deterministic conveyor model intended for UI development."""
 
     ROUTE_PREPARE_SECONDS = 0.24
-    STEP_SECONDS = 0.72
+    # Keep the virtual transport long enough for the deliberately slower UI
+    # animation to show the complete horizontal step.
+    STEP_SECONDS = 1.05
     SETTLE_SECONDS = 0.28
     # Time with a stopped belt: the vertical input/output animation must
     # finish before another horizontal step starts.
-    POST_STOP_SECONDS = 0.62
+    POST_STOP_SECONDS = 0.86
     CAMERA_STAGE_SECONDS = 0.13
     CATEGORIES = ("GOOD", "BAD", "CLEANUP", "GOOD", "GOOD", "BAD")
     INPUT_STAGES = ("INPUT_LEFT", "INPUT_RIGHT")

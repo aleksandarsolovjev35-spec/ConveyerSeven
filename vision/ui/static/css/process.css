@@ -641,8 +641,9 @@
     font: 800 9px var(--font-mono);
     line-height: 1;
     box-shadow: inset 0 1px rgba(255,255,255,.13), 0 1px 2px rgba(0,0,0,.35);
-    transition: left var(--move-duration, 420ms) cubic-bezier(.25,.1,.25,1),
-                transform 260ms var(--ease), opacity 180ms ease;
+    transition: left var(--move-duration, 630ms) cubic-bezier(.25,.1,.25,1),
+                transform var(--appear-duration, 560ms) var(--ease),
+                opacity var(--appear-duration, 560ms) ease;
     will-change: left, transform, opacity;
     pointer-events: none;
 }
@@ -650,7 +651,13 @@
 .line-token-piece.cell-bad { background: var(--bad); }
 .line-token-piece.cell-cleanup { background: var(--warn); }
 .line-token-piece.token-entering { transform: translateY(-44px); }
-.line-token-piece.token-exiting { transform: translateY(54px); opacity: 0; }
+.line-token-piece.token-exiting {
+    transform: translateY(54px);
+    opacity: 0;
+    transition: left var(--move-duration, 630ms) cubic-bezier(.25,.1,.25,1),
+                transform var(--drop-duration, 720ms) var(--ease),
+                opacity var(--drop-duration, 720ms) ease;
+}
 /* A conflicting aperture must be visually empty, including its border fill. */
 .line-token-piece.is-hidden-by-conflict { opacity: 0; }
 
