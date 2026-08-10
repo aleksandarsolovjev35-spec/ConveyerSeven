@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from domain.threshold_loader import ThresholdLoader
 from vision.ui.server.server import CAMERA_ORDER, UIServer
 
 
@@ -188,6 +189,32 @@ class LineSimulation:
             self._publish("SETTLE")
 
 
+def configure_simulated_thresholds(server: UIServer) -> None:
+    """Expose the real threshold editor without changing its source file.
+
+    The simulator deliberately keeps edits in memory: an operator can verify
+    every control and its lock state without accidentally modifying production
+    calibration values in ``thresholds.json``.
+    """
+    loader = ThresholdLoader("thresholds.json")
+    server.thresholds = dict(loader.thresholds)
+    server.threshold_labels = dict(loader.labels)
+    server.thresholds_revision = 1
+
+    def apply(role: str, values: dict, labels: dict) -> dict:
+        prefix = f"{role}."
+        updated = dict(server.thresholds or {})
+        for key, value in values.items():
+            full_key = key if str(key).startswith(prefix) else prefix + str(key)
+            if full_key not in updated:
+                raise ValueError(f"Неизвестный порог: {key}")
+            updated[full_key] = value
+        # ``UIServer.apply_thresholds`` stores labels and increments revision.
+        return updated
+
+    server.on_thresholds_apply = apply
+
+
 def demo_frames() -> dict:
     frames = {}
     for index, role in enumerate(CAMERA_ORDER):
@@ -213,6 +240,7 @@ def main() -> None:
     server.on_pause = simulation.pause
     server.on_resume = simulation.resume
     server.on_exit = simulation.close
+    configure_simulated_thresholds(server)
     server.update(frames=demo_frames())
     server.set_active_camera_role(CAMERA_ORDER[0])
     for key, _ in server.BOOT_STEPS:
