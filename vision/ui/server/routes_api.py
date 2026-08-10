@@ -1,33 +1,19 @@
 import asyncio
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 
 def setup_api_routes(app, server):
 
-    async def invoke(name, callback, *args, command_id=None, command=None):
+    async def invoke(name, callback, *args):
         if callback is None:
             return JSONResponse(
                 {"ok": False, "error": "Система ещё не готова"},
                 status_code=503,
             )
-        response_data = {}
         try:
-            dispatcher = getattr(server, "command_dispatcher", None)
-            if dispatcher is not None and command is not None:
-                command_result = await asyncio.to_thread(
-                    dispatcher, command_id or __import__("uuid").uuid4().hex, command, *args
-                )
-                if hasattr(command_result, "as_dict"):
-                    response_data = command_result.as_dict()
-                    accepted = bool(command_result.accepted)
-                elif hasattr(command_result, "accepted"):
-                    accepted = bool(command_result.accepted)
-                else:
-                    accepted = command_result
-            else:
-                accepted = await asyncio.to_thread(callback, *args)
+            accepted = await asyncio.to_thread(callback, *args)
         except Exception as exc:
             print(f"[API] {name} error: {exc}")
             return JSONResponse(
@@ -36,14 +22,10 @@ def setup_api_routes(app, server):
             )
         if accepted is False:
             return JSONResponse(
-                {
-                    "ok": False,
-                    "error": response_data.get("reason") or f"Команда «{name}» недоступна в текущем состоянии",
-                    **response_data,
-                },
+                {"ok": False, "error": f"Команда «{name}» недоступна в текущем состоянии"},
                 status_code=409,
             )
-        return JSONResponse({"ok": True, **response_data})
+        return JSONResponse({"ok": True})
 
     @app.get("/api/cameras")
     async def get_cameras():
@@ -75,30 +57,14 @@ def setup_api_routes(app, server):
                 "current":  server.boot_current,
                 "message":  server.boot_message,
                 "error":    server.boot_error,
-                "manual_cleanup_required": server.manual_cleanup_required,
                 "progress": (
                     done_count / total if total else 0
                 ),
                 "log": list(server.splash_log[-12:]),
             })
 
-    @app.post("/api/boot/manual-cleanup")
-    async def acknowledge_manual_cleanup(payload: dict | None = None):
-        if not server.manual_cleanup_required:
-            return JSONResponse({"ok": False, "error": "manual cleanup is not required"}, status_code=409)
-        confirmed = bool((payload or {}).get("confirmed"))
-        if not confirmed or server.on_manual_cleanup is None:
-            return JSONResponse({"ok": False, "error": "explicit cleanup confirmation is required"}, status_code=400)
-        try:
-            result = await asyncio.to_thread(server.on_manual_cleanup, confirmed)
-        except Exception as exc:
-            return JSONResponse({"ok": False, "error": str(exc)}, status_code=409)
-        server.manual_cleanup_required = False
-        return JSONResponse({"ok": True, "result": result})
-
     @app.get("/api/status")
     async def get_status():
-        server.touch_hmi()
         # Автоподхват порогов: если thresholds.json изменился вручную,
         # перечитываем его (в рабочем потоке) до отдачи статуса.
         if server.thresholds_file_mtime_changed():
@@ -110,7 +76,6 @@ def setup_api_routes(app, server):
                 "recent_parts":  server.recent_parts,
                 "mode":          server.mode,
                 "frame_version": server._cache_version,
-                "state_version": server._state_version,
                 "frame_versions": dict(server._latest_frames_ver),
                 "active_camera": server.active_camera_role,
                 "thresholds_revision": server.thresholds_revision,
@@ -160,27 +125,20 @@ def setup_api_routes(app, server):
     @app.post("/api/thresholds")
     async def api_set_thresholds(payload: dict | None = None):
         payload = payload or {}
-        if set(payload) - {"role", "values"}:
-            raise HTTPException(
-                400,
-                "Operator threshold request may contain only role and numeric values",
-            )
         role = payload.get("role")
         values = payload.get("values")
-        labels = None
+        labels = payload.get("labels")
         if not isinstance(role, str) or not role:
             raise HTTPException(400, "Роль камеры не указана")
         if not isinstance(values, dict) or not values:
             raise HTTPException(400, "Не указаны значения порогов")
-        import math
-        if any(
-            not isinstance(key, str)
-            or isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(float(value))
-            for key, value in values.items()
-        ):
-            raise HTTPException(400, "Все значения порогов должны быть конечными JSON-числами")
+        if labels is not None:
+            if not isinstance(labels, dict) or any(
+                not isinstance(name, str) for name in labels.values()
+            ):
+                raise HTTPException(
+                    400, "Названия порогов должны быть объектом со строками"
+                )
         if not server.thresholds_editable():
             return JSONResponse(
                 {
@@ -243,14 +201,7 @@ def setup_api_routes(app, server):
         return JSONResponse({"ok": True, "archive": result})
 
     @app.post("/api/start")
-    async def api_start(request: Request):
-        command_id = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                command_id = body.get("command_id")
-        except Exception:
-            body = None
+    async def api_start():
         print("[API] /api/start called")
         archive_ready, archive_error = server.archive_ready_for_start()
         if not archive_ready:
@@ -261,55 +212,27 @@ def setup_api_routes(app, server):
                 },
                 status_code=409,
             )
-        return await invoke("ПУСК", server.on_start, command_id=command_id, command="START")
+        return await invoke("ПУСК", server.on_start)
 
     @app.post("/api/stop")
-    async def api_stop(request: Request):
-        command_id = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                command_id = body.get("command_id")
-        except Exception:
-            body = None
+    async def api_stop():
         print("[API] /api/stop called")
-        return await invoke("СТОП", server.on_stop, command_id=command_id, command="STOP")
+        return await invoke("СТОП", server.on_stop)
 
     @app.post("/api/pause")
-    async def api_pause(request: Request):
-        command_id = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                command_id = body.get("command_id")
-        except Exception:
-            body = None
+    async def api_pause():
         print("[API] /api/pause called")
-        return await invoke("ПАУЗА", server.on_pause, command_id=command_id, command="PAUSE")
+        return await invoke("ПАУЗА", server.on_pause)
 
     @app.post("/api/resume")
-    async def api_resume(request: Request):
-        command_id = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                command_id = body.get("command_id")
-        except Exception:
-            body = None
+    async def api_resume():
         print("[API] /api/resume called")
-        return await invoke("ПРОДОЛЖИТЬ", server.on_resume, command_id=command_id, command="RESUME")
+        return await invoke("ПРОДОЛЖИТЬ", server.on_resume)
 
     @app.post("/api/exit")
-    async def api_exit(request: Request):
-        command_id = None
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                command_id = body.get("command_id")
-        except Exception:
-            body = None
+    async def api_exit():
         print("[API] /api/exit called")
-        return await invoke("ВЫХОД", server.on_exit, command_id=command_id, command="EXIT")
+        return await invoke("ВЫХОД", server.on_exit)
 
     @app.post("/api/diagnostics/cameras")
     async def api_diagnostic_cameras():

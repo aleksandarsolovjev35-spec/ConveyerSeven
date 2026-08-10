@@ -1,5 +1,4 @@
 from vision.ui.server.server import UIServer
-import uuid
 
 
 class LiveMonitorApi:
@@ -126,19 +125,19 @@ class LiveMonitor:
 
     def _bind_server_callbacks(self):
         self.server.on_start = (
-            lambda: self._invoke_command("START", self.start_callback)
+            lambda: self._invoke(self.start_callback)
         )
         self.server.on_stop = (
-            lambda: self._invoke_command("STOP", self.stop_callback)
+            lambda: self._invoke(self.stop_callback)
         )
         self.server.on_pause = (
-            lambda: self._invoke_command("PAUSE", self.pause_callback)
+            lambda: self._invoke(self.pause_callback)
         )
         self.server.on_resume = (
-            lambda: self._invoke_command("RESUME", self.resume_callback)
+            lambda: self._invoke(self.resume_callback)
         )
         self.server.on_exit = (
-            lambda: self._invoke_command("EXIT", self.exit_callback)
+            lambda: self._invoke(self.exit_callback)
         )
         self.server.on_distributor_diagnostic = (
             lambda command: self._invoke_args(
@@ -167,24 +166,24 @@ class LiveMonitor:
 
         # JOG
         self.server.on_jog_enter = (
-            lambda: self._invoke_command("JOG_ENTER", self.jog_enter_callback)
+            lambda: self._invoke(self.jog_enter_callback)
         )
         self.server.on_jog_exit = (
-            lambda: self._invoke_command("JOG_EXIT", self.jog_exit_callback)
+            lambda: self._invoke(self.jog_exit_callback)
         )
         self.server.on_jog_hold_start = (
-            lambda direction: self._invoke_command(
-                "JOG", self.jog_hold_start_callback, direction,
+            lambda direction: self._invoke_args(
+                self.jog_hold_start_callback, direction,
             )
         )
         self.server.on_jog_hold_heartbeat = (
-            lambda direction: self._invoke_command(
-                "JOG_HEARTBEAT", self.jog_hold_heartbeat_callback, direction,
+            lambda direction: self._invoke_args(
+                self.jog_hold_heartbeat_callback, direction,
             )
         )
         self.server.on_jog_hold_release = (
-            lambda reason="button released": self._invoke_command(
-                "JOG_RELEASE", self.jog_hold_release_callback, reason,
+            lambda reason="button released": self._invoke_args(
+                self.jog_hold_release_callback, reason,
             )
         )
         self.server.on_thresholds_apply = (
@@ -197,13 +196,6 @@ class LiveMonitor:
                 self.thresholds_reload_callback, fresh,
             )
         )
-
-    def _invoke_command(self, command, cb, *args):
-        dispatcher = getattr(self.server, "command_dispatcher", None)
-        if dispatcher is not None:
-            result = dispatcher(uuid.uuid4().hex, command, *args)
-            return bool(getattr(result, "accepted", result))
-        return self._invoke_args(cb, *args)
 
     def _invoke(self, cb):
         if cb is None:

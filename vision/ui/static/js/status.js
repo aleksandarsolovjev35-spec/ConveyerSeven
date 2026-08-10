@@ -45,15 +45,9 @@ async function fetchStatus() {
         return;
     }
 
-    // If a reconnect/poll delivers an older logical snapshot, ignore it.
-    // Frame versions are independent and must not be used as state ordering.
+    // Если за время запроса пришёл более свежий ответ (через immediate), старый игнорируем
     if (mySeq < _lastHandledStatusSeq) return;
-    if (typeof status.state_version === 'number'
-        && status.state_version < state.lastStateVersion) return;
     _lastHandledStatusSeq = mySeq;
-    if (typeof status.state_version === 'number') {
-        state.lastStateVersion = status.state_version;
-    }
 
     state.lastStatusAt = Date.now();
     state.statusReceived = true;
@@ -89,16 +83,12 @@ async function fetchStatus() {
     }
 
     const lineStatusPayload = status.line_status || {};
-    if (els.simulationBadge) {
-        els.simulationBadge.classList.toggle('is-hidden', lineStatusPayload.simulation !== true);
-    }
     const liveInfo = lineStatusPayload.live || {};
     const staticRoles = Array.isArray(liveInfo.static_roles) ? liveInfo.static_roles : [];
     const processInfo = lineStatusPayload.process || {};
     const inspectionRoles = Array.isArray(processInfo.inspection_roles) ? processInfo.inspection_roles : [];
     const processPhase = String(processInfo.phase || '').toUpperCase();
-    const inspectionDisplay = liveInfo.static === true
-        && inspectionRoles.includes(state.currentCamera)
+    const inspectionDisplay = inspectionRoles.includes(state.currentCamera)
         && (processPhase.includes('CAMERA') || processPhase.includes('ANALYSIS') || processPhase === 'PUBLISH');
     const selectedRoleStatic = liveInfo.all_roles_static === true
         || staticRoles.includes(state.currentCamera)

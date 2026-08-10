@@ -18,7 +18,7 @@ INPUT_WINDOW_SINK_PARAMETER_NAMES = (
     "input_window_sinks_overlap_min_px",
 )
 INPUT_PART_PRESENCE_PARAMETER_NAMES = (
-    "presence_min_count",
+    "input_part_presence_false_positive_max_count",
 )
 INPUT_ROLE_PARAMETER_KEYS = tuple(
     f"{role}.{name}"
@@ -115,15 +115,6 @@ ROLE_SECTIONS = (
 
 
 class ThresholdLoader:
-    """Versioned operator threshold store.
-
-    Threshold values are deliberately not range-clamped here.  Calibration is
-    owned by the developer/nalaďчик and the operator API only guarantees that
-    values are finite JSON numbers.
-    """
-
-    SCHEMA_VERSION = 2
-    LEGACY_SCHEMA_VERSION = 1
 
     OMISSION_CONFIDENCE_KEYS = (
         "SPIDER_LEFT.spider_long_omission_min_confidence",
@@ -148,115 +139,232 @@ class ThresholdLoader:
         # Понятные названия порогов для оператора: ROLE.parameter -> строка.
         # Хранятся в thresholds.json как "_label.<parameter>": "Название".
         self.labels: dict = {}
-        self.schema_version = self.SCHEMA_VERSION
-        self.backup_path = f"{self.path}.bak"
         self.thresholds = self._load()
 
     def _load(self) -> dict:
         if not os.path.exists(self.path):
             raise RuntimeError(f"Файл не найден: {self.path}")
+
         try:
-            with open(self.path, encoding="utf-8") as stream:
-                raw_data = json.load(stream)
+            with open(self.path, encoding="utf-8") as f:
+                raw_data = json.load(f)
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Ошибка чтения {self.path}: {exc}") from exc
         if not isinstance(raw_data, dict):
             raise ValueError("thresholds.json должен содержать объект")
-
-        migrated, labels, changed = self.migrate(raw_data)
-        data, labels = self._flatten_sections(migrated)
-        data.pop("schema_version", None)
+        data, labels = self._flatten_sections(raw_data)
         self.labels = labels
         self.validate(data, labels)
-        if changed:
-            # Migration is all-or-nothing.  ``save_file`` validates the full
-            # set again and creates the required backup before replacement.
-            self.save_file(self.path, data, labels)
         return data
 
     @classmethod
     def validate(cls, data: dict, labels: dict | None = None) -> None:
-        """Validate a complete threshold set without hidden calibration rules.
+        """Проверить плоский словарь порогов (ROLE.parameter -> value).
 
-        The write contract is intentionally strict about *shape* and JSON
-        types, but permissive about numeric values: every existing threshold
-        may be any finite number, including negative or fractional values.
-        This prevents an unnoticed clamp or min/max swap in the operator API.
+        Используется и при загрузке файла, и перед сохранением изменений,
+        сделанных оператором через интерфейс, чтобы в файл не попал ни один
+        некорректный порог.
+
+        Обязательные ключи (REQUIRED_KEYS) должны присутствовать — без них
+        правила не могут работать. Дополнительные ключи разрешены: новые
+        пороги можно добавлять в thresholds.json вручную, они подхватываются
+        при запуске, показываются в панели «Пороги правил» (группа «Прочие
+        пороги») и свободно редактируются. Ограничение только одно — значение
+        должно быть конечным числом, чтобы редактор мог его отображать.
+
+        ``labels`` — понятные названия порогов для оператора (ROLE.parameter
+        -> строка). Названия не влияют на логику правил, только на отображение.
         """
-        if not isinstance(data, dict):
-            raise ValueError("Пороги должны быть объектом")
         for key in cls.REQUIRED_KEYS:
             if key not in data:
-                raise ValueError(f"Отсутствует ключ в thresholds.json: {key}")
+                raise ValueError(
+                    f"Отсутствует ключ в thresholds.json: {key}"
+                )
 
-        for key, value in data.items():
-            if not isinstance(key, str):
-                raise ValueError("Ключ порога должен быть строкой")
+        extra_keys = sorted(
+            set(data) - set(cls.REQUIRED_KEYS) - {"disabled_rules"}
+        )
+        for key in extra_keys:
+            value = data[key]
             if (
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
                 or not math.isfinite(float(value))
             ):
-                raise ValueError(f"{key} должен быть конечным JSON-числом")
+                raise ValueError(f"{key} должен быть конечным числом")
 
         if labels is not None:
             if not isinstance(labels, dict):
                 raise ValueError("Названия порогов должны быть объектом")
             for key, name in labels.items():
-                if not isinstance(key, str) or not isinstance(name, str) or not name.strip():
-                    raise ValueError(f"Некорректное название порога: {key!r}")
+                if not isinstance(key, str):
+                    raise ValueError("Ключ названия порога должен быть строкой")
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError(
+                        f"Название порога {key} должно быть непустой строкой"
+                    )
 
-    @classmethod
-    def operator_update(cls, current: dict, role: str, values: dict) -> dict:
-        """Validate the narrow HMI write contract and return a full copy."""
-        if not isinstance(current, dict) or not isinstance(role, str) or not role:
-            raise ValueError("invalid threshold update envelope")
-        if not isinstance(values, dict) or not values:
-            raise ValueError("values must be a non-empty object")
-        prefix = role + "."
-        updated = dict(current)
-        for key, value in values.items():
-            full_key = key if key.startswith(prefix) else prefix + key
-            if full_key not in current:
-                raise ValueError(f"unknown operator threshold: {full_key}")
+        for key in cls.INPUT_PARAMETER_KEYS:
+            value = data[key]
             if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
+                type(value) not in (int, float)
                 or not math.isfinite(float(value))
+                or float(value) < 0.0
             ):
-                raise ValueError(f"{full_key} must be a finite JSON number")
-            updated[full_key] = value
-        cls.validate(updated)
-        return updated
+                raise ValueError(f"{key} должен быть конечным числом >= 0")
+            if key.endswith("_min_confidence") and float(value) > 1.0:
+                raise ValueError(f"{key} должен быть числом 0..1")
+            if key.endswith("_expected_count") and (
+                type(value) is not int or value <= 0
+            ):
+                raise ValueError(f"{key} должен быть целым числом > 0")
+            if key.endswith("_false_positive_max_count") and (
+                type(value) is not int or value < 0
+            ):
+                raise ValueError(f"{key} должен быть целым числом >= 0")
+            if key.endswith("_overlap_min_px") and (
+                type(value) is not int or value < 1
+            ):
+                raise ValueError(f"{key} должен быть целым числом >= 1")
+            if key.endswith("_center_zone_ratio") and not 0.0 < float(value) <= 1.0:
+                raise ValueError(f"{key} должен быть числом > 0 и <= 1")
 
-    @classmethod
-    def migrate(cls, raw_data: dict) -> tuple[dict, dict, bool]:
-        """Migrate the old presence key and return ``(data, labels, changed)``."""
-        if not isinstance(raw_data, dict):
-            raise ValueError("thresholds.json должен содержать объект")
-        data = dict(raw_data)
-        changed = data.get("schema_version") != cls.SCHEMA_VERSION
-        # Work on a copy of role sections so a failed migration cannot mutate
-        # the caller's decoded document.
         for role in ("INPUT_LEFT", "INPUT_RIGHT"):
-            section = data.get(role)
-            if not isinstance(section, dict):
-                continue
-            section = dict(section)
-            legacy = section.pop("input_part_presence_false_positive_max_count", None)
-            if "presence_min_count" not in section:
-                # Legacy 2 means ``count > 2``; the new production recipe is
-                # expressed directly as ``count >= 3``.
-                section["presence_min_count"] = 3
-                changed = True
-            elif legacy is not None:
-                changed = True
-            data[role] = section
-        data["schema_version"] = cls.SCHEMA_VERSION
-        labels = {}
-        flattened, labels = cls._flatten_sections(data)
-        flattened.pop("schema_version", None)
-        return data, labels, changed
+            top_min = data[f"{role}.input_window_geometry_top_px_min"]
+            top_max = data[f"{role}.input_window_geometry_top_px_max"]
+            bottom_min = data[f"{role}.input_window_geometry_bottom_px_min"]
+            bottom_max = data[f"{role}.input_window_geometry_bottom_px_max"]
+            if float(top_min) > float(top_max):
+                raise ValueError(f"{role}: top_px_min не может превышать top_px_max")
+            if float(bottom_min) > float(bottom_max):
+                raise ValueError(
+                    f"{role}: bottom_px_min не может превышать bottom_px_max"
+                )
+
+        for key in cls.CONTACT_PARAMETER_KEYS:
+            value = data[key]
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+            ):
+                raise ValueError(f"{key} должен быть конечным числом >= 0")
+            if key.endswith("_min_confidence") and float(value) > 1.0:
+                raise ValueError(f"{key} должен быть числом 0..1")
+            if key.endswith("_expected_count") and (
+                type(value) is not int or value <= 0
+            ):
+                raise ValueError(f"{key} должен быть целым числом > 0")
+            # short rule реализован строго для пары: при другом количестве
+            # он не мог бы честно проверить разность двух уровней.
+            if key.endswith("spider_contacts_short_expected_count") and value != 2:
+                raise ValueError(f"{key} должен быть равен 2 (пара контактов)")
+            # long rule строит линии и тренд расстояний, для чего нужны хотя
+            # бы две точки. Большее число контактов остаётся поддержанным.
+            if key.endswith("spider_contacts_long_expected_count") and value < 2:
+                raise ValueError(f"{key} должен быть целым числом >= 2")
+            if "inscribed_rect_" in key and float(value) <= 0.0:
+                raise ValueError(f"{key} должен быть числом > 0")
+
+        for key in cls.OMISSION_CONFIDENCE_KEYS:
+            value = data[key]
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(float(value))
+                or not 0.0 <= float(value) <= 1.0
+            ):
+                raise ValueError(f"{key} должен быть числом 0..1")
+
+        for role, family in (
+            ("SPIDER_LEFT", "long"),
+            ("SPIDER_RIGHT", "long"),
+            ("SPIDER_IN", "short"),
+            ("SPIDER_OUT", "short"),
+        ):
+            prefix = f"{role}.spider_{family}_omission_"
+            for suffix in (
+                "allowed_thickness_px",
+                "top_line_max_residual_px",
+            ):
+                value = data[prefix + suffix]
+                if (
+                    type(value) not in (int, float)
+                    or not math.isfinite(float(value))
+                    or float(value) < 0.0
+                ):
+                    raise ValueError(
+                        f"{prefix}{suffix} должен быть числом >= 0"
+                    )
+            component_min = data[prefix + "excess_component_min_px"]
+            if type(component_min) is not int or component_min < 1:
+                raise ValueError(
+                    f"{prefix}excess_component_min_px должен быть целым >= 1"
+                )
+            ratio_min = data[prefix + "top_line_min_inlier_ratio"]
+            if (
+                type(ratio_min) not in (int, float)
+                or not math.isfinite(float(ratio_min))
+                or not 0.0 < float(ratio_min) <= 1.0
+            ):
+                raise ValueError(
+                    f"{prefix}top_line_min_inlier_ratio должен быть числом "
+                    "> 0 и <= 1"
+                )
+
+        for key in cls.TOP_PARAMETER_KEYS:
+            value = data[key]
+            # margin может быть отрицательным (сжатие области)
+            allow_negative = key.endswith("_margin_px")
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(float(value))
+                or (float(value) < 0.0 and not allow_negative)
+            ):
+                if allow_negative:
+                    raise ValueError(f"{key} должен быть конечным числом")
+                raise ValueError(f"{key} должен быть конечным числом >= 0")
+            if key.endswith("_min_confidence") and float(value) > 1.0:
+                raise ValueError(f"{key} должен быть числом 0..1")
+            if key.endswith("_expected_count") and (
+                type(value) is not int or value <= 0
+            ):
+                raise ValueError(f"{key} должен быть целым числом > 0")
+            # Топология top_contacts фиксирована в коде как 5L+5R+2T+2B.
+            # Любое другое число в UI раньше создавало ложное впечатление,
+            # что раскладка будет пересчитана, хотя правило этого не делает.
+            if key == "TOP.top_contacts_expected_count" and value != 14:
+                raise ValueError(
+                    "TOP.top_contacts_expected_count должен быть равен 14 "
+                    "(5L+5R+2T+2B)"
+                )
+            if "inscribed_rect_" in key and float(value) <= 0.0:
+                raise ValueError(f"{key} должен быть числом > 0")
+            if key.endswith("_excess_component_min_px") and (
+                type(value) is not int or value < 1
+            ):
+                raise ValueError(f"{key} должен быть целым числом >= 1")
+
+        # Пороги построения области заплыва через контакты
+        contact_inner = data["TOP.top_platform_overlap_contact_inner_ratio"]
+        if not 0.0 <= float(contact_inner) <= 1.0:
+            raise ValueError(
+                "TOP.top_platform_overlap_contact_inner_ratio должен быть 0..1"
+            )
+        expand_x = data["TOP.top_platform_overlap_expand_x_ratio"]
+        expand_y = data["TOP.top_platform_overlap_expand_y_ratio"]
+        if float(expand_x) <= 0.0 or float(expand_y) <= 0.0:
+            raise ValueError(
+                "TOP.top_platform_overlap_expand_*_ratio должны быть > 0"
+            )
+
+        disabled = data.get("disabled_rules", [])
+        if not isinstance(disabled, list) or any(
+            not isinstance(name, str) for name in disabled
+        ):
+            raise ValueError("disabled_rules должен быть списком строк")
+        if "part_presence" in disabled:
+            raise ValueError("part_presence нельзя отключать")
+        # конец validate()
 
     @staticmethod
     def _flatten_sections(raw_data: dict) -> tuple[dict, dict]:
@@ -274,7 +382,7 @@ class ThresholdLoader:
         flattened: dict = {}
         labels: dict = {}
         for key, value in raw_data.items():
-            if str(key) in ("schema_version", "_schema_version") or str(key).startswith("_comment"):
+            if str(key).startswith("_comment"):
                 continue
             if str(key).startswith("_label."):
                 # Служебный ключ названия вне секции камеры: некуда привязать,
@@ -307,26 +415,20 @@ class ThresholdLoader:
 
     @staticmethod
     def save_file(path: str, data: dict, labels: dict | None = None) -> None:
-        """Atomically save a complete versioned threshold document.
+        """Сохранить плоский dict порогов в файл секциями по ролям.
 
-        Validation happens before any file operation.  The previous file is
-        copied to ``.bak`` and the new document is fsynced before replacement.
+        Формат повторяет читаемый вручную вид thresholds.json: секция камеры
+        с параметрами и пустая строка между секциями. ``disabled_rules``
+        записывается в конец. Перед сохранением вызывающий обязан выполнить
+        :meth:`validate`, чтобы в файл не попали некорректные значения.
+
+        ``labels`` — понятные названия порогов (ROLE.parameter -> строка);
+        записываются в секции камеры как ``"_label.<parameter>": "Название"``.
         """
-        ThresholdLoader.validate(data, labels)
-        destination = os.path.abspath(path)
-        os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
-        if os.path.exists(destination):
-            backup = destination + ".bak"
-            with open(destination, "rb") as source, open(backup, "wb") as target:
-                target.write(source.read())
-                target.flush()
-                os.fsync(target.fileno())
-        data = dict(data)
-        data.pop("schema_version", None)
-        data["schema_version"] = ThresholdLoader.SCHEMA_VERSION
-
         grouped: dict = {}
         for key, value in data.items():
+            if key == "disabled_rules":
+                continue
             role, dot, parameter = key.partition(".")
             if dot and role in ROLE_SECTIONS:
                 grouped.setdefault(role, {})[parameter] = value
@@ -341,12 +443,13 @@ class ThresholdLoader:
         ]
 
         lines = ["{"]
+        has_disabled = "disabled_rules" in data
         last_index = len(ordered_keys) - 1
         for index, role in enumerate(ordered_keys):
             if index:
                 lines.append("")
             params = grouped[role]
-            needs_comma = index < last_index
+            needs_comma = index < last_index or has_disabled
             if isinstance(params, dict):
                 lines.append(f"    {json.dumps(role, ensure_ascii=False)}: {{")
                 role_label_keys = sorted(
@@ -380,13 +483,16 @@ class ThresholdLoader:
                     + ("," if needs_comma else "")
                 )
 
+        if "disabled_rules" in data:
+            lines.append("")
+            lines.append(
+                f'    "disabled_rules": '
+                f'{json.dumps(data["disabled_rules"], ensure_ascii=False)}'
+            )
+
         lines.append("}")
-        temp_path = destination + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_path, destination)
 
     def get_all(self) -> dict:
         return self.thresholds
@@ -408,8 +514,8 @@ class ThresholdLoader:
 
 PARAM_LABELS = {
     # ── INPUT: наличие детали ──────────────────────────────────────────
-    "presence_min_count": (
-        "Минимальное число flatness для присутствия, шт."
+    "input_part_presence_false_positive_max_count": (
+        "Допустимое число ложных срабатываний, шт."
     ),
 
     # ── INPUT: геометрия окон ──────────────────────────────────────────
@@ -589,9 +695,10 @@ PARAM_LABELS = {
 # одновременно доступна интеграциям через GET /api/thresholds. Она снимает
 # неоднозначности единиц и показывает общие пороги между правилами.
 PARAM_DESCRIPTIONS = {
-    "presence_min_count": (
-        "Деталь подтверждается при count >= этого порога отдельно на каждой "
-        "INPUT-камере; production требует обе роли."
+    "input_part_presence_false_positive_max_count": (
+        "До этого числа обнаружений окон включительно лоток считается "
+        "пустым. Деталь подтверждается только если порог превышен на обеих "
+        "INPUT-камерах."
     ),
     "input_window_geometry_min_confidence": (
         "Минимальная уверенность YOLO для обнаружения окон. Этот общий порог также "
@@ -915,7 +1022,7 @@ FIXED_VALUE_PARAMETERS = {
 # порядок технических ключей. Так min всегда стоит перед max, а оператор
 # сначала видит отбор модели/количество, затем геометрию и фильтры.
 PARAMETER_DISPLAY_ORDER = (
-    "presence_min_count",
+    "input_part_presence_false_positive_max_count",
     "input_window_geometry_min_confidence",
     "input_window_geometry_expected_count",
     "input_window_geometry_top_px_min",
@@ -983,33 +1090,93 @@ _PARAMETER_DISPLAY_INDEX = {
 
 
 def _param_meta(key: str, value) -> dict:
-    """Return display metadata without imposing a calibration range.
+    """Метаданные одного параметра для редактора.
 
-    The operator editor may send any finite JSON number.  ``step`` is only a
-    keyboard/UI hint; no min/max or readonly flag is emitted for thresholds.
+    Границы ввода следуют реальной валидации :class:`ThresholdLoader`, а
+    не произвольному «безопасному» диапазону. Для строго положительных
+    значений UI использует наименьший практический шаг редактора вместо 0;
+    верхний предел не задаётся, если его нет в правилах.
     """
+    # Точный перевод по имени параметра; для незнакомых (добавленных вручную)
+    # порогов — запасной перевод по суффиксу, иначе техническое имя.
     label = PARAM_LABELS.get(key)
     if label is None:
         label = next(
             (
                 suffix_label
                 for suffix, suffix_label in sorted(
-                    SUFFIX_LABELS.items(), key=lambda item: -len(item[0])
+                    SUFFIX_LABELS.items(), key=lambda item: -len(item[0]),
                 )
                 if key.endswith(suffix)
             ),
             key,
         )
     description = PARAM_DESCRIPTIONS.get(
-        key, "Числовой production-порог. Технический ключ: " + key
+        key,
+        "Дополнительный числовой порог. Технический ключ: " + key,
     )
-    return {
+    meta = {
         "key": key,
         "label": label,
         "description": description,
         "value": value,
-        "step": 0.1,
     }
+    fixed_value = FIXED_VALUE_PARAMETERS.get(key)
+    if fixed_value is not None:
+        meta.update({
+            "step": 1,
+            "min": fixed_value,
+            "max": fixed_value,
+            "readonly": True,
+        })
+        return meta
+
+    # Целые счётчики.
+    if key.endswith("spider_contacts_long_expected_count"):
+        meta.update({"step": 1, "min": 2})
+    elif key.endswith("_expected_count"):
+        meta.update({"step": 1, "min": 1})
+    elif key.endswith("_false_positive_max_count"):
+        meta.update({"step": 1, "min": 0})
+    elif key.endswith("_excess_component_min_px"):
+        meta.update({"step": 1, "min": 1})
+    elif key.endswith("_overlap_min_px"):
+        # Перекрытие — число raster-пикселей. Ноль сделал бы дефектом даже
+        # пару masks без общих пикселей, поэтому рабочий минимум — один.
+        meta.update({"step": 1, "min": 1})
+    elif key.endswith("_area_absolute_min"):
+        meta.update({"step": 1, "min": 0})
+
+    # Нормированные пороги.
+    elif key.endswith("_min_confidence"):
+        meta.update({"step": 0.01, "min": 0, "max": 1})
+    elif key.endswith("_center_zone_ratio") or key.endswith("_inlier_ratio"):
+        meta.update({"step": 0.01, "min": 0.01, "max": 1})
+    elif key.endswith("_inner_ratio"):
+        meta.update({"step": 0.01, "min": 0, "max": 1})
+    elif key.endswith("_expand_x_ratio") or key.endswith("_expand_y_ratio"):
+        meta.update({"step": 0.05, "min": 0.01})
+    elif key.endswith("_y_filter_ratio"):
+        meta.update({"step": 0.1, "min": 0})
+    elif (
+        key.endswith("_ratio")
+        or key.endswith("_tilt_ratio_max")
+        or key.endswith("_slope")
+    ):
+        # В схеме нет верхней границы: коэффициент/наклон больше единицы
+        # допустим, если его действительно нужно настроить под изделие.
+        meta.update({"step": 0.01, "min": 0})
+
+    # Геометрические величины. margin — единственный штатный отрицательный
+    # параметр (сжимает область), остальные пиксельные значения неотрицательны.
+    elif key.endswith("_margin_px"):
+        meta.update({"step": 0.1})
+    elif "inscribed_rect_" in key:
+        meta.update({"step": 0.1, "min": 0.1})
+    else:
+        meta.update({"step": 0.1, "min": 0})
+    return meta
+
 
 def describe_role_parameters(role: str, thresholds: dict) -> list:
     """Пороги роли, сгруппированные по правилам, в формате для UI.
@@ -1025,7 +1192,7 @@ def describe_role_parameters(role: str, thresholds: dict) -> list:
     params = [
         (key[len(prefix):], value)
         for key, value in thresholds.items()
-        if key.startswith(prefix)
+        if key.startswith(prefix) and key != "disabled_rules"
     ]
 
     groups = []
