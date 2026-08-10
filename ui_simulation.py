@@ -23,6 +23,23 @@ from inspection.part_archive import PartArchive
 from vision.ui.server.server import CAMERA_ORDER, UIServer
 
 
+PROCESS_LABELS = {
+    "IDLE": "Система готова к пуску",
+    "READY": "Цикл запущен",
+    "ROUTE_PREPARE": "Подготовка маршрута распределителя",
+    "MOTION": "Горизонтальное движение ленты",
+    "SETTLE": "Ожидание затухания вибрации",
+    "CAPTURE": "Захват стоп-кадра камеры",
+    "ANALYSIS": "Анализ моделей и правил",
+    "PUBLISH": "Публикация результата контроля",
+    "STOPPING": "Штатное завершение корпусов на линии",
+    "STOPPED": "Линия остановлена и пуста",
+    "PAUSED": "Пауза линии",
+    "JOG": "Ручное перемещение",
+    "SELECTED_ANALYSIS": "Анализ выбранного стоп-кадра",
+}
+
+
 @dataclass
 class SimRule:
     """Small compatible rule-result object consumed by DebugOverlay."""
@@ -71,6 +88,7 @@ class LineSimulation:
         self.selected_role: str | None = None
         self.last_diagnostic = "SIMULATION READY"
         self.archive_compressed = False
+        self.process_revision = 0
         self.step = 0
         self.next_id = 1
         self.slot_counter = 0
@@ -104,6 +122,7 @@ class LineSimulation:
             self.stop_requested = False
             self.state = "RUNNING"
             self._wake.set()
+        self._publish("READY")
         return True
 
     def enter_jog(self) -> bool:
@@ -362,6 +381,8 @@ class LineSimulation:
                 elif any(part.position == 4 for part in self.parts):
                     active_roles = list(self.CONTROL_STAGES)
             inspection_static = phase in ("CAPTURE", "ANALYSIS", "PUBLISH")
+            self.process_revision += 1
+            capture_roles = active_roles if phase == "CAPTURE" else []
             status = {
                 "state": state,
                 "exit_requested": False,
@@ -389,10 +410,16 @@ class LineSimulation:
                              "distributor_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None,
                              "camera_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None,
                              "vision_rule_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None},
-                "process": {"phase": phase, "positions": [position] if position is not None else [],
+                "process": {"phase": phase,
+                            "label": PROCESS_LABELS.get(phase, phase.replace("_", " ")),
+                            "step": self.step,
                             "part_id": self.egress.id if self.egress else None,
+                            "positions": [position] if position is not None else [],
+                            "capture_roles": capture_roles,
                             "inspection_roles": active_roles,
-                            "conveyor": {"speed": 18000}},
+                            "conveyor": {"speed": 18000},
+                            "revision": self.process_revision,
+                            "updated_at": time.time()},
                 "selected_analysis": {"active": self.selected_role is not None, "role": self.selected_role},
                 "diagnostic_allowed": state in ("IDLE", "STOPPED") and self.selected_role is None,
                 "diagnostic_busy": False,
