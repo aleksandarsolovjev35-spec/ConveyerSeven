@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+node_modules/
+
+venv/
+.venv/
+
+archive/
+debug_frames/

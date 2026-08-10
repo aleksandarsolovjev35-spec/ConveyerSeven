@@ -1,0 +1,190 @@
+/* history-strip.css — Line Monitor UI module */
+
+/* ─── Bottom strip row (History + Conveyor Phase) ───────────────── */
+
+.bottom-strip-row {
+    display: flex;
+    gap: var(--gap);
+    align-items: stretch;
+    min-width: 0;
+    width: 100%;
+}
+
+.history {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    height: 54px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.history-title {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    padding-right: 10px;
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+.history-cards {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    gap: 5px;
+    overflow: hidden;
+    padding: 2px;
+}
+
+.history-card {
+    flex: 1 1 0;
+    min-width: 0;
+    border: 1px solid;
+    border-radius: var(--radius-sm);
+    /* Самая длинная подпись «ОЧИСТКА» должна входить целиком даже при
+       десяти карточках в штатном окне 1280px: компактные боковые
+       паддинги освобождают место под текст, а max-width оставляет
+       запас на широких окнах. Карточка объявлена контейнером, чтобы
+       надписи масштабировались под её фактическую ширину и не
+       обрезались на узких окнах (последние корпуса всегда видны). */
+    container-type: inline-size;
+    padding: 3px 4px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-width: 84px;
+    background: rgba(0, 0, 0, 0.3);
+    transition:
+        background-color var(--t-normal) var(--ease),
+        border-color var(--t-normal) var(--ease);
+    cursor: pointer;
+}
+
+.history-card:hover {
+    border-color: var(--text-dim);
+}
+
+.history-card.cat-good    { border-color: var(--ok); background: var(--ok-bg); }
+.history-card.cat-bad     { border-color: var(--bad); background: var(--bad-bg); }
+.history-card.cat-cleanup { border-color: var(--warn); background: var(--warn-bg); }
+
+.history-card.cat-good:hover { border-color: var(--ok); }
+.history-card.cat-bad:hover { border-color: var(--bad); }
+.history-card.cat-cleanup:hover { border-color: var(--warn); }
+
+.history-card-id {
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-card-symbol {
+    overflow: hidden;
+    /* 10px + узкий трекинг: «ОЧИСТКА» помещается в карточку без
+       обрезки, а ellipsis остаётся страховкой на узких окнах. */
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Узкие карточки: надписи ужимаются под фактическую ширину, чтобы
+   текст последних корпусов не обрубался. Там, где контейнерные
+   единицы не поддерживаются, остаётся базовый размер 10px. */
+@supports (width: 1cqw) {
+    .history-card-id {
+        font-size: clamp(7px, 22cqw, 10px);
+    }
+    .history-card-symbol {
+        font-size: clamp(6px, 15cqw, 10px);
+    }
+}
+
+.history-card.cat-good .history-card-symbol    { color: var(--ok); }
+.history-card.cat-bad .history-card-symbol     { color: var(--bad); }
+.history-card.cat-cleanup .history-card-symbol { color: var(--warn); }
+
+.history-empty {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 12px;
+    font-family: var(--font-mono);
+}
+
+/* ─── Process Phase Block (Right side under Путь корпусов) ──────── */
+
+.process-phase-panel {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    height: 54px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    flex: 0 0 280px;
+    min-width: 200px;
+    max-width: 320px;
+    overflow: hidden;
+}
+
+.process-phase-title {
+    color: var(--text-dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.process-phase-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
+@media (max-height: 600px) {
+    .history,
+    .process-phase-panel { height: 48px; }
+}
+
+@media (max-height: 500px) {
+    .history,
+    .process-phase-panel { height: 42px; }
+    .history-title,
+    .process-phase-title { font-size: 8px; }
+    .process-phase-label { font-size: 9.5px; }
+}
+
+@media (max-width: 1100px) {
+    .process-phase-panel {
+        flex-basis: 220px;
+        min-width: 170px;
+    }
+}
