@@ -264,12 +264,55 @@ const _lineExitTokens = new Set();
 let _lineSyncDone = false;
 let _appliedLineParts = [];
 let _appliedInLine = 0;
+// Длительность анимации падения в лоток (token-sink). После горизонтального
+// скольжения до +8 элемент падает вниз ровно этот промежуток времени.
+const CHUTE_SINK_MS = 700;
 
 function lineMoveDuration(process = {}) {
     const conv = process.conveyor || {};
     const speed = Number(conv.speed) || 0;
-    if (!speed) return 420;
-    return Math.max(265, Math.min(620, Math.round(8400000 / speed)));
+    if (!speed) return 700;
+    return Math.max(400, Math.min(1100, Math.round(8400000 / speed * 1.7)));
+}
+
+// Корпус (человек) стоит в ОКНЕ вагона. Окно = ВСЯ ячейка (WINDOW_PAD 0),
+// чтобы непрозрачная стенка ленты НЕ перекрывала 1px-рамку позиции (иначе
+// обводка «срезается»). Стенки остаются только в зазорах между ячейками
+// (3px), за которыми корпус скрывается при переезде. Сам корпус чуть меньше
+// окна (TOKEN_SCALE), поэтому не вылезает за рамку.
+const WINDOW_PAD = 0;
+const TOKEN_SCALE_W = 0.96;
+const TOKEN_SCALE_H = 0.92;
+
+// Окно вагона = ячейка, сжатая на WINDOW_PAD с каждой стороны. Именно эти
+// прямоугольники пробиваются в маске тела вагона (и в них стоит человек).
+function _windowRect(r) {
+    return {
+        left: r.left + WINDOW_PAD,
+        top: r.top + WINDOW_PAD,
+        width: r.width - 2 * WINDOW_PAD,
+        height: r.height - 2 * WINDOW_PAD,
+    };
+}
+
+function tokenBox(target) {
+    // Центрируем корпус и СНАПим к целым пикселям синхронно по центру.
+    // Если оставить дробный left/width, 1px рамка корпуса растеризуется с
+    // антиалиасингом и «смазывается», из-за чего корпус визуально съезжает
+    // то влево, то вправо на разных позициях. Округляем центр к целому, а
+    // отступ строим от округлённой ширины — тогда обе границы ложатся на
+    // целые пиксели и рамка рисуется чётко.
+    const w = Math.max(8, Math.round(target.width * TOKEN_SCALE_W));
+    const h = Math.max(6, Math.round(target.height * TOKEN_SCALE_H));
+    // Центр ячейки (дробный), округлённый к ближайшему целому.
+    const cx = Math.round(target.left + target.width / 2);
+    const cy = Math.round(target.top + target.height / 2);
+    return {
+        left: cx - Math.round(w / 2),
+        top: cy - Math.round(h / 2),
+        width: w,
+        height: h,
+    };
 }
 
 // ``CONVEYOR_CONFIRMED`` is published after the controller has already
@@ -292,6 +335,11 @@ function _lineCellRects(cells) {
     const rects = {};
     cells.forEach(cell => {
         const r = cell.getBoundingClientRect();
+        // НЕ округляем координаты: независимое округление каждой ячейки
+        // ломает общие границы между соседями (сумма не сходится), из-за чего
+        // маска-тело вагона перекрывает обводку позиции то с одной, то с
+        // другой стороны. Держим дробные координаты — и маска, и токены
+        // используют одну и ту же геометрию, совпадающую с реальными границами.
         rects[Number(cell.dataset.pos)] = {
             left: r.left - containerRect.left,
             top: r.top - containerRect.top,
@@ -300,6 +348,56 @@ function _lineCellRects(cells) {
         };
     });
     return {containerRect, rects};
+}
+
+// Строит SVG-маску «окон вагона» в ОТНОСИТЕЛЬНЫХ координатах (0..100),
+// как и сама сетка из колонок 1fr. viewBox + mask-size 100% заставляют маску
+// масштабироваться вместе с контейнером так же, как сетку, — поэтому окна
+// всегда совпадают с границами позиций независимо от ширины и масштаба.
+// Маска непрозрачна (тело вагона) везде, КРОМЕ прямоугольников-окон по
+// Строит SVG-маску «окон вагона» в АБСОЛЮТНЫХ пикселях (width/height равны
+// реальному размеру панели), координаты окон — в px. mask-size {W}px {H}px
+// кладёт её 1:1. Это рабочий вариант, при котором окна совпадали с ячейками
+// и анимации шли внутри вагона (без viewBox/относительных координат, которые
+// искажали пропорции окон на контроле).
+function _buildWindowMaskSvg(rects, W, H) {
+    // Маска в АБСОЛЮТНЫХ пикселях (width=W, height=H), как в рабочем вагоне.
+    // SVG viewBox="0 0 100 100" квадратный, а панель широкая — при
+    // mask-size 100% 100% браузер мог сохранять пропорции и «сжимать» маску.
+    // Абсолютные px дают правильную форму (W×H) и mask-size в px кладёт 1:1.
+    let d = `M0,0 L${W},0 L${W},${H} L0,${H} Z `;
+    // Окна «вагона» — ячейки, сжатые на WINDOW_PAD (та же геометрия, что у
+    // токена): вокруг каждого окна остаётся непрозрачная стенка вагона, из-за
+    // которой человек исчезает при переезде между окнами.
+    for (let pos = 0; pos <= 8; pos++) {
+        const r = rects[pos];
+        if (!r) continue;
+        const w = _windowRect(r);
+        const x0 = w.left, y0 = w.top;
+        const x1 = w.left + w.width, y1 = w.top + w.height;
+        if (x1 <= x0 || y1 <= y0) continue;
+        d += `M${x0},${y0} L${x1},${y0} L${x1},${y1} L${x0},${y1} Z `;
+    }
+    const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">` +
+        `<path fill="black" fill-rule="evenodd" d="${d}"/></svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+function _applyWindowMask(containerRect, rects) {
+    const belt = els.lineCells && els.lineCells.querySelector('.conveyor-belt');
+    if (!belt) return;
+    // Абсолютная маска в px, mask-size = фактический размер ленты (дробный),
+    // чтобы маска ложилась 1:1 с панелью без субпиксельного зазора.
+    const W = containerRect.width;
+    const H = containerRect.height;
+    const uri = _buildWindowMaskSvg(rects, W, H);
+    belt.style.webkitMaskImage = uri;
+    belt.style.maskImage = uri;
+    belt.style.webkitMaskSize = `${W}px ${H}px`;
+    belt.style.maskSize = `${W}px ${H}px`;
+    belt.style.webkitMaskRepeat = 'no-repeat';
+    belt.style.maskRepeat = 'no-repeat';
 }
 
 function _applyTokenCategory(el, category) {
@@ -399,24 +497,27 @@ function _updateDistributorRoute(ls) {
 function updateLineCells(lineParts, process = {}) {
     if (!els.lineCells) return;
     const phase = String(process.phase || '').toUpperCase();
-    const isConveyorMoving = isConveyorTransportPhase(phase);
     let belt = els.lineCells.querySelector('.conveyor-belt');
     if (!belt) {
         belt = document.createElement('div');
         belt.className = 'conveyor-belt';
         els.lineCells.insertBefore(belt, els.lineCells.firstChild);
     }
-    belt.classList.toggle('moving', !!isConveyorMoving);
+    // Подсветка ленты во время движения убрана: лента всегда статична,
+    // класс «moving» не применяется (в CSS для него больше нет стилей).
     els.lineCells.style.setProperty('--move-duration', `${lineMoveDuration(process)}ms`);
 
     const cells = els.lineCells.querySelectorAll('.line-cell[data-pos]');
     const active = Array.isArray(process.positions) ? process.positions : [];
     const phaseUpper = phase;
+    // Подсветка ячеек зелёным во время движения ленты убрана: в транспортных
+    // фазах (CONVEYOR_MOVING/MOTION) не вешаем process-active (зелёная рамка).
+    const isTransportPhase = isConveyorTransportPhase(phase);
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         cell.className = 'line-cell';
         if (position === 8) cell.classList.add('line-cell-chute');
-        if (active.includes(position)) {
+        if (active.includes(position) && !isTransportPhase) {
             cell.classList.add('process-active');
             if (phase.includes('CAMERA') || phase.includes('ANALYSIS')) cell.classList.add('process-camera');
             if (phase.includes('ROUTE') || phase.includes('DROP')) cell.classList.add('process-route');
@@ -434,15 +535,20 @@ function updateLineCells(lineParts, process = {}) {
     if (!sortPart) {
         // Пауза серии с пустой ячейкой: лоток держит канал распределителя,
         // чтобы оператор видел, куда пойдёт следующий корпус той же категории.
-        if (_currentDistributorCategory === 'BAD') chuteCat = 'BAD';
+        if (_currentDistributorCategory === 'GOOD') chuteCat = 'GOOD';
+        else if (_currentDistributorCategory === 'BAD') chuteCat = 'BAD';
         else if (_currentDistributorCategory === 'CLEANUP') chuteCat = 'CLEANUP';
     }
     cells.forEach(cell => {
         const position = Number(cell.dataset.pos);
         if (position === 7 && sortHeld) cell.classList.add('cell-hold');
         if (position === 8) {
+            // Лоток подсвечивается цветом маршрута корпуса: BAD — красный,
+            // CLEANUP — жёлтый, GOOD — зелёный (тот же принцип, что у
+            // красного и жёлтого — сброс загорается цветом категории).
             if (chuteCat === 'BAD') cell.classList.add('chute-bad');
             else if (chuteCat === 'CLEANUP') cell.classList.add('chute-cleanup');
+            else if (chuteCat === 'GOOD') cell.classList.add('chute-good');
         }
     });
 
@@ -493,10 +599,14 @@ function updateLineCells(lineParts, process = {}) {
         token.exitPosition = token.dropping ? 8 : null;
         _lineExitTokens.add(token);
         if (token.dropping) {
-            // Падение: маркер уже уехал в лоток +8 — «ныряет» через CSS
-            // (token-in-chute), номер остаётся видимым. Плашку не гасим
-            // inline-opacity, чтобы число не пропало вместе с ней.
-            _scheduleLineTokenRemoval(token, cells, duration + 80);
+            // Падение: маркер доехал до лотка +8 и «ныряет» вниз через CSS
+            // (token-in-chute); номер остаётся видимым. Плашку не гасим
+            // inline-opacity, чтобы число не пропало вместе с ней. Удаляем
+            // только после того, как горизонтальное скольжение (duration) и
+            // само падение (CHUTE_SINK_MS) полностью отработали.
+            _scheduleLineTokenRemoval(
+                token, cells, duration + CHUTE_SINK_MS + 120
+            );
             continue;
         }
         if (geometryReady && rects[token.position]) {
@@ -538,6 +648,11 @@ function updateLineCells(lineParts, process = {}) {
         return;
     }
 
+    // Окна «вагона» подгоняем под фактические границы ячеек: маска тела
+    // ленты строится по измеренным rect, поэтому окна всегда совпадают с
+    // позициями, и видны их рамки.
+    _applyWindowMask(containerRect, rects);
+
     for (const [id, meta] of wanted) {
         let token = _lineTokens.get(id);
 
@@ -566,13 +681,17 @@ function updateLineCells(lineParts, process = {}) {
         // остаётся видимой (opacity 1), чтобы номер корпуса читался весь сброс.
         // Никакой inline-opacity:0 — иначе число спрячется вместе с плашкой.
         const targetOpacity = '1';
+        // Человек стоит в ОКНЕ вагона (окно = ячейка, сжатая на WINDOW_PAD),
+        // той же геометрии, что и прозрачная часть маски. Так человек центрирован
+        // в окне и при переезде скрывается за непрозрачной стенкой вагона.
+        const box = tokenBox(_windowRect(target));
         if (!token) {
             const el = document.createElement('div');
             el.className = 'line-token';
             el.dataset.partId = String(id);
-            el.style.top = `${target.top}px`;
-            el.style.width = `${target.width}px`;
-            el.style.height = `${target.height}px`;
+            el.style.top = `${box.top}px`;
+            el.style.width = `${box.width}px`;
+            el.style.height = `${box.height}px`;
             token = {el, position: targetPos, category: null, dropping: false, held: false};
             _lineTokens.set(id, token);
             els.lineCells.appendChild(el);
@@ -581,24 +700,18 @@ function updateLineCells(lineParts, process = {}) {
             const num = document.createElement('span');
             num.className = 'line-token-num';
             el.appendChild(num);
-            // Появление корпуса на линии: плавный подъём от ленты.
+            // Появление корпуса на линии: плавное опускание сверху вниз в
+            // свою ячейку (деталь «подаётся» на ленту). Горизонтального
+            // вкатывания слева нет — маркер падает в ячейку сверху через
+            // CSS-анимацию token-enter.
             el.classList.add('token-enter');
-            if (_lineSyncDone) {
-                el.style.left = `${target.left - step}px`;
-                el.style.opacity = '0';
-                requestAnimationFrame(() => {
-                    el.style.left = `${target.left}px`;
-                    el.style.opacity = targetOpacity;
-                });
-            } else {
-                el.style.left = `${target.left}px`;
-                el.style.opacity = targetOpacity;
-            }
+            el.style.left = `${box.left}px`;
+            el.style.opacity = targetOpacity;
         } else {
-            token.el.style.top = `${target.top}px`;
-            token.el.style.width = `${target.width}px`;
-            token.el.style.height = `${target.height}px`;
-            const targetLeft = `${target.left}px`;
+            token.el.style.top = `${box.top}px`;
+            token.el.style.width = `${box.width}px`;
+            token.el.style.height = `${box.height}px`;
+            const targetLeft = `${box.left}px`;
             if (token.el.style.left !== targetLeft) token.el.style.left = targetLeft;
             if (token.el.style.opacity !== '0') token.el.style.opacity = targetOpacity;
             token.position = targetPos;
@@ -615,10 +728,31 @@ function updateLineCells(lineParts, process = {}) {
         }
         // Придержание, сброс и нахождение в лотке рисуются поверх цвета
         // категории, но не смешиваются между собой.
-        token.el.classList.remove('token-hold', 'token-dropping', 'token-in-chute');
+        token.el.classList.remove('token-hold', 'token-dropping');
         if (token.held) token.el.classList.add('token-hold');
         if (token.dropping) token.el.classList.add('token-dropping');
-        if (token.position === 8) token.el.classList.add('token-in-chute');
+
+        // Сброс: элемент СНАЧАЛА доезжает до точки сброса (+8) горизонтально
+        // (переход left длится `duration`), и ТОЛЬКО ПОТОМ падает вниз.
+        // Класс token-in-chute (прозрачная плашка + падение token-sink)
+        // добавляем по таймеру через `duration`, т.е. когда скольжение
+        // завершилось. Флаг inChute защищает от повторного добавления на
+        // каждом снимке статуса.
+        if (token.position === 8) {
+            if (!token.inChute) {
+                token.inChute = true;
+                const el = token.el;
+                setTimeout(() => {
+                    if (token && token.inChute && token.position === 8
+                            && el && el.parentNode) {
+                        el.classList.add('token-in-chute');
+                    }
+                }, duration);
+            }
+        } else if (token.inChute) {
+            token.inChute = false;
+            token.el.classList.remove('token-in-chute');
+        }
         // Номер корпуса обновляем в span (всегда видим, даже при сбросе).
         let num = token.el.querySelector('.line-token-num');
         if (!num) {
