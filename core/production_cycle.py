@@ -18,7 +18,6 @@ from inspection.consensus import (
     describe_picture_run,
     summarize_model_health,
 )
-from inspection.result import InspectionResult
 from domain.part import (
     Part,
     CATEGORY_GOOD,
@@ -154,14 +153,6 @@ class ProductionCycle:
         # камерами, и только потом движение ленты.
         self._await_initial_inspection = False
 
-        # Фоновая проверка наличия детали (InputPartPresence). Результат
-        # действителен только до первой паузы: после паузы положение детали
-        # может быть скорректировано, поэтому старый live-кадр нельзя
-        # использовать для решения о том, что сейчас находится под INPUT-камерами.
-        self._background_presence_thread = None
-        self._background_presence_result = None
-        self._background_presence_usable = False
-        self._background_presence_generation = 0
 
     # Process telemetry
 
@@ -246,7 +237,6 @@ class ProductionCycle:
                 self._drain_start_time = 0
                 self._fault_reason = None
                 self._reset_frame_analysis()
-                self._invalidate_background_presence()
                 # Деталь могла остаться под входными камерами ещё до пуска:
                 # первый шаг выполняется без движения ленты, чтобы она
                 # попала в учёт, а не уехала дальше непроверенной.
@@ -305,10 +295,8 @@ class ProductionCycle:
                 return False
             if self.jog is not None and (self.jog.busy or self.jog.status.get("error")):
                 return False
-            # Даже если пауза была включена без JOG, к моменту продолжения
-            # live-кадр уже мог устареть. INPUT будет снят заново после
-            # возобновления, а не решён по результату до паузы.
-            self._invalidate_background_presence()
+            # После возобновления INPUT всё равно проходит полный свежий
+            # захват, модели, геометрию и принятие решения.
             self._pause_requested.clear()
             accepted = self.sm.request_resume()
             if not accepted:
@@ -496,90 +484,6 @@ class ProductionCycle:
             and not self._selected_analysis_active
             and not (self.jog is not None and self.jog.busy)
         )
-
-    def _invalidate_background_presence(self):
-        """Запретить быстрый live-результат для текущей позиции.
-
-        ``_run_background_presence_check`` смотрит кадры из UI-кэша, а не
-        захватывает инспекционный кадр. Это безопасно только пока положение
-        ленты не менялось. Поэтому после запроса/снятия паузы нужно
-        обязательно пройти обычный свежий захват INPUT; ограничения JOG
-        этот механизм не вводит.
-        """
-        self._background_presence_generation = (
-            getattr(self, "_background_presence_generation", 0) + 1
-        )
-        self._background_presence_usable = False
-        self._background_presence_result = None
-
-    def _background_presence_is_current(self, generation: int) -> bool:
-        """Проверить, что фоновый поток относится к текущей позиции."""
-        pause_requested = getattr(self, "_pause_requested", None)
-        return (
-            getattr(self, "_background_presence_usable", False)
-            and getattr(self, "_background_presence_generation", 0) == generation
-            and not (pause_requested is not None and pause_requested.is_set())
-        )
-
-    def _run_background_presence_check(self, generation: int | None = None):
-        """Проверка наличия детали по последнему лайв-изображению.
-
-        Выполняется в отдельном потоке сразу после остановки ленты, пока
-        основной цикл ждёт затухания вибраций (SETTLE). Это позволяет
-        мгновенно определить пустой лоток и пропустить полноценный захват
-        кадров для этой позиции. Если в это время запрошена пауза, результат
-        отбрасывается: после паузы позицию нужно подтвердить свежим кадром.
-        """
-        try:
-            if generation is None:
-                generation = self._background_presence_generation
-
-            # Даем лайв-просмотру время обновить хотя бы один кадр после
-            # физической остановки ленты. 150мс — это 2-3 такта FPS_AUX.
-            time.sleep(0.15)
-
-            if not self._background_presence_is_current(generation):
-                return
-            if not self.monitor or not self.monitor.server:
-                return
-
-            with self.monitor.server.lock:
-                # Берем последние кадры из монитора (лайв-поток).
-                # Нас интересует только входная группа.
-                frames = {
-                    role: self.monitor.server.frames[role].copy()
-                    for role in self.inspector.INPUT_ROLES
-                    if role in self.monitor.server.frames
-                }
-
-            if len(frames) < len(self.inspector.INPUT_ROLES):
-                return
-            if not self._background_presence_is_current(generation):
-                return
-
-            # Выполняем быстрый прогон моделей и правила наличия
-            vision_results = self.inspector.vision.process_all(frames)
-            presence_result = self.inspector._evaluate_part_presence(vision_results)
-
-            # Пауза могла быть нажата во время работы моделей. Не публикуем
-            # результат, рассчитанный до изменения физической позиции.
-            if not self._background_presence_is_current(generation):
-                return
-
-            # Сохраняем результат для основного цикла
-            health_with_run = [
-                {**h, "run": 1}
-                for h in (getattr(self.inspector.vision, "last_health", None) or [])
-            ]
-            self._background_presence_result = {
-                "is_empty": bool(presence_result.details.get("empty_tray")),
-                "frames": frames,
-                "vision_results": vision_results,
-                "presence_result": presence_result,
-                "model_health": summarize_model_health(health_with_run),
-            }
-        except Exception as exc:
-            print(f"[BG-PRESENCE] Ошибка фоновой проверки наличия: {exc}")
 
     def _set_diagnostic_running(self, kind: str, message: str):
         self._diagnostics = {
@@ -1029,37 +933,11 @@ class ProductionCycle:
         self._last_vision_results = {}
         self._last_rule_results = []
 
-        # Запоминаем особый первый шаг до _stage_motion(): внутри него флаг
-        # _await_initial_inspection сбрасывается, иначе фоновая проверка могла
-        # ошибочно заменить обязательный свежий захват детали, уже стоящей
-        # под INPUT при пуске.
-        initial_inspection = self._await_initial_inspection
+        # Каждый производственный шаг проходит одну последовательную цепочку:
+        # свежий кадр -> модели -> геометрия/правила -> решение -> архив.
+        # Фоновых прогонов моделей для пропуска CAPTURE нет: это исключает
+        # смешивание кадров разных моментов и гонки за last_health.
         pending_id = self._stage_motion()
-
-        # Фоновая проверка наличия: запускается сразу после wait_stop()
-        # внутри _stage_motion, чтобы работать параллельно с _stage_settle.
-        # Её результат — лишь оптимизация пустого лотка. При паузе он
-        # инвалидируется и _stage_capture всегда получает свежие INPUT-кадры.
-        self._background_presence_generation = (
-            getattr(self, "_background_presence_generation", 0) + 1
-        )
-        background_generation = self._background_presence_generation
-        self._background_presence_result = None
-        self._background_presence_thread = None
-        self._background_presence_usable = (
-            accept_input_for_this_step
-            and not initial_inspection
-            and not self._pause_requested.is_set()
-        )
-        if self._background_presence_usable:
-            self._background_presence_thread = threading.Thread(
-                target=self._run_background_presence_check,
-                args=(background_generation,),
-                daemon=True,
-                name="background-presence-check",
-            )
-            self._background_presence_thread.start()
-
         self._stage_settle(pending_id)
         frame_runs = self._stage_capture()
         display_frames = self._stage_analysis(
@@ -1145,25 +1023,10 @@ class ProductionCycle:
         """
         roles = []
 
-        # Ожидаем завершения фоновой проверки, если она была запущена.
-        # После паузы фоновый результат намеренно игнорируется: это кадр,
-        # снятый до паузы, а не подтверждение текущего состояния под INPUT.
-        background_thread = getattr(self, "_background_presence_thread", None)
-        if background_thread:
-            background_thread.join(timeout=1.5)
-
-        input_needed = self.sm.accepts_new_parts
-        background_result = getattr(self, "_background_presence_result", None)
-        background_usable = getattr(self, "_background_presence_usable", False)
-        if input_needed and background_usable and background_result:
-            if background_result["is_empty"]:
-                input_needed = False
-                print(
-                    f"[BG-PRESENCE] Step {self.current_step}: лоток пуст "
-                    "по live-кадру, захват INPUT пропущен"
-                )
-
-        if input_needed:
+        # INPUT всегда входит в официальный CAPTURE текущего шага, если
+        # линия принимает новые детали. Решение о пустом лотке принимается
+        # тем же свежим кадром внутри общего pipeline.
+        if self.sm.accepts_new_parts:
             roles.extend(self.inspector.INPUT_ROLES)
         if any(
             part.step_created + self.OFFSET_SPIDER == self.current_step
@@ -1173,7 +1036,7 @@ class ProductionCycle:
         return tuple(roles)
 
     def _stage_capture(self):
-        """CAPTURE: свежие кадры только для занятых инспекционных позиций."""
+        """CAPTURE: получить frozen snapshot для текущих инспекций."""
         roles = self._capture_roles_for_current_step()
         self._inspection_display_roles = roles
         # Пауза только у ролей, которые сейчас дают inspection-кадр.
@@ -1228,7 +1091,12 @@ class ProductionCycle:
         return [frames]
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
-        """ANALYSIS: модели и defect rules по уже снятым кадрам."""
+        """ANALYSIS: модели -> геометрия -> решение по уже снятым кадрам.
+
+        ``Inspector`` не получает live-кадры: только frozen snapshot из
+        ``CAPTURE``. Запись разметки и состояния ``Part`` начинается после
+        завершения соответствующего набора правил.
+        """
         self.stages.enter_analysis()
 
         # Единственный набор кадров стадии: он же уходит в UI и архив.
@@ -1347,10 +1215,6 @@ class ProductionCycle:
             and self._pause_requested.is_set()
             and not self.sm.exit_requested
         ):
-            # Барьер может быть достигнут уже после завершения фоновой
-            # проверки. С этого момента её live-кадр больше не является
-            # основанием пропускать INPUT-захват.
-            self._invalidate_background_presence()
             if self.sm.request_pause():
                 self._enter_pause_frame()
             else:
@@ -1410,47 +1274,6 @@ class ProductionCycle:
 
         candidate_id = self.part_counter + 1
 
-        # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
-        # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
-        # После паузы кэш недействителен, поэтому INPUT проходит обычный
-        # свежий захват и анализ независимо от сохранённого is_empty.
-        background_result = getattr(self, "_background_presence_result", None)
-        background_usable = getattr(self, "_background_presence_usable", False)
-        if background_usable and background_result and background_result["is_empty"]:
-            res = background_result
-            result = InspectionResult(
-                stage="input",
-                defects=[],
-                vision_results=res["vision_results"],
-                rule_results=[res["presence_result"]],
-                annotated={},
-                raw_frames=res["frames"],
-                raw_overlay_frames={},
-                is_empty_tray=True,
-                consensus={
-                    "runs": 1,
-                    "required_votes": 1,
-                    "evidence_run": 1,
-                    "part_presence": 1.0,
-                    "rules": {},
-                    "picture_run": 1,
-                    "picture_reason": "background_live_check",
-                },
-                model_health=res["model_health"],
-                run_frames=[res["frames"]],
-                run_rule_results=[[]],
-            )
-            self._record_frame_analysis("INPUT", None, result)
-            self.empty_count += 1
-            for role in self.inspector.INPUT_ROLES:
-                self._last_vision_results[role] = []
-            self._last_rule_results.extend(result.rule_results)
-            print(
-                f"[EMPTY] Step {self.current_step}: пустой лоток подтвержден "
-                "фоновым анализом (live)"
-            )
-            return result
-
         self._set_process(
             "INPUT_ANALYSIS",
             f"Вход: анализ кандидата #{candidate_id}",
@@ -1491,13 +1314,14 @@ class ProductionCycle:
         self.part_counter += 1
         part = Part(self.part_counter, self.current_step)
         part.inspection_consensus["input"] = dict(result.consensus)
+        for defect in result.defects:
+            part.add_input_defect(defect)
+        # Результат правила становится состоянием Part только после того,
+        # как модели и геометрия отработали для этого же набора кадров.
+        part.mark_input_done()
         self.parts.append(part)
         self._record_frame_analysis("INPUT", part.id, result)
         print(f"[INPUT] Деталь #{part.id}")
-
-        for defect in result.defects:
-            part.add_input_defect(defect)
-        part.mark_input_done()
 
         self._last_vision_results.update(result.vision_results)
         self._last_rule_results.extend(result.rule_results)
@@ -1549,13 +1373,13 @@ class ProductionCycle:
                 frame_runs=frame_runs,
                 force_bad=self.force_all_bad,
             )
-            self._record_frame_analysis("SPIDER", part.id, result)
             part.inspection_consensus["spider"] = dict(result.consensus)
-
             for defect in result.defects:
                 part.add_spider_defect(defect)
-
+            # После SPIDER это уже окончательное решение Part: обе стадии
+            # прошли модели и геометрию, поэтому маршрут можно зафиксировать.
             part.mark_spider_done()
+            self._record_frame_analysis("SPIDER", part.id, result)
 
             self._last_vision_results.update(result.vision_results)
             self._last_rule_results.extend(result.rule_results)

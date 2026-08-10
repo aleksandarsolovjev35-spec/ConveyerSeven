@@ -37,6 +37,9 @@ class Inspector:
         frame_runs,
         force_bad: bool = False,
     ) -> InspectionResult:
+        # Строгий порядок одной стадии: кадры -> модели -> проверка
+        # наличия (gate) -> геометрия/defect rules -> разметка -> результат.
+        # Все последующие шаги используют ровно этот ``frames`` snapshot.
         frames = self._single_stage_frames(frame_runs, self.INPUT_ROLES, "input")
         vision_results, model_health = self._run_vision(frames, self.INPUT_ROLES)
 
@@ -101,6 +104,9 @@ class Inspector:
         frame_runs,
         force_bad: bool = False,
     ) -> InspectionResult:
+        # SPIDER/TOP использует тот же контракт: сначала модели на frozen
+        # кадрах, затем правила, которые строят геометрию и принимают
+        # измерительное решение, и только после этого создаётся разметка.
         frames = self._single_stage_frames(frame_runs, self.SPIDER_ROLES, "spider")
         vision_results, model_health = self._run_vision(frames, self.SPIDER_ROLES)
 
@@ -169,8 +175,10 @@ class Inspector:
         if force_bad:
             defects = ["forced_bad"]
 
-        # Разметка кадра строится только по defect-правилам стадии:
-        # служебный part_presence ничего не рисует.
+        # Разметка строится последней: сначала ``rule_results`` уже
+        # содержат вычисленную геометрию и решение, затем эти же drawings
+        # накладываются на исходный snapshot. Служебный part_presence
+        # ничего не рисует.
         markup = markup_rule_results if markup_rule_results is not None else rule_results
         annotated = self.recorder.process(
             part_id=part_id,

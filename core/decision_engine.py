@@ -75,7 +75,12 @@ class DecisionEngine:
         ]
 
     def evaluate_rules_detailed(self, rules, vision_results, frames=None):
-        """Выполнить только явно выбранный набор правил."""
+        """Выполнить правила по детекциям одного frozen-кадра.
+
+        Каждое ``rule.check`` сначала строит свои опорные области и измерения
+        (геометрию), а затем возвращает тот же ``RuleResult`` с решением
+        ``triggered`` и drawings для последующей разметки.
+        """
         if not vision_results:
             return []
         return [
