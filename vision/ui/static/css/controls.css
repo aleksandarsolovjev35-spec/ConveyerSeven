@@ -48,6 +48,18 @@
     overflow: hidden;
     z-index: 0;
     isolation: isolate;
+
+    /* Центрирование надписи: flex-центр. Компенсируем trailing letter-spacing
+       (браузер добавляет его и после последней буквы, сдвигая текст от
+       центра влево на половину межбуквенного расстояния) одинаковым
+       padding слева и справа, чтобы визуальный центр текста совпадал с
+       геометрическим центром кнопки. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    line-height: 1;
+    padding-inline: calc(20px + 0.4px) calc(20px - 0.4px);
 }
 
 .btn::before {

@@ -31,18 +31,11 @@
     overflow: visible;
     position: relative;
 }
-.line-conveyor-track::before {
-    content: '';
-    position: absolute;
-    left: 3%;
-    right: 3%;
-    top: 50%;
-    height: 1px;
-    background: var(--border-strong);
-}
+/* Осевая линия пути убрана: раньше она рисовала тонкую линию поверх всего.
+   Роль переднего слоя-трафарета теперь выполняет сама непрозрачная лента
+   (.conveyor-belt), поэтому отдельная линия не нужна. */
 .production-line-cells {
     position: relative;
-    z-index: 2;
     width: 100%;
     min-width: 0;
     height: 34px;
@@ -91,27 +84,75 @@
 
 /* ─── Зона сброса +8 (лоток между +7 и +8) ────────────────────
    Ячейка-лоток в конце линии: сюда уезжает и здесь «падает» корпус,
-   когда DIST1 направляет корпус на DIST2. Цвет канала показывает
-   заранее подготовленный маршрут BAD/CLEANUP. */
+   когда DIST1 направляет корпус на DIST2. Оформление то же, что у обычных
+   позиций (фон --bg-1 и тень), чтобы лоток не выглядел блеклым/выцветшим
+   относительно остальных ячеек. Маршрут подсвечивается АНИМАЦИЕЙ ПО ГРАНИЦАМ:
+   цветное кольцо бежит по периметру ячейки. Цвет — по категории корпуса:
+   BAD — красный, CLEANUP — жёлтый, GOOD — зелёный. */
 .production-line-cells .line-cell.line-cell-chute {
-    background: var(--bg-2);
+    background: var(--bg-1);
     border-color: var(--border-strong);
-    box-shadow: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    color: var(--text-dim);
+}
+/* Псевдоэлемент-кольцо: рисует цветную рамку по границам ячейки.
+   Вращается ТОЛЬКО УГОЛ conic-gradient (свойство --chute-angle), а сам
+   элемент-кольцо остаётся неподвижным и ровно прижатым к границам позиции.
+   Цветной сегмент широкий (примерно треть периметра) и кольцо потолще,
+   чтобы индикатор сброса читался ярко, а не был блеклой тонкой щепочкой.
+   Скрыт, пока нет активного маршрута (opacity 0). */
+@property --chute-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+}
+.production-line-cells .line-cell.line-cell-chute::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 3px;
+    border-radius: 3px;
+    background: conic-gradient(from var(--chute-angle, 0deg),
+        transparent 0deg 220deg,
+        var(--chute-accent, var(--border-strong)) 260deg 360deg);
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+    z-index: 9;
+    animation: chute-border-run 1.6s linear infinite;
+    opacity: 0;
+    transition: opacity 180ms ease;
 }
 .production-line-cells .line-cell.line-cell-chute.chute-bad {
-    border-color: var(--bad);
+    --chute-accent: var(--bad);
     color: var(--bad);
-    /* Непрозрачный тёмный фон канала: сквозь него не просвечивает
-       горизонтальная линия ленты за сеткой (полупрозрачный --bad-bg
-       давал «линию» в ячейке). */
-    background: var(--bad-gate);
-    box-shadow: inset 0 0 0 1px var(--bad);
+}
+.production-line-cells .line-cell.line-cell-chute.chute-bad::after {
+    opacity: 1;
 }
 .production-line-cells .line-cell.line-cell-chute.chute-cleanup {
-    border-color: var(--warn);
+    --chute-accent: var(--warn);
     color: var(--warn);
-    background: var(--warn-gate);
-    box-shadow: inset 0 0 0 1px var(--warn);
+}
+.production-line-cells .line-cell.line-cell-chute.chute-cleanup::after {
+    opacity: 1;
+}
+.production-line-cells .line-cell.line-cell-chute.chute-good {
+    --chute-accent: var(--ok);
+    color: var(--ok);
+}
+.production-line-cells .line-cell.line-cell-chute.chute-good::after {
+    opacity: 1;
+}
+@keyframes chute-border-run {
+    from { --chute-angle: 0deg; }
+    to   { --chute-angle: 360deg; }
 }
 
 /* ─── Ожидание передачи на +7 ─────────────────────────────────
@@ -248,6 +289,12 @@
     color: var(--text);
     font: 700 9px var(--font-mono);
     cursor: pointer;
+    /* Центрирование надписи в кнопках диагностики/распределителя. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding-inline: 6px;
 }
 .diagnostic-grid button:hover:not(:disabled) {
     color: var(--accent);
@@ -320,6 +367,11 @@
     color: var(--bad);
     font-weight: 700;
     cursor: pointer;
+    /* Центрирование надписи. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
 }
 .splash-exit-btn:hover { background: var(--bad); color: var(--bg-0); }
 
@@ -370,27 +422,25 @@
     padding-top: 6px;
 }
 
-/* === ЛЕНТА КОНВЕЙЕРА + МАРКЕРЫ ДЕТАЛЕЙ ===
-   Лента — спокойная статичная полоса под сеткой ячеек: без прокрутки
-   насечек и прочих циклических эффектов (строгая тема). Во время шага
-   она лишь слегка светлеет. */
+/* === ЛЕНТА-«ВАГОН» С ОКНАМИ ===
+   Идея «окон в вагоне»: корпуса (люди) видны только ВНУТРИ позиций-окон,
+   а между ними скрыты за непрозрачным телом вагона. Для этого лента —
+   НЕПРОЗРАЧНАЯ полоса (тело вагона) на слое ПОВЕРХ корпусов, в которой
+   маской пробиты 9 прозрачных «окон» точно по позициям. Когда корпус
+   едет от окна к окну, он проходит ЗА непрозрачным телом и не виден;
+   как только он оказывается в окне — виден. */
 .conveyor-belt {
     position: absolute;
-    left: 2%;
-    right: 2%;
-    top: 48%;
-    height: 4px;
-    background: rgba(140, 160, 185, 0.22);
-    border-radius: 999px;
-    z-index: 0;
-    opacity: 0.55;
-    transition: opacity 180ms ease, background-color 180ms ease;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--panel-solid);
+    /* Маска окон задаётся из JS (_applyWindowMask) по реальным размерам
+       ячеек; CSS-маска не нужна. Лента выше корпусов (z6 > z5), поэтому
+       корпуса скрываются за стенками вагона. */
+    z-index: 6;
     pointer-events: none;
-}
-
-.conveyor-belt.moving {
-    background: rgba(140, 160, 185, 0.34);
-    opacity: 0.95;
 }
 
 /* Маркер детали (создаётся в status.js, класс .line-token): абсолютно
@@ -464,41 +514,44 @@
 }
 
 /* Маркер падающего корпуса: в шаге сброса лента несёт корпус от +7 к
-   лотку +8. Рамка подсвечивается цветом канала, а сам маркер затем «ныряет»
-   в лоток (см. .token-in-chute). Стрелки ▼ на маркере нет. */
+   лотку +8. Цветная индикация маршрута живёт НА ГРАНИЦЕ ПОЗИЦИИ
+   (анимация .line-cell-chute), а сам корпус остаётся нейтральной вложенной
+   деталью со своим цветом категории. Стрелки ▼ на маркере нет. */
 .line-token.token-dropping {
     opacity: 1;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--bad);
-}
-.line-token.token-dropping.cell-cleanup {
-    box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--warn);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
 }
 
 /* Появление корпуса на линии (+0): маркер плавно опускается сверху в свою
-   ячейку (деталь «подаётся» на ленту) с коротким бликом. */
+   ячейку (деталь «подаётся» на ленту) без отскока и без увеличения размера
+   сверх 1 — только плавное монотонное падение с мягким торможением. Это
+   убирает «пошатывание» и не даёт первому корпусу у левого края задеть
+   границу контейнера (обводка не обрезается). */
 @keyframes token-enter {
-    0%   { opacity: 0; transform: translateY(-18px) scale(0.85); }
-    60%  { opacity: 1; transform: translateY(2px) scale(1.03); }
+    0%   { opacity: 0; transform: translateY(-26px) scale(0.92); }
     100% { opacity: 1; transform: translateY(0) scale(1); }
 }
 .line-token.token-enter {
-    animation: token-enter 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    animation: token-enter 600ms cubic-bezier(0.25, 0.6, 0.35, 1);
 }
 
-/* Уход корпуса в лоток +8: плашка уходит вниз (сброс вниз) и растворяется,
-   но номер корпуса (внутренний .line-token-num) остаётся читаемым всё время
-   сброса — он не гаснет вместе с фоном плашки. */
+/* Уход корпуса в лоток +8: сброс вниз плавным монотонным падением без
+   сквоша и без изменения размера — деталь проваливается вниз с лёгким
+   ускорением и мягко растворяется. Цветная индикация маршрута живёт на
+   ГРАНИЦЕ ПОЗИЦИИ (анимация .line-cell-chute), поэтому у самого корпуса
+   только нейтральная тень. Никаких скачков и «пошатывания». Номер корпуса
+   остаётся читаемым всё время сброса. */
 @keyframes token-sink {
-    0%   { transform: translateY(0) scale(1); opacity: 1; }
-    100% { transform: translateY(20px) scale(0.55); opacity: 0.4; }
+    0%   { opacity: 1; transform: translateY(0) scale(1, 1); }
+    70%  { opacity: 1; transform: translateY(28px) scale(1, 1); }
+    100% { opacity: 0; transform: translateY(28px) scale(1, 1); }
 }
 .line-token.token-in-chute {
-    z-index: 6;
-    /* Плашка уходит вниз, фон и рамка растворяются, номер остаётся. */
-    animation: token-sink 420ms ease-in forwards;
-    background: transparent !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
+    /* Падение происходит ПОЗАДИ тела вагона: z-index остаётся тем же, что у
+       обычного токена (z5, ниже ленты z6). Человек проваливается вниз и
+       скрывается за непрозрачным телом вагона, а не поверх него. */
+    animation: token-sink 550ms cubic-bezier(0.55, 0.05, 0.7, 0.55) forwards;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
 }
 .line-token.token-in-chute .line-token-num {
     color: var(--text);
@@ -554,6 +607,9 @@
 .axis-route span,
 .axis-route b,
 .dist-route { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.line-token { overflow: hidden; padding: 0 10px 0 3px; text-overflow: ellipsis; white-space: nowrap; }
+/* Убран асимметричный padding (был 0 10px 0 3px): из-за него номер корпуса
+   сдвигался от центра и визуально «наезжал» на соседнюю позицию. Теперь
+   маркер центрирован строго через grid place-items:center. */
+.line-token { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .axis-route span { flex: 1 1 auto; }
 .axis-route b, .dist-route { display: block; }

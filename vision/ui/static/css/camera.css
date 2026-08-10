@@ -218,6 +218,12 @@
     font: 700 9px var(--font-mono);
     cursor: pointer;
     pointer-events: auto;
+    /* Центрирование надписи в кнопках камеры. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    white-space: nowrap;
 }
 .camera-live-controls button:hover:not(:disabled) {
     background: var(--accent-glow);

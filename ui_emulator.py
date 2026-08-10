@@ -146,16 +146,24 @@ RULE_METRICS = {
     ],
 }
 
-# ── Присутствие детали (как реальное правило part_presence) ─────
-# Деталь под входными камерами засчитывается, только если её видят ОБЕ
-# INPUT-камеры (flatness >= порога на каждой). Эмулятор моделирует это так:
-# каждая камера «видит» деталь с вероятностью INPUT_CAMERA_PRESENT_PROB,
-# а наличие корпуса = присутствие на обеих. Это и есть «случайное появление
-# ячеек под первыми двумя камерами».
+# ── Присутствие детали (буквально как InputPartPresenceRule) ───
+# Логика появления детали совпадает с основным проектом
+# (domain/defect_rules/rule_input_part_presence.py): для каждой INPUT-камеры
+# считается число flatness-объектов (с достоверностью >= порога); камера
+# «видит» корпус, если это число ПРЕВЫШАЕТ false_positive_max_count; корпус
+# засчитывается, только если его видят ОБЕ камеры (is_empty = не обе).
+# Эмулятор генерирует синтетическое число flatness-объектов на камеру
+# (_flatness_count) и применяет ту же пороговую проверку, что и правило.
+# INPUT_CAMERA_PRESENT_PROB — вероятность, что под камерой физически стоит
+# корпус (детектор находит > false_positive_max_count объектов); на пустом
+# лотке число объектов не превышает порога и гасится как ложные срабатывания.
 INPUT_CAMERA_PRESENT_PROB = 0.93
-# Порог присутствия детали на каждой камере (совпадает со смыслом
-# input_part_presence_false_positive_max_count + 1 = 3).
+# Порог присутствия детали на каждой камере: корпус «виден» при
+# flatness-объектах > FALSE_POSITIVE_MAX_COUNT. Совпадает со смыслом
+# input_part_presence_false_positive_max_count + 1 = 3 в реальном правиле.
 INPUT_PRESENCE_THRESHOLD = 3
+# false_positive_max_count для порогового сравнения (как в правиле).
+FALSE_POSITIVE_MAX_COUNT = INPUT_PRESENCE_THRESHOLD - 1
 
 # Дефекты, которые приводят на CLEANUP (как в domain/part.py).
 CLEANUP_DEFECTS = {"glass", "glass_glare"}
@@ -215,6 +223,12 @@ TIME_SETTLE = 0.5            # затухание вибрации перед с
 TIME_CAPTURE = 0.35          # съёмка камер
 TIME_INPUT_ANALYSIS = 0.7    # модели + входные правила
 TIME_SPIDER_ANALYSIS = 0.7   # модели + правила контроля +4
+
+# Пауза на входе после создания первой детали (INITIAL_INSPECTION): должна
+# покрыть анимацию появления маркера (token-enter, сейчас 700мс) с запасом,
+# чтобы первая деталь видимо «села» на позицию +0, а не уехала в середине
+# появления. Это реальные секунды (анимация фронтенда не масштабируется).
+APPEARANCE_DWELL = 0.8
 
 
 def _metric(label, value, limit, ok, key):
@@ -1266,7 +1280,14 @@ class Emulator:
                 positions=[OFFSET_INPUT],
             )
             self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_capture)
+            # Даём фронтенду полностью завершить анимацию появления первой
+            # детали (token-enter) на позиции входа, ПРЕЖДЕ чем лента начнёт
+            # двигаться. Иначе первая деталь «проскальзывает» на следующую
+            # позицию в середине появления.
+            if new_part is not None:
+                self._sleep_cancellable(APPEARANCE_DWELL)
+            else:
+                self._sleep_cancellable(self.time_capture)
             return
 
         # 1. Маршрут корпуса на +7 до движения (перемещение заслонок).
@@ -1373,17 +1394,33 @@ class Emulator:
             self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
             self._refresh(frames=frames)
 
-    def _input_presence(self):
-        """Присутствие детали под входными камерами (как part_presence).
+    def _flatness_count(self):
+        """Число flatness-объектов на входной камере за шаг (синтетика).
 
-        Деталь засчитывается только если её видят ОБЕ камеры (INPUT_LEFT и
-        INPUT_RIGHT). Каждая камера «видит» деталь случайно с вероятностью
-        INPUT_CAMERA_PRESENT_PROB — это случайное появление ячеек под первыми
-        двумя камерами. Возвращает (present: bool, left: bool, right: bool).
+        Буквально как детектор основного проекта: под корпусом камера находит
+        > false_positive_max_count flatness-объектов, на пустом лотке — не
+        больше порога (гасятся как ложные срабатывания). Возвращает целое
+        число найденных объектов.
         """
-        left = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
-        right = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
-        return (left and right), left, right
+        if self.rng.random() < INPUT_CAMERA_PRESENT_PROB:
+            # Под камерой стоит корпус: стабильно выше порога.
+            return FALSE_POSITIVE_MAX_COUNT + self.rng.randint(2, 5)
+        # Пустой лоток: 0..false_positive_max_count — ложные срабатывания.
+        return self.rng.randint(0, FALSE_POSITIVE_MAX_COUNT)
+
+    def _input_presence(self):
+        """Присутствие детали — буквально как InputPartPresenceRule.
+
+        Для каждой INPUT-камеры считаем flatness-объекты; камера «видит»
+        корпус, если их число ПРЕВЫШАЕТ false_positive_max_count. Корпус
+        засчитывается, только если его видят ОБЕ камеры (иначе лоток пуст).
+        Возвращает (present: bool, left: bool, right: bool).
+        """
+        left = self._flatness_count()
+        right = self._flatness_count()
+        present_left = left > FALSE_POSITIVE_MAX_COUNT
+        present_right = right > FALSE_POSITIVE_MAX_COUNT
+        return (present_left and present_right), present_left, present_right
 
     def _run_defect_rules(self, rule_names):
         """Сработавшие defect-правила: правило сработало -> его имя в списке."""
