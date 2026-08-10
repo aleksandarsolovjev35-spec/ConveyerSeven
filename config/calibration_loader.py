@@ -28,7 +28,7 @@ OPTIONAL_DEFAULTS = {
     "stage_trace_time": 0.5,
     # Пауза после обработки кадров нейросетями: оператор успевает
     # отсмотреть результат анализа до начала следующего шага.
-    "review_time": 5.0,
+    "review_time": 2.0,
 }
 
 _FLOAT_KEYS = ("drop_time", "settle_time", "stage_trace_time", "review_time")
