@@ -54,6 +54,8 @@ class LineSimulation:
         self.last_diagnostic = "SIMULATION READY"
         self.step = 0
         self.next_id = 1
+        self.slot_counter = 0
+        self.empty_count = 0
         self.parts: list[SimPart] = []
         self.egress: SimPart | None = None
         self.recent: list[dict] = []
@@ -162,7 +164,12 @@ class LineSimulation:
         self._wake.set()
         return True
 
-    def _new_part(self) -> SimPart:
+    def _new_part(self) -> SimPart | None:
+        """Feed an empty tray periodically, just like a real input can."""
+        self.slot_counter += 1
+        if self.slot_counter % 9 == 0:
+            self.empty_count += 1
+            return None
         part = SimPart(self.next_id)
         self.next_id += 1
         self.counts["total"] += 1
@@ -217,6 +224,9 @@ class LineSimulation:
             category = self.egress.category if self.egress else ""
             d1 = 0 if category == "GOOD" else 340
             d2 = 340 if category == "CLEANUP" else 0
+            active_roles = []
+            if any(part.position == 0 for part in self.parts): active_roles = ["INPUT_LEFT", "INPUT_RIGHT"]
+            elif any(part.position == 4 for part in self.parts): active_roles = ["SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP"]
             status = {
                 "state": state,
                 "exit_requested": False,
@@ -227,7 +237,7 @@ class LineSimulation:
                 "good": self.counts["good"],
                 "rejected": self.counts["bad"],
                 "cleanup": self.counts["cleanup"],
-                "empty": 0,
+                "empty": self.empty_count,
                 "dist1_state": "GOOD" if d1 == 0 else "TO_DIST2",
                 "dist1_position": d1, "dist1_max": 340,
                 "dist2_state": "READY", "dist2_position": d2, "dist2_max": 340,
@@ -246,7 +256,7 @@ class LineSimulation:
                              "vision_rule_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None},
                 "process": {"phase": phase, "positions": [position] if position is not None else [],
                             "part_id": self.egress.id if self.egress else None,
-                            "inspection_roles": ["TOP"] if any(p.position == 4 for p in self.parts) else [],
+                            "inspection_roles": active_roles,
                             "conveyor": {"speed": 18000}},
                 "selected_analysis": {"active": self.selected_role is not None, "role": self.selected_role},
                 "diagnostic_allowed": state in ("IDLE", "STOPPED") and self.selected_role is None,
@@ -264,7 +274,14 @@ class LineSimulation:
                         "hold_steps": 0, "direction": None, "last_action": "SIMULATION", "live_fps": 25, "error": None},
             }
             recent = list(self.recent)
-        self.server.update(line_status=status, recent_parts=recent)
+        # Publish fresh virtual camera frames on every production state change.
+        # The regular UI therefore exercises its real frame versioning, RAW/
+        # RULES source switching and thumbnail refresh paths.
+        self.server.update(
+            frames=demo_frames(self.step, phase, line_parts),
+            line_status=status,
+            recent_parts=recent,
+        )
 
     def _inspect_part(self, part: SimPart) -> None:
         """Virtual inspection uses the same verdict vocabulary and archive flow."""
@@ -329,7 +346,8 @@ class LineSimulation:
                     continue
                 self._finish_egress()          # falling from +8 starts now
                 arriving = self._new_part()    # falling into +0 starts now
-                self.parts.insert(0, arriving)
+                if arriving is not None:
+                    self.parts.insert(0, arriving)
                 for part in self.parts:
                     if part.position >= 4:
                         self._inspect_part(part)
@@ -366,14 +384,26 @@ def configure_simulated_thresholds(server: UIServer) -> None:
     server.on_thresholds_apply = apply
 
 
-def demo_frames() -> dict:
+def demo_frames(step: int = 0, phase: str = "IDLE", line_parts: list[dict] | None = None) -> dict:
+    """Generate changing camera feeds rather than static placeholder images."""
     frames = {}
+    line_parts = line_parts or []
+    moving_x = 105 + (step % 7) * 76
     for index, role in enumerate(CAMERA_ORDER):
         frame = np.zeros((480, 800, 3), dtype=np.uint8)
         frame[:] = (20 + index * 3, 27 + index * 2, 33 + index * 2)
-        cv2.putText(frame, "UI SIMULATION", (42, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (105, 205, 170), 2)
-        cv2.putText(frame, role, (42, 132), cv2.FONT_HERSHEY_SIMPLEX, .75, (205, 214, 224), 2)
-        cv2.rectangle(frame, (42, 175), (758, 405), (72, 94, 110), 2)
+        cv2.putText(frame, "UI SIMULATION · VIRTUAL CAMERA", (42, 54), cv2.FONT_HERSHEY_SIMPLEX, .65, (105, 205, 170), 2)
+        cv2.putText(frame, role, (42, 90), cv2.FONT_HERSHEY_SIMPLEX, .68, (205, 214, 224), 2)
+        cv2.putText(frame, f"STEP {step:04d} · {phase}", (42, 122), cv2.FONT_HERSHEY_SIMPLEX, .48, (142, 165, 185), 1)
+        cv2.rectangle(frame, (42, 155), (758, 420), (72, 94, 110), 2)
+        # A moving virtual case lets the preview strip and main viewport show
+        # actual image updates during every conveyor step.
+        category = next((p.get("category") for p in line_parts if p.get("category")), "")
+        color = {"GOOD": (80, 205, 105), "BAD": (85, 85, 225), "CLEANUP": (70, 190, 230)}.get(category, (110, 125, 135))
+        x = moving_x + (index % 3) * 12
+        cv2.rectangle(frame, (x, 245), (x + 165, 340), color, -1)
+        cv2.rectangle(frame, (x, 245), (x + 165, 340), (220, 230, 235), 2)
+        cv2.putText(frame, "VIRTUAL PART", (x + 18, 298), cv2.FONT_HERSHEY_SIMPLEX, .48, (15, 20, 24), 1)
         frames[role] = frame
     return frames
 
