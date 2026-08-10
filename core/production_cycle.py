@@ -1781,7 +1781,7 @@ class ProductionCycle:
 
     def _on_state_change(self, old, new, action: str):
         if new == State.STOPPING:
-            self._set_process("DRAINING", "Завершение корпусов на линии")
+            self._set_process("DRAINING", "Остановка")
         elif new == State.STOPPED:
             # Линия пуста: последние кадры с разметкой остаются на экране,
             # пока оператор не войдёт в JOG или не запустит цикл заново.
