@@ -160,7 +160,9 @@ class LineSimulation:
                 "dist2_state": "READY", "dist2_position": d2, "dist2_max": 340,
                 "dist2_target": "CLEANUP" if d2 else "BAD",
                 "last_distributor_action": "SIMULATION",
-                "controls": {"start": state in ("IDLE", "STOPPED") and not self.jog_active, "stop": state in ("RUNNING", "PAUSED"),
+                # Production start is available while JOG is open: issuing
+                # start closes JOG and transfers control to the cycle.
+                "controls": {"start": state in ("IDLE", "STOPPED"), "stop": state in ("RUNNING", "PAUSED"),
                              "pause": state == "RUNNING", "resume": state == "PAUSED", "exit": True,
                              "jog_hold": self.jog_active and state in ("IDLE", "STOPPED"), "selected_model_analysis": False,
                              "selected_model_release": False, "distributor_diagnostic": False,

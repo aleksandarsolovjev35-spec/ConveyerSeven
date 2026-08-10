@@ -603,6 +603,8 @@
    are below the apertures; the apertures themselves never get a route state. */
 .process-line-head { justify-content: flex-start; }
 .line-gates, .conveyor-belt, .chute-symbol { display: none !important; }
+/* The legacy conveyor axis is not part of the stencil model. */
+.line-conveyor-track::before { content: none !important; display: none !important; }
 .line-conveyor-track {
     padding: 3px;
     background: var(--bg-2);
