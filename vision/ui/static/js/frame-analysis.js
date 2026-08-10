@@ -55,7 +55,7 @@ function faNewFormatLimit(metric) {
 }
 
 function faNewCollectThresholds(runCards) {
-    // Legacy: сбор порогов по всем прогонам (для тестов), сохраняется для совместимости
+    // Собираем пороги из карточек единственного прогона.
     const map = new Map();
     const runs = Array.isArray(runCards) ? runCards : [];
     runs.forEach((cards, runIndex) => {
