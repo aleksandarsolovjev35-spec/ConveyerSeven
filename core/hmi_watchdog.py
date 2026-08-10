@@ -4,22 +4,6 @@ from __future__ import annotations
 
 import threading
 import time
-import uuid
-
-
-class HmiCommandGateway:
-    """Convert an expired HMI heartbeat into an ordinary PAUSE command."""
-
-    def __init__(self, dispatch):
-        if not callable(dispatch):
-            raise TypeError("command dispatcher is required")
-        self._dispatch = dispatch
-
-    def request_pause(self):
-        # A new timeout episode gets one unique command. HMIWatchdog suppresses
-        # repeats until touch(), while CommandArbiter provides the final
-        # idempotency boundary.
-        return self._dispatch(f"hmi-timeout-{uuid.uuid4().hex}", "PAUSE")
 
 
 class HMIWatchdog:

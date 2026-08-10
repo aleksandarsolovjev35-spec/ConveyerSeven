@@ -11,7 +11,6 @@ PRIORITY = {
     "FORCE_EXIT": 0,
     "E_STOP": 0,
     "STOP": 1,
-    "EXIT": 1,
     "PAUSE": 2,
 }
 
@@ -66,28 +65,23 @@ class CommandArbiter:
         with self._lock:
             previous = self._responses.get(command_id)
             if previous is not None:
-                # Return the saved result itself.  No fresh state is sampled
-                # and the reducer/hardware handler is not entered again.
-                return previous
+                return CommandResult(
+                    command_id=previous.command_id,
+                    command=previous.command,
+                    accepted=previous.accepted,
+                    state=previous.state,
+                    reason=previous.reason,
+                    duplicate=True,
+                    state_version=previous.state_version,
+                    data=dict(previous.data),
+                )
             try:
                 result = self._handler(command, **payload)
-                if isinstance(result, bool):
-                    accepted = result
-                    reason = None if accepted else "command rejected in current state"
-                    data = {}
-                elif hasattr(result, "accepted"):
-                    # Formal LineReducer result.  Preserve its rejection reason
-                    # rather than accidentally treating every object as true.
-                    accepted = bool(result.accepted)
-                    reason = getattr(result, "reason", None)
-                    data = {
-                        "effects": list(getattr(result, "effects", ()) or ()),
-                        "stale": bool(getattr(result, "stale", False)),
-                    }
-                else:
-                    accepted = True
-                    reason = None
-                    data = dict(result) if isinstance(result, dict) else {"result": result}
+                accepted = result if isinstance(result, bool) else True
+                reason = None if accepted else "command rejected in current state"
+                data = {} if isinstance(result, bool) else (
+                    dict(result) if isinstance(result, dict) else {"result": result}
+                )
             except Exception as exc:
                 accepted = False
                 reason = f"{type(exc).__name__}: {exc}"
@@ -98,12 +92,7 @@ class CommandArbiter:
                 state_version = state_snapshot.get("state_version")
                 state = state_snapshot.get("state", state_snapshot)
             else:
-                state_version = getattr(state_snapshot, "state_version", None)
-                state = getattr(
-                    state_snapshot,
-                    "line_state",
-                    getattr(state_snapshot, "state", state_snapshot),
-                )
+                state = state_snapshot
                 if hasattr(state, "value"):
                     state = state.value
             response = CommandResult(

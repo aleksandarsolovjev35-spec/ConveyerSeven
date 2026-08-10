@@ -10,7 +10,6 @@
 - пустые лотки на входе считаются и не создают Part.
 """
 
-import threading
 import unittest
 from types import SimpleNamespace
 
@@ -108,13 +107,10 @@ class FakeInspector:
     def __init__(self):
         self.input_calls = 0
         self.spider_calls = 0
-        self.input_threads = []
-        self.control_threads = []
 
     def inspect_input_consensus(self, part_id, step, frame_runs,
                                 force_bad=False):
         self.input_calls += 1
-        self.input_threads.append(threading.get_ident())
         frames = frame_runs[0]
         if self.input_calls == 1:
             # Первый шаг: деталь присутствует, дефектов нет
@@ -158,7 +154,6 @@ class FakeInspector:
     def inspect_spider_consensus(self, part_id, step, frame_runs,
                                  force_bad=False):
         self.spider_calls += 1
-        self.control_threads.append(threading.get_ident())
         frames = frame_runs[0]
         # На +4 деталь всегда с дефектом контактов -> BAD
         rule = RuleResult(
@@ -238,34 +233,6 @@ class CycleIntegrationTest(unittest.TestCase):
         # Input вызывался на каждом шаге (accepts_new_parts=True)
         self.assertEqual(self.inspector.input_calls, 9)
 
-    def test_workers_compute_but_control_thread_commits(self):
-        owner = threading.get_ident()
-        commit_threads = []
-        original = self.cycle._commit_input_result
-
-        def recording_commit(*args, **kwargs):
-            commit_threads.append(threading.get_ident())
-            return original(*args, **kwargs)
-
-        self.cycle._commit_input_result = recording_commit
-        self.cycle._run_once_safe()
-        self.assertTrue(self.inspector.input_threads)
-        self.assertNotEqual(self.inspector.input_threads[0], owner)
-        self.assertEqual(commit_threads, [owner])
-
-    def test_formal_transaction_finishes_before_final_publication(self):
-        self.cycle._run_once_safe()
-        snapshot = self.cycle.control_core.snapshot
-        self.assertEqual(snapshot.step_phase.value, "NONE")
-        self.assertIsNone(snapshot.transaction)
-        self.assertEqual(snapshot.current_step, 1)
-        self.assertIsInstance(snapshot.run_id, int)
-        result = self.cycle._last_inspection_execution
-        self.assertEqual(result.publication_version, result.snapshot.state_version)
-        self.assertEqual(result.snapshot.step_phase.value, "NONE")
-        self.assertFalse(hasattr(self.cycle, "_pending_stop"))
-        self.assertFalse(hasattr(self.cycle, "_pending_exit"))
-
     def test_publish_snapshots(self):
         self.cycle._run_once_safe()
 
@@ -311,28 +278,20 @@ class CycleIntegrationTest(unittest.TestCase):
         self.assertIsNone(self.cycle._background_presence_result)
 
         roles = self.cycle._capture_roles_for_current_step()
-        self.assertEqual(roles, ())
+        self.assertEqual(roles, self.inspector.INPUT_ROLES)
 
         # Отдельно проверяем защиту в INPUT-анализе: даже если гонка потока
         # успела оставить старый is_empty-кэш, свежие кадры не превращаются
         # в «пусто».
         self.assertTrue(self.cycle.sm.request_pause())
         self.assertTrue(self.cycle.request_resume())
-        self.assertFalse(self.cycle._resume_inspection_only)
         self.cycle._background_presence_usable = False
         self.cycle._background_presence_result = {"is_empty": True}
         frames = [{
             role: _frame(index)
             for index, role in enumerate(self.inspector.INPUT_ROLES)
         }]
-        result = self.cycle._inspect_input_worker(
-            frames,
-            self.cycle.part_counter + 1,
-            lambda presence: self.cycle._commit_input_presence(
-                self.cycle.part_counter + 1, presence,
-            ),
-        )
-        self.cycle._commit_input_result(result)
+        result = self.cycle._process_input_stage(frames)
         self.assertFalse(result.is_empty_tray)
         self.assertEqual(self.inspector.input_calls, 1)
 

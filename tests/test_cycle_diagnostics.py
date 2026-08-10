@@ -226,11 +226,13 @@ class CycleDiagnosticsTest(unittest.TestCase):
         self.assertTrue(self.cycle.jog_hold_release("test"))
         self.cycle.exit_jog()
 
-    def test_pause_before_motion_is_immediate(self):
+    def test_pause_is_requested_flag(self):
+        # request_pause только выставляет флаг: фактический переход в PAUSED
+        # происходит на границе шага (_check_pause_barrier)
         self.cycle.sm.request_start()
         self.assertTrue(self.cycle.request_pause())
-        self.assertEqual(self.cycle.state, "PAUSED")
-        self.assertEqual(self.cycle.sm.pause_continuation.value, "NEXT_STEP")
+        self.assertTrue(self.cycle._pause_requested.is_set())
+        self.assertEqual(self.cycle.state, "RUNNING")
 
     def test_resume_from_paused(self):
         self.cycle.sm.request_start()

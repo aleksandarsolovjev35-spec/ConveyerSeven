@@ -5,7 +5,7 @@
   - сырыми кадрами со всех камер
   - кадрами с сырыми детекциями нейросети (raw overlay)
   - аннотированными кадрами (правила)
-  - part.json с метаданными
+  - meta.json с метаданными
 
 Структура (во время работы):
   <root>/<date>/<batch>/
@@ -13,7 +13,7 @@
     GOOD/part_<id>/
     BAD/part_<id>/
     CLEANUP/part_<id>/
-      part.json
+      meta.json
       <ROLE>.jpg
       <ROLE>_raw.jpg
       <ROLE>_debug.jpg
@@ -101,7 +101,6 @@ class PartArchive:
 
         # Буфер хранит уже JPEG-encoded bytes, а не тяжёлые numpy frames.
         self._buffers: dict[int, dict] = {}
-        self._staging_dirs: dict[int, str] = {}
 
         # Список архивированных деталей (для UI). Он живёт в памяти текущего
         # запуска; batch.json является постоянным индексом партии.
@@ -142,7 +141,7 @@ class PartArchive:
         """Свести маршрут к одному из трёх архивных разделов.
 
         Неизвестный/аварийный маршрут попадает в BAD, но исходное значение
-        сохраняется в part.json как requested_category.
+        сохраняется в meta.json как requested_category.
         """
         value = str(category or "").upper()
         return value if value in cls.CATEGORY_DIRS else "BAD"
@@ -266,43 +265,6 @@ class PartArchive:
             )
         return status
 
-    def _ensure_part_staging(self, part_id: int) -> str:
-        existing = self._staging_dirs.get(part_id)
-        if existing:
-            return existing
-        staging_root = os.path.join(self.batch_folder, "staging")
-        os.makedirs(staging_root, exist_ok=True)
-        folder = os.path.join(
-            staging_root,
-            f"part_{part_id:04d}_{uuid.uuid4().hex}",
-        )
-        os.makedirs(folder, exist_ok=False)
-        self._fsync_directory(staging_root)
-        self._staging_dirs[part_id] = folder
-        return folder
-
-    def _flush_part_evidence_to_staging(self, part_id: int):
-        folder = self._ensure_part_staging(part_id)
-        for role, frames in self._buffers.get(part_id, {}).items():
-            for field, suffix in (
-                ("raw", ".jpg"),
-                ("raw_overlay", "_raw.jpg"),
-                ("debug", "_debug.jpg"),
-            ):
-                content = frames.get(field)
-                if content is not None:
-                    self._save_image(content, os.path.join(folder, f"{role}{suffix}"))
-            for run in (1, 2, 3):
-                for field, suffix in (
-                    (f"raw_run{run}", f"_run{run}.jpg"),
-                    (f"raw_overlay_run{run}", f"_run{run}_raw.jpg"),
-                    (f"debug_run{run}", f"_run{run}_debug.jpg"),
-                ):
-                    content = frames.get(field)
-                    if content is not None:
-                        self._save_image(content, os.path.join(folder, f"{role}{suffix}"))
-        self._fsync_tree(folder)
-
     def store_frames(
         self,
         part_id: int,
@@ -399,10 +361,6 @@ class PartArchive:
                         raw_overlay_frame = frame
                     buf[role][f"raw_overlay_run{run_num}"] = self._encode_image(raw_overlay_frame)
 
-        # Evidence crosses a durable staging boundary during the inspection
-        # stage, not only when the part has already left the line.
-        self._flush_part_evidence_to_staging(part_id)
-
     def finalize(
         self,
         part_id: int,
@@ -432,21 +390,12 @@ class PartArchive:
             # writes and never auto-promote staging.
             self._load_committed_parts()
             self._buffers.pop(part_id, None)
-            self._staging_dirs.pop(part_id, None)
             self._vision_buffers.pop(part_id, None)
             self._frame_stage_buffers.pop(part_id, None)
             return final_folder
 
-        stage_folder = self._staging_dirs.get(part_id)
-        if stage_folder is None:
-            stage_folder = os.path.join(
-                staging_root,
-                f"{folder_name}_{uuid.uuid4().hex}",
-            )
-            os.makedirs(stage_folder, exist_ok=False)
-            self._staging_dirs[part_id] = stage_folder
-        elif not os.path.isdir(stage_folder):
-            raise RuntimeError("part staging directory disappeared before finalize")
+        stage_folder = os.path.join(staging_root, f"{folder_name}_{uuid.uuid4().hex}")
+        os.makedirs(stage_folder, exist_ok=False)
         buf = self._buffers.get(part_id, {})
         roles_saved = []
         annotation_files = []
@@ -498,7 +447,7 @@ class PartArchive:
             }
             if extra:
                 meta.update(self._json_safe(extra))
-            self._write_json_durable(os.path.join(stage_folder, "part.json"), meta)
+            self._write_json_durable(os.path.join(stage_folder, "meta.json"), meta)
 
             manifest = self._build_part_manifest(stage_folder)
             self._write_json_durable(os.path.join(stage_folder, "manifest.json"), manifest)
@@ -506,7 +455,7 @@ class PartArchive:
             manifest = self._build_part_manifest(stage_folder)
             self._write_json_durable(os.path.join(stage_folder, "manifest.json"), manifest)
             self._write_json_durable(
-                os.path.join(stage_folder, "COMMITTED.json"),
+                os.path.join(stage_folder, "commit.marker"),
                 {"schema_version": self.SCHEMA_VERSION, "part_id": part_id, "manifest_sha256": manifest["manifest_sha256"]},
             )
             self._fsync_tree(stage_folder)
@@ -532,7 +481,6 @@ class PartArchive:
             # is surfaced to the caller as a traceability fault.
             self._append_training_samples(sample_records)
             self._buffers.pop(part_id, None)
-            self._staging_dirs.pop(part_id, None)
             self._vision_buffers.pop(part_id, None)
             self._frame_stage_buffers.pop(part_id, None)
             relative_folder = os.path.relpath(final_folder, self.batch_folder).replace("\\", "/")
@@ -552,10 +500,8 @@ class PartArchive:
             self.stats[category_key] = int(self.stats.get(category_key) or 0) + 1
             self._batch_stats["total"] += 1
             self._batch_stats[category_key] += 1
-            # Rebuild the committed catalog first. Secondary cumulative stats
-            # are derived only after that independently recoverable index.
-            self._save_batch_manifest()
             self._save_stats()
+            self._save_batch_manifest()
             return final_folder
         except Exception:
             # Keep staging and all in-memory evidence for best-effort abort
@@ -566,7 +512,7 @@ class PartArchive:
         files = {}
         for root, _dirs, names in os.walk(folder_path):
             for name in sorted(names):
-                if name in {"commit.marker", "COMMITTED.json", "manifest.json"}:
+                if name in {"commit.marker", "manifest.json"}:
                     continue
                 path = os.path.join(root, name)
                 relative = os.path.relpath(path, folder_path).replace("\\", "/")
@@ -581,10 +527,7 @@ class PartArchive:
         try:
             with open(os.path.join(folder_path, "manifest.json"), encoding="utf-8") as stream:
                 manifest = json.load(stream)
-            marker_path = os.path.join(folder_path, "COMMITTED.json")
-            if not os.path.isfile(marker_path):  # read-only compatibility
-                marker_path = os.path.join(folder_path, "commit.marker")
-            with open(marker_path, encoding="utf-8") as stream:
+            with open(os.path.join(folder_path, "commit.marker"), encoding="utf-8") as stream:
                 marker = json.load(stream)
             if marker.get("manifest_sha256") != manifest.get("manifest_sha256"):
                 return False
@@ -594,7 +537,7 @@ class PartArchive:
             actual_files = set()
             for root, _dirs, names in os.walk(folder_path):
                 for name in names:
-                    if name in {"commit.marker", "COMMITTED.json", "manifest.json"}:
+                    if name in {"commit.marker", "manifest.json"}:
                         continue
                     actual_files.add(os.path.relpath(os.path.join(root, name), folder_path).replace("\\", "/"))
             if actual_files != set(files):
@@ -667,10 +610,7 @@ class PartArchive:
                     continue
                 meta = {}
                 try:
-                    metadata_path = os.path.join(folder, "part.json")
-                    if not os.path.isfile(metadata_path):  # read-only legacy schema
-                        metadata_path = os.path.join(folder, "meta.json")
-                    with open(metadata_path, encoding="utf-8") as stream:
+                    with open(os.path.join(folder, "meta.json"), encoding="utf-8") as stream:
                         meta = json.load(stream)
                 except (OSError, ValueError):
                     continue
@@ -992,13 +932,13 @@ class PartArchive:
         )
         self._fsync_directory(self.batch_folder)
 
-    def register_run(self, run_id: int, threshold_revision=None):
+    def register_run(self, run_id: str, threshold_revision=None):
         if not self.enabled:
             return
         if any(row.get("run_id") == run_id for row in self._runs):
             return
         self._runs.append({
-            "run_id": run_id,
+            "run_id": str(run_id),
             "threshold_revision": threshold_revision,
             "started_at": time.time(),
         })
