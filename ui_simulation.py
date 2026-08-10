@@ -28,6 +28,8 @@ class SimPart:
     id: int
     position: int = 0
     category: str = ""
+    defects: list[str] | None = None
+    inspected: bool = False
 
 
 class LineSimulation:
@@ -179,20 +181,31 @@ class LineSimulation:
         return result
 
     def _frame_analysis_payload(self) -> dict:
-        if not self.selected_role:
+        inspection = next((part for part in self.parts if part.position == 4), None)
+        role = self.selected_role or ("TOP" if inspection else None)
+        if not role:
             return {"available": False}
+        category = inspection.category if inspection else "GOOD"
+        defects = inspection.defects if inspection else []
+        triggered = bool(defects)
         return {
             "available": True,
-            "kind": "selected",
+            "kind": "selected" if self.selected_role else "production",
             "active": True,
             "title": "СИМУЛИРОВАННЫЙ АНАЛИЗ КАДРА",
-            "role": self.selected_role,
-            "part_id": None,
-            "stage": "DIAGNOSTIC",
-            "verdict": "GOOD",
+            "role": role,
+            "part_id": inspection.id if inspection else None,
+            "stage": "DIAGNOSTIC" if self.selected_role else "CONTROL",
+            "verdict": category,
             "rules": [{
                 "name": "part_presence", "title": "Наличие корпуса", "triggered": False,
                 "run_cards": [[{"type": "metric", "metrics": [{"key": "simulated_confidence", "label": "Уверенность модели", "value": "0.99", "limit": "0.40", "ok": True}]}]],
+            }, {
+                "name": "sinks" if triggered else "window_geometry",
+                "title": "Симулированная проверка",
+                "triggered": triggered,
+                "human_cause": ", ".join(defects) if defects else "Норма",
+                "run_cards": [[{"type": "metric", "metrics": [{"key": "simulated_result", "label": "Результат правила", "value": "СРАБОТАЛО" if triggered else "НОРМА", "limit": "—", "ok": not triggered}]}]],
             }],
         }
 
@@ -233,6 +246,7 @@ class LineSimulation:
                              "vision_rule_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None},
                 "process": {"phase": phase, "positions": [position] if position is not None else [],
                             "part_id": self.egress.id if self.egress else None,
+                            "inspection_roles": ["TOP"] if any(p.position == 4 for p in self.parts) else [],
                             "conveyor": {"speed": 18000}},
                 "selected_analysis": {"active": self.selected_role is not None, "role": self.selected_role},
                 "diagnostic_allowed": state in ("IDLE", "STOPPED") and self.selected_role is None,
@@ -252,13 +266,36 @@ class LineSimulation:
             recent = list(self.recent)
         self.server.update(line_status=status, recent_parts=recent)
 
+    def _inspect_part(self, part: SimPart) -> None:
+        """Virtual inspection uses the same verdict vocabulary and archive flow."""
+        if part.inspected:
+            return
+        category = self.CATEGORIES[(part.id - 1) % len(self.CATEGORIES)]
+        part.category = category
+        part.inspected = True
+        part.defects = {
+            "GOOD": [],
+            "BAD": ["СИМУЛИРОВАННЫЙ ДЕФЕКТ ГЕОМЕТРИИ"],
+            "CLEANUP": ["СИМУЛИРОВАННОЕ СТЕКЛО"],
+        }[category]
+        archive = self.server.archive
+        if archive is not None:
+            frames = dict(self.server.frames)
+            archive.store_frames(part.id, "CONTROL", frames, frames)
+
     def _finish_egress(self) -> None:
         if not self.egress:
             return
         part = self.egress
         category = part.category or "GOOD"
         self.counts[category.lower() if category != "BAD" else "bad"] += 1
-        self.recent.append({"id": part.id, "category": category, "decision": "SIMULATION"})
+        decision = "SIMULATION · " + (", ".join(part.defects or []) or "НОРМА")
+        self.recent.append({"id": part.id, "category": category, "decision": decision,
+                            "human_cause": ", ".join(part.defects or [])})
+        archive = self.server.archive
+        if archive is not None:
+            archive.finalize(part.id, category, decision, part.defects or [], self.step,
+                             extra={"source": "ui_simulation"})
         self.recent = self.recent[-10:]
         self.egress = None
 
@@ -294,8 +331,8 @@ class LineSimulation:
                 arriving = self._new_part()    # falling into +0 starts now
                 self.parts.insert(0, arriving)
                 for part in self.parts:
-                    if part.position >= 4 and not part.category:
-                        part.category = self.CATEGORIES[(part.id - 1) % len(self.CATEGORIES)]
+                    if part.position >= 4:
+                        self._inspect_part(part)
             self._publish("SETTLE")
             # New body falls into +0 and the output body falls from +8 while
             # the conveyor is stopped. Do not begin the next step yet.
