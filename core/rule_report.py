@@ -1129,10 +1129,10 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
     source_run = rule_meta.get("source_run")
     evidence_run = rule_meta.get("evidence_run")
 
-    # Agreement scores - согласованность прогонов
+    # Сводный размер набора решающих правил.
     agreement_scores = consensus.get("agreement_scores") or []
 
-    # Picture run из consensus
+    # Выбранный кадр из metadata инспекции.
     picture_run = consensus.get("picture_run")
     picture_reason = consensus.get("picture_reason")
 
@@ -1152,7 +1152,7 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
 
 
 def _fallback_run_status(run_cards: list) -> list:
-    """Статус прогонов из карточек замеров (без данных consensus).
+    """Статус одиночного запуска из карточек замеров (без consensus).
 
     Используется для ручных/демо-строк: по ``ok`` карточек прогона —
     «В НОРМЕ» / «ОТКЛОНЕНИЕ» / «НЕТ ИЗМЕРЕНИЯ». Отличить «область не

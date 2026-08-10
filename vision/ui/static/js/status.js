@@ -453,10 +453,8 @@ function updateLineCells(lineParts, process = {}) {
         }
     });
 
-    // Корпус на +7 ожидает следующего движения ленты; механического
-    // удержания нет. Лоток +8 показывает подготовленный маршрут BAD/CLEANUP.
-    // Поле held сохранено только ради обратной совместимости старых снимков
-    // статуса и новым backend больше не выставляется.
+    // Корпус на +7 ожидает следующего движения ленты без механического
+    // удержания. Лоток +8 показывает подготовленный маршрут BAD/CLEANUP.
     const sortPart = (lineParts || []).find(p => Number(p.position) === 7);
     const sortHeld = !!(sortPart && sortPart.held);
     const sortCat = sortPart ? String(sortPart.category || '').toUpperCase() : '';

@@ -77,8 +77,7 @@ class UIServer:
 
     def __init__(self):
         self.frames: dict         = {}
-        # Набор кадров текущей стадии (один элемент — dict {role: кадр}).
-        # Структура сохранена для совместимости с /frame?run=1.
+        # Набор кадров текущей стадии: один элемент {role: кадр}.
         self.run_frames: list = []
         # Правила стадии: кадр размечается drawings этих правил, чтобы
         # оверлей совпадал с кадром. Один элемент — список строк отчёта.
@@ -182,7 +181,7 @@ class UIServer:
 
     @staticmethod
     def _same_run_frames(left: list, right: list) -> bool:
-        """Наборы кадров прогонов сравниваются по объектам массивов."""
+        """Сравнить наборы кадров стадии по объектам массивов."""
         if left is right:
             return True
         if len(left) != len(right):
@@ -262,7 +261,7 @@ class UIServer:
             if run_frames is not None:
                 # None — не трогаем (например, обычный тик статуса); пустой
                 # список — очищаем (анализ завершён); непустой список —
-                # заменяем кадры прогонов текущей стадии.
+                # заменяем набор кадров текущей стадии.
                 incoming_run_frames = [
                     dict(item)
                     for item in run_frames
@@ -272,9 +271,8 @@ class UIServer:
                     self.run_frames, incoming_run_frames,
                 ):
                     self.run_frames = incoming_run_frames
-                    # Кадры прогонов новые: правила старых прогонов к ним
-                    # не относятся (см. _get_or_render по run). Заполняются
-                    # тем же вызовом (run_rule_results) ниже.
+                    # При замене кадра связанная разметка сбрасывается и
+                    # заполняется run_rule_results этого же update().
                     self.run_rule_results = []
                     should_invalidate = True
             if run_rule_results is not None:
@@ -861,10 +859,8 @@ class UIServer:
                     and role in self.run_frames[run_index]
                 ):
                     frame = self.run_frames[run_index][role]
-            # Не подменяем запрошенный кадр прогона текущим live/evidence
-            # кадром. Это особенно важно при переключении трёх кадров: если
-            # роль отсутствует в наборе стадии, fallback показывал старую
-            # деталь и выглядел как случайно «не тот» прогон.
+            # Для роли вне текущего набора стадии показываем последний
+            # доступный live-кадр.
             if frame is None:
                 frame = self.frames.get(role)
             if frame is None:

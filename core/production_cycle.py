@@ -1412,8 +1412,8 @@ class ProductionCycle:
 
         # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
         # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
-        # После паузы этот кэш недействителен, поэтому INPUT проходит обычный
-        # свежий захват и анализ даже при старом is_empty=True.
+        # После паузы кэш недействителен, поэтому INPUT проходит обычный
+        # свежий захват и анализ независимо от сохранённого is_empty.
         background_result = getattr(self, "_background_presence_result", None)
         background_usable = getattr(self, "_background_presence_usable", False)
         if background_usable and background_result and background_result["is_empty"]:
@@ -2029,8 +2029,7 @@ class ProductionCycle:
                 "id": part.id,
                 "position": position,
                 "category": part.route_category,
-                # Флаг оставлен для обратной совместимости UI; механического
-                # удержания корпуса в этой линии нет.
+                # Механического удержания корпуса в этой линии нет.
                 "held": False,
                 "dropping": dropping,
             })

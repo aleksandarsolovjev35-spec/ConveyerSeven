@@ -162,7 +162,7 @@ def main():
             )
             _ensure_initialization_active()
 
-            # Camera warmup after idle (fixes near-black after long pause)
+            # Прогрев подтверждает, что все камеры отдают кадры.
             monitor.boot_step_start(
                 "camera_warmup", "Прогрев камер",
             )
@@ -736,13 +736,7 @@ def _env_clamped_float(
 
 
 def _weak_camera_warmup_reasons(stats: dict) -> dict:
-    """Вернуть роли, которые после прогрева не отдали ни одного кадра.
-
-    Проверка яркости убрана: тёмные кадры после проявления AGC — это
-    нормальный переходный процесс. Production-захват ``_grab()`` повторяет
-    чтение до 30 раз (2.4 с), пока кадр не станет валидным. Прогрев
-    только убеждается, что камера жива и отдаёт поток.
-    """
+    """Вернуть роли, не отдавшие ни одного кадра во время прогрева."""
     reasons = {}
     for role, row in (stats or {}).items():
         try:
@@ -761,12 +755,11 @@ def _format_warmup_reasons(reasons: dict) -> str:
 
 
 def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict:
-    """Догреть камеры, которые после прогрева всё ещё пустые/тёмные.
+    """Повторно прогреть роли без кадров и проверить их готовность.
 
-    Эскалация в два шага: сначала точечный повторный прогрев (лечит
-    медленный AGC), затем пересоздание потока через ``reopen_roles``
-    (лечит мёртвый UVC-поток, из которого кадры не появятся никогда).
-    RuntimeError выбрасывается, только когда не помогло ни то, ни другое.
+    Если менеджер поддерживает ``reopen_roles``, после неудачного прогрева
+    выполняется попытка переоткрытия. Текущий CameraManager возвращает
+    неуспех и запуск завершается ошибкой.
     """
     reasons = _weak_camera_warmup_reasons(stats)
     if not reasons:
@@ -787,10 +780,8 @@ def _recover_weak_cameras_after_warmup(cameras, stats: dict, phase: str) -> dict
     if not retry_reasons:
         return merged
 
-    # Повторное чтение не помогло: дело не в медленном AGC. Скорее
-    # всего, UVC-поток мёртв (нет изохронной полосы на хабе или backend
-    # собрал битый граф) — такой VideoCapture нужно не читать дальше,
-    # а пересоздать, как это и делает production-захват.
+    # Менеджер может реализовать переоткрытие ролей; отсутствие такой
+    # возможности или повторный отказ блокируют запуск.
     reopen = getattr(cameras, "reopen_roles", None)
     if reopen is None:
         raise RuntimeError(

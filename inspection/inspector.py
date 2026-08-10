@@ -27,11 +27,8 @@ class Inspector:
         self.decision = decision
         self.recorder = recorder
 
-    # Production: один свежий кадр, итог — по этому кадру.
-    #
-    # frame_runs оставлен списком из одного словаря ради совместимости с
-    # production_cycle (захват всегда возвращает [frames]); внутри мы
-    # работаем только с этим единственным набором кадров.
+    # ProductionCycle передаёт один набор кадров как [frames]. Инспектор
+    # проверяет этот контракт и обрабатывает единственный элемент.
 
     def inspect_input_consensus(
         self,
