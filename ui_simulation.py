@@ -128,6 +128,9 @@ class LineSimulation:
         self.empty_count = 0
         self.parts: list[SimPart] = []
         self.egress: SimPart | None = None
+        # The first production cycle may start with a body already under
+        # INPUT; mirror the hardware's no-motion initial inspection.
+        self._await_initial_inspection = False
         self.recent: list[dict] = []
         self.counts = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
         self.thread = threading.Thread(target=self._run, name="ui-simulation", daemon=True)
@@ -153,6 +156,9 @@ class LineSimulation:
             self._open_next_archive_batch()
             self.jog_active = False
             self.stop_requested = False
+            # A launch begins with the same special initial inspection as
+            # ProductionCycle: do not advance the virtual belt first.
+            self._await_initial_inspection = not self.parts and self.egress is None
             self.state = "RUNNING"
             self._wake.set()
         self._publish("READY")
@@ -432,7 +438,7 @@ class LineSimulation:
                 elif any(part.position == 4 for part in self.parts):
                     active_roles = list(self.CONTROL_STAGES)
             inspection_static = phase in {
-                "CAPTURE", "ANALYSIS", "PUBLISH", "ANALYSIS_REVIEW",
+                "INITIAL_INSPECTION", "CAPTURE", "ANALYSIS", "PUBLISH", "ANALYSIS_REVIEW",
                 "INPUT_MODELS", "INPUT_GEOMETRY", "INPUT_DECISION",
                 "INPUT_RESULT_RECORDED", "SPIDER_MODELS", "SPIDER_GEOMETRY",
                 "SPIDER_DECISION", "SPIDER_RESULT_RECORDED",
@@ -559,6 +565,21 @@ class LineSimulation:
                     self.state = "STOPPED"
                     self.stop_requested = False
                 self._publish("STOPPED")
+                continue
+
+            if self._await_initial_inspection:
+                # The first body is already under INPUT. Seed that tray and
+                # inspect it without ROUTE_PREPARE or horizontal movement.
+                with self._lock:
+                    self._await_initial_inspection = False
+                    arriving = self._new_part() if self.state == "RUNNING" else None
+                    if arriving is not None:
+                        self.parts.insert(0, arriving)
+                self._publish("INITIAL_INSPECTION", list(self.INPUT_STAGES))
+                if self._stop.wait(self.POST_STOP_SECONDS):
+                    break
+                if not self._run_camera_stages():
+                    continue
                 continue
 
             # Set the distributor first, then perform one synchronous step.
