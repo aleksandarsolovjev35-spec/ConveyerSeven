@@ -9,12 +9,12 @@
     <link rel="stylesheet" href="/static/css/blocks.css?v=23">
     <link rel="stylesheet" href="/static/css/camera.css?v=34">
     <link rel="stylesheet" href="/static/css/axis.css?v=33">
-    <link rel="stylesheet" href="/static/css/history-strip.css?v=37">
+    <link rel="stylesheet" href="/static/css/history-strip.css?v=38">
     <link rel="stylesheet" href="/static/css/stats.css?v=43">
     <link rel="stylesheet" href="/static/css/jog.css?v=31">
     <link rel="stylesheet" href="/static/css/controls.css?v=32">
     <link rel="stylesheet" href="/static/css/gallery.css?v=31">
-    <link rel="stylesheet" href="/static/css/process.css?v=43">
+    <link rel="stylesheet" href="/static/css/process.css?v=44">
     <link rel="stylesheet" href="/static/css/motion.css?v=33">
     <link rel="stylesheet" href="/static/css/thresholds.css?v=20">
     <link rel="stylesheet" href="/static/css/archive.css?v=1">
@@ -107,8 +107,24 @@
                         </div>
                     </div>
                     <div class="process-phase-panel" data-ui-block="process-phase">
-                        <div class="process-phase-title">СОСТОЯНИЕ ЛЕНТЫ</div>
-                        <div id="process-phase-label" class="process-phase-label" data-line-state="IDLE">ГОТОВА К ПУСКУ</div>
+                        <div class="process-phase-head">
+                            <div class="process-phase-title">ЭТАПЫ ЦИКЛА</div>
+                            <span id="process-phase-step" class="process-phase-step">ШАГ 0</span>
+                        </div>
+                        <div class="process-phase-row">
+                            <div id="process-phase-label" class="process-phase-label" data-line-state="IDLE" aria-live="polite">ГОТОВА К ПУСКУ</div>
+                            <span id="process-phase-code" class="process-phase-code">IDLE</span>
+                        </div>
+                        <div id="process-phase-detail" class="process-phase-detail">Ожидание команды оператора</div>
+                        <div id="process-stage-track" class="process-stage-track" aria-label="Последовательность производственного шага">
+                            <span data-process-stage="START" title="Первый цикл: корпус уже может находиться под INPUT">СТАРТ</span>
+                            <span data-process-stage="MOTION" title="Движение ленты">ХОД</span>
+                            <span data-process-stage="SETTLE" title="Затухание вибрации">СТОП</span>
+                            <span data-process-stage="CAPTURE" title="Захват стоп-кадра">КАДР</span>
+                            <span data-process-stage="ANALYSIS" title="Модели, геометрия и решение">АНАЛИЗ</span>
+                            <span data-process-stage="REVIEW" title="Просмотр результата">РЕВЬЮ</span>
+                            <span data-process-stage="PUBLISH" title="Публикация и завершение шага">ИТОГ</span>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -330,10 +346,10 @@
         </div>
     </div>
 
-    <script src="/static/js/core.js?v=42"></script>
+    <script src="/static/js/core.js?v=43"></script>
     <script src="/static/js/boot.js?v=31"></script>
-    <script src="/static/js/diagnostics.js?v=48"></script>
-    <script src="/static/js/status.js?v=46"></script>
+    <script src="/static/js/diagnostics.js?v=49"></script>
+    <script src="/static/js/status.js?v=48"></script>
     <script src="/static/js/controls.js?v=35"></script>
     <script src="/static/js/thresholds.js?v=18"></script>
     <script src="/static/js/cameras.js?v=36"></script>

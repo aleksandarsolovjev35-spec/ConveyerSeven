@@ -11,5 +11,6 @@
   "settle_time": 0.5,
   "stage_trace_time": 0.5,
   "axis_speed": 300,
-  "axis_accel": 100
+  "axis_accel": 100,
+  "review_time": 2.0
 }
