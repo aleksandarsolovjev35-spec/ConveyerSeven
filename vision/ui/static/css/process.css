@@ -599,37 +599,50 @@
 
 
 /* ─── Carriage stencil: final process-line model ──────────────────────
-   The route block contains only neutral apertures and body fragments. */
+   This is a single carriage wall, not nine status cards.  The only labels
+   are below the apertures; the apertures themselves never get a route state. */
 .process-line-head { justify-content: flex-start; }
 .line-gates, .conveyor-belt, .chute-symbol { display: none !important; }
-.line-conveyor-track { background: var(--bg-2); border-radius: 4px; }
-.production-line-cells .line-cell {
-    overflow: hidden;
-    background: rgba(15, 19, 23, .32);
-    border-color: var(--border-strong);
-    box-shadow: 0 1px 2px rgba(0,0,0,.25);
+.line-conveyor-track {
+    padding: 3px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
 }
-.production-line-cells .line-cell::before { z-index: 3; }
-/* One .line-token-piece per aperture: the cell clips it like a real window. */
+.production-line-cells { height: 32px; }
+.production-line-cells .line-cell {
+    min-height: 32px;
+    overflow: hidden;
+    background: rgba(7, 11, 15, .72);
+    border-color: var(--border-strong);
+    border-radius: 2px;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.018);
+}
+/* Do not duplicate +0…+8 inside every aperture. */
+.production-line-cells .line-cell::before { content: none; }
+.line-position-labels { margin-top: 4px; }
+/* One .line-token-piece per aperture.  A piece is a clipped view of one
+   continuous body behind the wall, not a second framed cell. */
 .line-token-piece {
     position: absolute;
     z-index: 1;
-    top: 7px;
-    height: 20px;
-    border: 1px solid var(--text-muted);
-    border-radius: 3px;
-    background: var(--bg-1);
-    box-shadow: 0 1px 2px rgba(0,0,0,.35);
+    top: 5px;
+    height: 22px;
+    border: 0;
+    border-radius: 2px;
+    background: #66737e;
+    box-shadow: inset 0 1px rgba(255,255,255,.13), 0 1px 2px rgba(0,0,0,.35);
     transition: left var(--move-duration, 420ms) cubic-bezier(.25,.1,.25,1),
                 transform 260ms var(--ease), opacity 180ms ease;
     will-change: left, transform, opacity;
     pointer-events: none;
 }
-.line-token-piece.cell-good { background: var(--ok-bg); border-color: var(--ok); }
-.line-token-piece.cell-bad { background: var(--bad-bg); border-color: var(--bad); }
-.line-token-piece.cell-cleanup { background: var(--warn-bg); border-color: var(--warn); }
-.line-token-piece.token-entering { transform: translateY(-46px); }
-.line-token-piece.token-exiting { transform: translateY(56px); opacity: 0; }
+.line-token-piece.cell-good { background: var(--ok); }
+.line-token-piece.cell-bad { background: var(--bad); }
+.line-token-piece.cell-cleanup { background: var(--warn); }
+.line-token-piece.token-entering { transform: translateY(-44px); }
+.line-token-piece.token-exiting { transform: translateY(54px); opacity: 0; }
+/* A conflicting aperture must be visually empty, including its border fill. */
 .line-token-piece.is-hidden-by-conflict { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) {

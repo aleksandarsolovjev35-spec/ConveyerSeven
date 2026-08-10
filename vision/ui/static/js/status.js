@@ -452,10 +452,21 @@ function updateLineCells(lineParts, process = {}) {
             const cell = cells.find(item => Number(item.dataset.pos) === pos);
             if (!cell) continue;
             let piece = previous.get(pos);
-            if (!piece) {
+            const isNewPiece = !piece;
+            const movedHorizontally = token.previousPosition !== token.position;
+            if (isNewPiece) {
                 piece = document.createElement('div');
                 piece.className = 'line-token-piece';
                 piece.dataset.partId = String(token.id);
+                // A fragment entering the neighbouring aperture starts at
+                // its real previous coordinate. This makes one body visible
+                // in two windows during the continuous horizontal step.
+                if (movedHorizontally && rects[token.previousPosition]) {
+                    const previousRect = rects[token.previousPosition];
+                    const previousLeft = previousRect.left
+                        + previousRect.width / 2 - bodyWidth / 2;
+                    piece.style.left = `${previousLeft - rects[pos].left}px`;
+                }
                 cell.appendChild(piece);
                 if (token.entering && token.position === 0) piece.classList.add('token-entering');
             }
@@ -464,7 +475,12 @@ function updateLineCells(lineParts, process = {}) {
             piece.classList.remove('cell-good', 'cell-bad', 'cell-cleanup', 'token-exiting');
             _applyTokenCategory(piece, token.category);
             piece.style.width = `${bodyWidth}px`;
-            piece.style.left = `${token.bodyLeft - rects[pos].left}px`;
+            const targetLeft = `${token.bodyLeft - rects[pos].left}px`;
+            if (isNewPiece && movedHorizontally) {
+                requestAnimationFrame(() => { piece.style.left = targetLeft; });
+            } else {
+                piece.style.left = targetLeft;
+            }
             piece.title = `Корпус #${token.id} · ${categoryLabel(token.category)}`;
             nextPieces.push(piece);
         }
