@@ -57,6 +57,8 @@ class LineSimulation:
         self.last_distributor_action = "SIMULATION READY"
         self.jog_active = False
         self.jog_busy = False
+        self.jog_direction: str | None = None
+        self.jog_hold_steps = 0
         self.selected_role: str | None = None
         self.last_diagnostic = "SIMULATION READY"
         self.step = 0
@@ -91,20 +93,31 @@ class LineSimulation:
         with self._lock:
             self.jog_active = False
             self.jog_busy = False
+            self.jog_direction = None
         self._publish("IDLE")
         return True
 
-    def jog_hold_start(self, _direction: str) -> bool:
+    def jog_hold_start(self, direction: str) -> bool:
         with self._lock:
             if not self.jog_active or self.state not in ("IDLE", "STOPPED"):
                 return False
             self.jog_busy = True
+            self.jog_direction = direction
+            self.jog_hold_steps += 1
+            # JOG changes the visible virtual conveyor coordinate. It is
+            # bounded exactly like a hardware axis and remains in the status.
+            delta = 5 if direction == "+" else -5
+            self.dist1_position = max(0, min(340, self.dist1_position + delta))
+            self.dist1_state = "MOVING"
+            self.last_distributor_action = f"JOG {direction}"
         self._publish("JOG")
         return True
 
     def jog_hold_release(self, _reason: str = "") -> bool:
         with self._lock:
             self.jog_busy = False
+            self.jog_direction = None
+            self.dist1_state = "GOOD" if self.dist1_position == 0 else "TO_DIST2"
         self._publish("IDLE")
         return True
 
@@ -295,7 +308,8 @@ class LineSimulation:
                          "static_roles": [self.selected_role] if self.selected_role else [],
                          "all_roles_static": False, "fps": 25, "error": None},
                 "jog": {"active": self.jog_active, "busy": self.jog_busy, "can_enter": state in ("IDLE", "STOPPED"),
-                        "hold_steps": 0, "direction": None, "last_action": "SIMULATION", "live_fps": 25, "error": None},
+                        "hold_steps": self.jog_hold_steps, "direction": self.jog_direction,
+                        "last_action": self.last_distributor_action, "live_fps": 25, "error": None},
             }
             recent = list(self.recent)
         # Publish fresh virtual camera frames on every production state change.
