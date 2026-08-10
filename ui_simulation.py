@@ -249,27 +249,42 @@ class LineSimulation:
         self.archive_compressed = True
 
     def _run_camera_stages(self) -> bool:
-        """Run the same role-by-role inspection cadence that drives the UI."""
-        # Complete the control verdict first: a continuous feed can already
-        # contain a new input body while another body waits at +4.
-        target = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
-        stages = self.CONTROL_STAGES
-        if target is None:
-            target = next((part for part in self.parts if part.position == 0), None)
-            stages = self.INPUT_STAGES
-        if target is None:
+        """Run the production stage contract: CAPTURE → ANALYSIS → PUBLISH.
+
+        The browser derives LIVE/stop-frame visibility from ``live.static``
+        and ``static_roles`` below, exactly as it does with ProductionCycle.
+        """
+        batches: list[tuple[SimPart, tuple[str, ...]]] = []
+        control = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
+        input_part = next((part for part in self.parts if part.position == 0), None)
+        if control is not None:
+            batches.append((control, self.CONTROL_STAGES))
+        if input_part is not None:
+            batches.append((input_part, self.INPUT_STAGES))
+        if not batches:
             return True
-        for role in stages:
-            self._publish(f"CAMERA_{role}")
-            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
-                return False
-            with self._lock:
-                if self.state not in ("RUNNING", "STOPPING"):
+
+        captured_roles: list[str] = []
+        for _part, roles in batches:
+            for role in roles:
+                captured_roles.append(role)
+                self._publish("CAPTURE", [role])
+                if self._stop.wait(self.CAMERA_STAGE_SECONDS):
                     return False
-        if target.position == 4:
-            with self._lock:
-                self._inspect_part(target)
-            self._publish("ANALYSIS_CONFIRMED")
+                with self._lock:
+                    if self.state not in ("RUNNING", "STOPPING"):
+                        return False
+
+        self._publish("ANALYSIS", captured_roles)
+        if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+            return False
+        with self._lock:
+            for part, roles in batches:
+                if roles == self.CONTROL_STAGES:
+                    self._inspect_part(part)
+        self._publish("PUBLISH", captured_roles)
+        if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+            return False
         return True
 
     def _prepare_distributor(self) -> None:
@@ -335,18 +350,18 @@ class LineSimulation:
             }],
         }
 
-    def _publish(self, phase: str) -> None:
+    def _publish(self, phase: str, inspection_roles: list[str] | None = None) -> None:
         with self._lock:
             state = self.state
             line_parts = self._line_parts()
             position = 7 if self.egress else None
-            active_roles = []
-            if phase.startswith("CAMERA_"):
-                active_roles = [phase.removeprefix("CAMERA_")]
-            elif any(part.position == 0 for part in self.parts):
-                active_roles = list(self.INPUT_STAGES)
-            elif any(part.position == 4 for part in self.parts):
-                active_roles = list(self.CONTROL_STAGES)
+            active_roles = list(inspection_roles or ())
+            if not active_roles:
+                if any(part.position == 0 for part in self.parts):
+                    active_roles = list(self.INPUT_STAGES)
+                elif any(part.position == 4 for part in self.parts):
+                    active_roles = list(self.CONTROL_STAGES)
+            inspection_static = phase in ("CAPTURE", "ANALYSIS", "PUBLISH")
             status = {
                 "state": state,
                 "exit_requested": False,
@@ -387,8 +402,10 @@ class LineSimulation:
                     "rules": [{"name": "RULES", "ok": True, "message": self.last_diagnostic}],
                 },
                 "frame_analysis": self._frame_analysis_payload(),
-                "live": {"running": True, "static": self.selected_role is not None, "streaming": self.selected_role is None,
-                         "static_roles": [self.selected_role] if self.selected_role else [],
+                "live": {"running": True,
+                         "static": self.selected_role is not None or inspection_static,
+                         "streaming": self.selected_role is None and not inspection_static,
+                         "static_roles": [self.selected_role] if self.selected_role else (active_roles if inspection_static else []),
                          "all_roles_static": False, "fps": 25, "error": None},
                 "jog": {"active": self.jog_active, "busy": self.jog_busy, "can_enter": state in ("IDLE", "STOPPED"),
                         "hold_steps": self.jog_hold_steps, "direction": self.jog_direction,
@@ -457,10 +474,6 @@ class LineSimulation:
                 self._publish("STOPPED")
                 continue
 
-            # Camera roles are processed one by one while the belt is stopped.
-            if not self._run_camera_stages():
-                continue
-
             # Set the distributor first, then perform one synchronous step.
             # This mirrors the physical route preparation before the belt moves.
             with self._lock:
@@ -471,7 +484,7 @@ class LineSimulation:
             with self._lock:
                 self._settle_distributor()
             # Horizontal step: every currently visible part advances together.
-            self._publish("CONVEYOR_MOVING")
+            self._publish("MOTION")
             if self._stop.wait(self.STEP_SECONDS):
                 break
             with self._lock:
@@ -482,7 +495,7 @@ class LineSimulation:
                 for part in self.parts:
                     part.position += 1
                 self.step += 1
-            self._publish("CONVEYOR_CONFIRMED")
+            self._publish("SETTLE")
             if self._stop.wait(self.SETTLE_SECONDS):
                 break
             with self._lock:
@@ -496,9 +509,11 @@ class LineSimulation:
                     self.parts.insert(0, arriving)
             self._publish("SETTLE")
             # New body falls into +0 and the output body falls from +8 while
-            # the conveyor is stopped. Do not begin the next step yet.
+            # the conveyor is stopped. Only after that can capture own cameras.
             if self._stop.wait(self.POST_STOP_SECONDS):
                 break
+            if not self._run_camera_stages():
+                continue
 
 
 def configure_simulated_thresholds(server: UIServer) -> None:
