@@ -70,6 +70,7 @@ class LineSimulation:
         self.jog_hold_steps = 0
         self.selected_role: str | None = None
         self.last_diagnostic = "SIMULATION READY"
+        self.archive_compressed = False
         self.step = 0
         self.next_id = 1
         self.slot_counter = 0
@@ -220,6 +221,17 @@ class LineSimulation:
             result.append({"id": self.egress.id, "position": 7, "category": self.egress.category,
                            "held": False, "dropping": True})
         return result
+
+    def _finalize_archive_batch(self) -> None:
+        """Apply the real archive shutdown policy after graceful line drain."""
+        if self.archive_compressed:
+            return
+        archive = self.server.archive
+        if archive is None or not archive.enabled:
+            return
+        if archive.compress_on_shutdown:
+            archive.compress(delete_original=archive.delete_original_after_zip)
+        self.archive_compressed = True
 
     def _run_camera_stages(self) -> bool:
         """Run the same role-by-role inspection cadence that drives the UI."""
@@ -423,6 +435,7 @@ class LineSimulation:
                 self._wake.clear()
                 continue
             if current == "STOPPING" and not self.parts and self.egress is None:
+                self._finalize_archive_batch()
                 with self._lock:
                     self.state = "STOPPED"
                     self.stop_requested = False
