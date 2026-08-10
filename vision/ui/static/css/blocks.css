@@ -100,20 +100,19 @@
     padding-right: 2px;
 }
 
-/* Заголовок правила — подложка-«карточка» с лёгким акцентом слева. */
+/* Заголовок правила — без обводки, только фон и лёгкий акцент слева */
 .fa-new-rule-head {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 5px 6px;
     margin-top: 10px;
-    background: var(--panel-raised);
-    border: 1px solid var(--border);
+    background: var(--bg-1);
     border-radius: 3px;
-    border-left: 3px solid var(--border-accent);
+    border-left: 2px solid var(--border);
 }
 .fa-new-rule-head:first-child { margin-top: 0; }
-.fa-new-rule-head.triggered { border-left-color: var(--bad); background: rgba(201,118,118,0.12); }
+.fa-new-rule-head.triggered { border-left-color: var(--bad); background: rgba(201,118,118,0.08); }
 .fa-new-rule-head.part-absent { border-left-color: var(--warn); background: var(--warn-bg); }
 
 .fa-new-rule-name {
@@ -142,26 +141,26 @@
 .fa-new-rule-badge.ok   { background: rgba(114,163,126,0.18); color: var(--ok); }
 .fa-new-rule-badge.warn { background: rgba(193,166,106,0.18); color: var(--warn); }
 
-/* Строка замера: подложка-«карточка», чтобы строки визуально не сливались
-   друг с другом на фоне панели анализа кадра. */
+/* Строка замера: без обводок, только лёгкий разделитель между соседями
+   и фон при наведении — строка не кликабельна. */
 .fa-new-thr-row {
     display: grid;
     grid-template-columns: minmax(0, 1.25fr) 64px 68px;
     gap: 6px;
     align-items: center;
     padding: 3px 4px 3px 8px;
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    background: transparent;
+    border-radius: 2px;
     min-height: 22px;
-    transition: background 120ms var(--ease), border-color 120ms var(--ease);
+    /* никаких бордеров по умолчанию */
+    border: none;
+    transition: background 120ms var(--ease);
 }
 .fa-new-thr-row + .fa-new-thr-row {
-    margin-top: 2px;
+    border-top: 1px solid rgba(48, 59, 68, 0.42);
 }
 .fa-new-thr-row:hover {
-    background: var(--bg-1);
-    border-color: var(--border-strong);
+    background: rgba(255,255,255,0.02);
 }
 
 .fa-new-thr-label {
@@ -261,17 +260,15 @@
 .fa-new-obj-badge.bad   { background: var(--bad-bg); color: var(--bad); }
 .fa-new-obj-badge.muted { color: var(--text-muted); background: transparent; }
 
-/* Вложенные строки внутри блока объекта — свои подложки-карточки, чтобы
-   строки одного объекта тоже не сливались между собой. */
+/* Вложенные строки внутри блока объекта — без отступов и без бордеров */
 .fa-new-obj-block .fa-new-thr-row {
-    margin: 2px 4px;
+    margin-left: 0;
     padding-left: 8px;
-    border-radius: 3px;
-    background: var(--bg-0);
-    border: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
 }
 .fa-new-obj-block .fa-new-thr-row + .fa-new-thr-row {
-    margin-top: 2px;
+    border-top: 1px solid rgba(48, 59, 68, 0.42);
 }
 
 /* Ползунок — как в порогах правил, виден только при переполнении */
