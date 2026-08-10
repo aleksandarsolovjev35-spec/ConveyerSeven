@@ -43,6 +43,11 @@ class PartArchiveTest(unittest.TestCase):
             annotated_frames={"SPIDER_LEFT": frame.copy()},
         )
 
+        staging = archive._staging_dirs[1]
+        self.assertTrue(os.path.isdir(staging))
+        self.assertTrue(os.path.exists(os.path.join(staging, "INPUT_LEFT.jpg")))
+        self.assertFalse(os.path.exists(os.path.join(staging, "COMMITTED.json")))
+
         archive.finalize(
             part_id=1,
             category="BAD",
@@ -56,6 +61,8 @@ class PartArchiveTest(unittest.TestCase):
         folder = info["folder"]
         self.assertTrue(os.path.isdir(folder))
         self.assertTrue(folder.endswith(os.path.join("BAD", "part_0001")))
+        self.assertTrue(os.path.exists(os.path.join(folder, "COMMITTED.json")))
+        self.assertFalse(os.path.exists(staging))
         self.assertTrue(os.path.exists(os.path.join(
             os.path.dirname(os.path.dirname(folder)), "batch.json",
         )))
@@ -63,7 +70,7 @@ class PartArchiveTest(unittest.TestCase):
         # Основные файлы
         for name in ("INPUT_LEFT.jpg", "INPUT_RIGHT.jpg", "SPIDER_LEFT.jpg",
                      "INPUT_LEFT_raw.jpg", "INPUT_LEFT_debug.jpg",
-                     "meta.json"):
+                     "part.json"):
             self.assertTrue(
                 os.path.exists(os.path.join(folder, name)), name,
             )
@@ -82,8 +89,8 @@ class PartArchiveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(
             os.path.join(folder, "INPUT_LEFT_run3.jpg")))
 
-        # meta.json
-        with open(os.path.join(folder, "meta.json"), encoding="utf-8") as f:
+        # part.json
+        with open(os.path.join(folder, "part.json"), encoding="utf-8") as f:
             meta = json.load(f)
         self.assertEqual(meta["part_id"], 1)
         self.assertEqual(meta["category"], "BAD")

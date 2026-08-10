@@ -8,13 +8,11 @@ from core.rule_summary import build_presence_summary, build_rule_summary
 class RuleSummaryTest(unittest.TestCase):
     def test_presence_summary_present(self):
         details = {
-            "false_positive_max_count_by_role": {
-                "INPUT_LEFT": 2, "INPUT_RIGHT": 2,
+            "presence_min_count_by_role": {
+                "INPUT_LEFT": 3, "INPUT_RIGHT": 3,
             },
             "flatness_left": 5,
             "flatness_right": 6,
-            "effective_flatness_left": 5,
-            "effective_flatness_right": 6,
         }
         cards = build_presence_summary(details)
         self.assertEqual(len(cards), 2)
@@ -25,13 +23,11 @@ class RuleSummaryTest(unittest.TestCase):
 
     def test_presence_summary_empty(self):
         details = {
-            "false_positive_max_count_by_role": {
-                "INPUT_LEFT": 2, "INPUT_RIGHT": 2,
+            "presence_min_count_by_role": {
+                "INPUT_LEFT": 3, "INPUT_RIGHT": 3,
             },
             "flatness_left": 0,
             "flatness_right": 0,
-            "effective_flatness_left": 0,
-            "effective_flatness_right": 0,
         }
         cards = build_presence_summary(details)
         self.assertEqual(len(cards), 2)
@@ -41,7 +37,7 @@ class RuleSummaryTest(unittest.TestCase):
 
     def test_presence_summary_skips_missing_role(self):
         details = {
-            "false_positive_max_count_by_role": {"INPUT_LEFT": 2},
+            "presence_min_count_by_role": {"INPUT_LEFT": 3},
             "flatness_left": 5,
             # flatness_right отсутствует — карточка для него не строится
         }

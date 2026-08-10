@@ -195,6 +195,17 @@ class CameraManager:
         self._role_locks = {}
         self._closed = False
         self._failed_reason = None
+        self._live_lock = threading.RLock()
+        self._live_condition = threading.Condition(self._live_lock)
+        self._live_frames = {}
+        self._live_sequences = {}
+        self._live_threads = []
+        self._live_stop = threading.Event()
+        self._live_error = None
+        self._freshness_generation = 0
+        self.serials = {}
+        self.transforms = {}
+        self.camera_specs = {}
         self._config_file = config_file
         self._capture_factory = capture_factory or self._open_capture
         self._backends = _default_backends() or (None,)
@@ -293,16 +304,47 @@ class CameraManager:
                 "Неверный набор камер: "
                 f"missing={sorted(missing)}, extra={sorted(extra)}"
             )
-        ids = list(mapping.values())
-        if any(type(camera_id) is not int or camera_id < 0 for camera_id in ids):
-            raise RuntimeError("Индексы камер должны быть неотрицательными int")
+        normalized = {}
+        serials = {}
+        transforms = {}
+        specs = {}
+        for role, value in mapping.items():
+            if isinstance(value, dict):
+                camera_id = value.get("index", value.get("device_index"))
+                serial = value.get("serial")
+                transform = value.get("transform", {})
+                if not isinstance(transform, dict):
+                    raise RuntimeError(f"{role}: transform must be an object")
+                if serial is None or not isinstance(serial, str) or not serial.strip():
+                    raise RuntimeError(f"{role}: camera serial is required")
+                serial = serial.strip()
+                serials[role] = serial
+                specs[role] = dict(value)
+            else:
+                # Legacy files remain readable, but the stable identity is
+                # made explicit as an index alias until a serialised machine
+                # config is installed.  BOOT can require real serials.
+                camera_id = value
+                serials[role] = f"INDEX:{camera_id}"
+                transform = {}
+                specs[role] = {"index": camera_id, "serial": serials[role]}
+            if type(camera_id) is not int or camera_id < 0:
+                raise RuntimeError("Индексы камер должны быть неотрицательными int")
+            normalized[role] = camera_id
+            transforms[role] = transform
+        ids = list(normalized.values())
         if len(ids) != len(set(ids)):
             raise RuntimeError("Индексы камер должны быть уникальными")
-        self.mapping = mapping
+        if len(set(serials.values())) != len(serials):
+            raise RuntimeError("Серийные номера камер должны быть уникальными")
+        self.mapping = normalized
+        self.serials = serials
+        self.transforms = transforms
+        self.camera_specs = specs
 
         print("Конфигурация камер:")
         for role, cam_id in self.mapping.items():
-            print(f"  {role} -> {cam_id}")
+            print(f"  {role} -> serial={self.serials[role]} index={cam_id}")
 
     def open_cameras(self):
         """Открыть все камеры и убедиться, что каждая отдаёт кадр.
@@ -444,6 +486,177 @@ class CameraManager:
             f"[CAMERA] Запрошено: {_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]} "
             f"MJPG @ {_REQUESTED_FPS:.0f} FPS"
         )
+
+    # ─── Continuous physical live capture ─────────────────────────────
+
+    @property
+    def live_running(self) -> bool:
+        return bool(self._live_threads)
+
+    @property
+    def live_generation(self) -> int:
+        with self._live_lock:
+            return int(self._freshness_generation)
+
+    @property
+    def live_error(self):
+        with self._live_lock:
+            return self._live_error or self._failed_reason
+
+    def start_live(self) -> bool:
+        """Start one bounded reader per required role after BOOT."""
+        self._ensure_usable()
+        with self._live_lock:
+            if self._live_threads:
+                return False
+            self._live_stop.clear()
+            self._live_error = None
+            self._freshness_generation += 1
+            self._live_threads = [
+                threading.Thread(
+                    target=self._live_role_loop, args=(role,), daemon=True,
+                    name=f"camera-live-{role}",
+                )
+                for role in self.mapping
+            ]
+            threads = list(self._live_threads)
+        for thread in threads:
+            thread.start()
+        return True
+
+    def stop_live(self, timeout: float = 3.0):
+        self._live_stop.set()
+        with self._live_lock:
+            threads = list(self._live_threads)
+            self._live_threads = []
+            self._live_condition.notify_all()
+        deadline = time.monotonic() + float(timeout)
+        for thread in threads:
+            thread.join(max(0.0, deadline - time.monotonic()))
+
+    def freshness_boundary(self) -> float:
+        """Return a monotonic timestamp; snapshots must be newer than it."""
+        return time.monotonic()
+
+    def get_live_snapshot(self, roles=None, *, after: float | None = None,
+                          max_age: float | None = None, timeout: float = 5.0) -> dict:
+        requested = tuple(dict.fromkeys(roles or self.mapping.keys()))
+        unknown = set(requested) - set(self.mapping)
+        if unknown:
+            raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
+        deadline = time.monotonic() + float(timeout)
+        first_after = {}
+        while True:
+            now = time.monotonic()
+            with self._live_condition:
+                if self._live_error or self._failed_reason:
+                    raise RuntimeError(f"live camera health failed: {self.live_error}")
+                selected = {}
+                valid = True
+                for role in requested:
+                    item = self._live_frames.get(role)
+                    if item is None:
+                        valid = False
+                        break
+                    timestamp, frame, sequence = item
+                    if after is not None:
+                        if role not in first_after:
+                            if timestamp <= after:
+                                valid = False
+                                break
+                            first_after[role] = (timestamp, frame.copy(), sequence)
+                        timestamp, frame, sequence = first_after[role]
+                    if max_age is not None and now - timestamp > float(max_age):
+                        first_after.pop(role, None)
+                        valid = False
+                        break
+                    selected[role] = frame.copy()
+                if valid and len(selected) == len(requested):
+                    return selected
+                remaining = deadline - now
+                if remaining <= 0:
+                    missing = [role for role in requested if role not in self._live_frames]
+                    raise TimeoutError(
+                        "required fresh live snapshot unavailable: "
+                        + ",".join(missing or requested)
+                    )
+                self._live_condition.wait(min(0.05, remaining))
+
+    def require_live_health(self):
+        health = self.live_health()
+        failed = [role for role, row in health.items() if not row.get("ok")]
+        if failed:
+            raise RuntimeError("camera health gate failed: " + ", ".join(failed))
+        return health
+
+    def live_health(self) -> dict:
+        now = time.monotonic()
+        with self._live_lock:
+            return {
+                role: {
+                    "serial": self.serials.get(role),
+                    "ok": role in self._live_frames and self._live_error is None and self._failed_reason is None,
+                    "age_ms": (now - self._live_frames[role][0]) * 1000 if role in self._live_frames else None,
+                    "sequence": self._live_sequences.get(role, 0),
+                }
+                for role in self.mapping
+            }
+
+    def _live_role_loop(self, role: str):
+        failures = 0
+        while not self._live_stop.is_set():
+            cap = self.cameras.get(role)
+            try:
+                lock = self._role_locks[role]
+                with lock:
+                    ok, frame = cap.read() if cap is not None else (False, None)
+                error = None if ok and frame is not None else "read returned no frame"
+                if error is None:
+                    error = self._frame_error(frame)
+                if error is None:
+                    frame = self._apply_transform(role, frame)
+                    timestamp = time.monotonic()
+                    with self._live_condition:
+                        sequence = self._live_sequences.get(role, 0) + 1
+                        self._live_sequences[role] = sequence
+                        self._live_frames[role] = (timestamp, frame.copy(), sequence)
+                        self._live_condition.notify_all()
+                    failures = 0
+                    self._live_stop.wait(0.01)
+                    continue
+                failures += 1
+                if failures <= _DARK_RETRY_ATTEMPTS:
+                    self._live_stop.wait(_DARK_RETRY_INTERVAL)
+                    continue
+                if failures <= _DARK_RETRY_ATTEMPTS + _RECOVERY_ATTEMPTS:
+                    if self._reopen_role(role, time.monotonic() + _RECOVERY_PREFLIGHT):
+                        failures = 0
+                        self._freshness_generation += 1
+                        continue
+                self._latch_failure(f"{role}: {error}; live recovery exhausted")
+                with self._live_condition:
+                    self._live_error = f"{role}: {error}"
+                    self._live_condition.notify_all()
+                return
+            except Exception as exc:
+                self._latch_failure(f"{role}: {type(exc).__name__}: {exc}")
+                with self._live_condition:
+                    self._live_error = f"{role}: {type(exc).__name__}: {exc}"
+                    self._live_condition.notify_all()
+                return
+
+    def _apply_transform(self, role: str, frame):
+        transform = self.transforms.get(role) or {}
+        result = frame
+        rotation = transform.get("rotate", transform.get("rotation", 0))
+        if rotation in (90, 180, 270):
+            code = {90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}[rotation]
+            result = cv2.rotate(result, code)
+        if transform.get("flip_horizontal") or transform.get("mirror"):
+            result = cv2.flip(result, 1)
+        if transform.get("flip_vertical"):
+            result = cv2.flip(result, 0)
+        return result
 
     def warmup_all(self, duration: float | None = None) -> dict:
         """Прогреть все открытые камеры после простоя.
@@ -599,6 +812,20 @@ class CameraManager:
             # доверяем запросу и идём дальше (тестовые doubles ведут
             # себя именно так).
             if codec is None or codec == "MJPG":
+                try:
+                    width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    height = float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    fps = float(cap.get(cv2.CAP_PROP_FPS))
+                except Exception:
+                    width = height = fps = 0.0
+                if width > 0 and height > 0 and (int(width), int(height)) != _EXPECTED_SIZE:
+                    raise RuntimeError(
+                        f"driver negotiated {int(width)}x{int(height)}; expected {_EXPECTED_SIZE[0]}x{_EXPECTED_SIZE[1]}"
+                    )
+                if fps > 0 and abs(fps - _REQUESTED_FPS) > max(1.0, _REQUESTED_FPS * 0.10):
+                    raise RuntimeError(
+                        f"driver negotiated {fps:.2f} FPS; expected {_REQUESTED_FPS:.2f}"
+                    )
                 return
         message = (
             f"драйвер откатился с MJPG на {codec}: поток "
@@ -724,7 +951,7 @@ class CameraManager:
             )
         return results
 
-    def capture_roles(self, roles) -> dict:
+    def capture_roles(self, roles, *, after: float | None = None, max_age: float | None = None) -> dict:
         """Параллельно прочитать указанные независимые камеры.
 
         У каждой VideoCapture свой lock, поэтому одна камера никогда не
@@ -747,6 +974,12 @@ class CameraManager:
         if unknown:
             raise RuntimeError(f"Неизвестные камеры: {sorted(unknown)}")
         self._ensure_usable()
+        if self.live_running:
+            # Production never takes ownership of VideoCapture.  It copies
+            # from the always-running role buffers instead.
+            return self.get_live_snapshot(
+                requested, after=after, max_age=max_age, timeout=_CAPTURE_TIMEOUT
+            )
         deadline = time.monotonic() + _CAPTURE_TIMEOUT
 
         def _grab(role):
@@ -765,7 +998,7 @@ class CameraManager:
                 else:
                     frame_error = self._frame_error(frame)
                 if frame_error is None:
-                    return frame
+                    return self._apply_transform(role, frame)
                 last_error = RuntimeError(frame_error)
                 recoverable = (
                     frame_error == "read returned no frame"
@@ -924,6 +1157,8 @@ class CameraManager:
                         daemon=True,
                         name=f"release-stale-{role}",
                     ).start()
+                with self._live_lock:
+                    self._freshness_generation += 1
                 print(
                     f"[CAMERA] {role} (id={cam_id}): поток пересоздан "
                     f"[{_backend_label(backend)}]"
@@ -981,6 +1216,7 @@ class CameraManager:
         return results
 
     def release(self):
+        self.stop_live()
         # Менеджер не открывает окна OpenCV, поэтому destroyAllWindows()
         # здесь не нужен: на headless-сборках он лишь бросает исключение.
         with self._state_lock:

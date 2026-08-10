@@ -961,20 +961,16 @@ RULE_CAMERA_ROLES = {
 _PRESENCE_ROLE_FIELDS = {
     "INPUT_LEFT": {
         "flatness": "flatness_left",
-        "effective": "effective_flatness_left",
-        "ignored": "false_positive_ignored_left",
     },
     "INPUT_RIGHT": {
         "flatness": "flatness_right",
-        "effective": "effective_flatness_right",
-        "ignored": "false_positive_ignored_right",
     },
 }
 
 
 def _presence_summary(details: dict) -> list:
     """Короткая сводка по правилу присутствия детали."""
-    limits = details.get("false_positive_max_count_by_role") or {}
+    limits = details.get("presence_min_count_by_role") or {}
     lines = []
     for role, key in (
         ("INPUT_LEFT", "flatness_left"),
@@ -989,7 +985,7 @@ def _presence_summary(details: dict) -> list:
         found = int(raw or 0)
         limit = limits.get(role)
         limit_text = (
-            f" (порог ложных {int(limit)})" if isinstance(limit, int) else ""
+            f" (порог присутствия {limit:g})" if isinstance(limit, (int, float)) else ""
         )
         lines.append(f"{role}: flatness {found}{limit_text}")
     return lines
@@ -1246,7 +1242,7 @@ def _scope_presence_details(details: dict, role: str) -> dict:
 
     for details_key in (
         "min_confidence_by_role",
-        "false_positive_max_count_by_role",
+        "presence_min_count_by_role",
         "presence_by_role",
     ):
         raw = details.get(details_key)

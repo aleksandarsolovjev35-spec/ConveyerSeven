@@ -1,11 +1,37 @@
 import time
+import hashlib
+import json
+import math
+import queue
 import threading
 import traceback
+import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 from core.live_preview import LivePreview
+from core.command_arbiter import CommandArbiter
 from core.rule_report import build_rule_report_row, build_rule_report_rows
-from core.state_machine import StateMachine, State
+from core.state_machine import State
+from core.atomic_publisher import AtomicPublisher
+from core.control_core import ControlCore
+from core.core_state_machine import CoreStateMachine
+from core.control_model import (
+    Counters,
+    HealthState,
+    LineSnapshot,
+    LineState,
+    PartSnapshot,
+    PauseContinuation,
+    PersistenceState,
+    StepPhase,
+)
+from core.events import CoreEvent, EventGroup
+from core.health_supervisor import CAMERA_ROLES, HealthSupervisor
+from core.inspection_transaction import InspectionTransaction
+from core.line_reducer import LineReducer
+from core.motion_transaction import MotionTransaction
+from core.part_tracker import PartTracker
 from core.step_stages import (
     STAGE_SETTLE_SECONDS,
     STAGE_TRACE_SECONDS,
@@ -22,6 +48,10 @@ from inspection.consensus import (
     summarize_model_health,
 )
 from inspection.result import InspectionResult
+from core.identity import IdentityCounters
+from core.fault import FaultLatch
+from inspection.model_worker import terminate_all_workers
+
 from domain.part import (
     Part,
     CATEGORY_GOOD,
@@ -32,6 +62,7 @@ from domain.part import (
 
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
+_STEP_ABORTED_BEFORE_MOTION = object()
 
 # Пауза после обработки кадров нейросетями: оператор успевает отсмотреть
 # результат анализа до начала следующего шага.
@@ -66,23 +97,84 @@ class ProductionCycle:
         settle_seconds=STAGE_SETTLE_SECONDS,
         stage_trace_seconds=STAGE_TRACE_SECONDS,
         review_seconds=REVIEW_SECONDS,
+        journal=None,
+        initial_frame_max_age: float | None = 5.0,
+        manifest: dict | None = None,
+        threshold_revision: str | None = None,
+        control_core: ControlCore | None = None,
     ):
         self.conveyor     = conveyor
+        self.simulation = not hasattr(conveyor, "transport")
         self.cameras      = cameras
         self.inspector    = inspector
         self.distributor  = distributor
         self.monitor      = monitor
         self.archive      = archive
         self.jog          = jog
+        self.journal = journal
+        if not self.simulation and journal is None:
+            raise ValueError("production runtime requires RecoveryJournal")
         self.review_seconds = max(0.0, float(review_seconds))
+        if not self.simulation and self.review_seconds != 5.0:
+            raise ValueError("production REVIEW is fixed at exactly 5 seconds")
+        self.initial_frame_max_age = (
+            None if initial_frame_max_age is None else max(0.0, float(initial_frame_max_age))
+        )
 
         self.distributor.on_state_changed = self._refresh_monitor
 
-        self.sm = StateMachine(on_transition=self._on_state_change)
+        # One process owns one batch. The immutable formal snapshot is created
+        # before any runtime command and is the sole authority for line state,
+        # pending intent, step phase, run ID and confirmed current_step.
+        self.identity = IdentityCounters(
+            getattr(archive, "batch_id", None) or None
+        )
+        self.batch_id = self.identity.batch_id
+        requested_publisher = AtomicPublisher()
+        self.control_core = control_core or ControlCore(
+            LineSnapshot(
+                line_state=LineState.IDLE,
+                batch_id=self.batch_id,
+                health_state=HealthState.READY,
+            ),
+            publisher=requested_publisher,
+        )
+        self.logical_publisher = self.control_core.publisher
+        if self.control_core.snapshot.batch_id != self.batch_id:
+            raise ValueError("ControlCore batch_id differs from archive/process batch")
+        if self.control_core.snapshot.line_state is not LineState.IDLE:
+            raise ValueError("ProductionCycle requires completed BOOT in IDLE")
+        self.health = HealthSupervisor(
+            archive_enabled=bool(archive and getattr(archive, "enabled", False))
+        )
+        for role in CAMERA_ROLES:
+            self.health.update_camera(role, True)
+        self.health.update(
+            controller_links=True,
+            conveyor_telemetry=True,
+            distributor_telemetry=True,
+            workers_ready=True,
+            journal_writable=(journal is not None or self.simulation),
+            archive_writable=True,
+            disk_reserve=True,
+            no_root_fault=True,
+            hardware_idle=True,
+        )
+        self.sm = CoreStateMachine(
+            self.control_core,
+            on_transition=self._on_state_change,
+            guard_provider=self._command_guards,
+        )
+        self.command_arbiter = CommandArbiter(
+            self._handle_command,
+            lambda: self.sm.get_snapshot(),
+        )
 
         self.parts: list = []
+        self.run_id = 0
+        self.config_revision = threshold_revision
+        self.manifest = dict(manifest or {})
         self.part_counter = 0
-        self.current_step = 0
 
         self.good_count    = 0
         self.bad_count     = 0
@@ -100,10 +192,22 @@ class ProductionCycle:
 
         self._drain_start_time: float = 0
         self._fault_reason = None
+        self._fault_latch = FaultLatch()
         self._operation_lock = threading.Lock()
         self._cancel_motion = threading.Event()
         self.distributor.cancel_check = self._cancel_motion.is_set
+        if hasattr(self.conveyor, "cancel_check"):
+            self.conveyor.cancel_check = self._cancel_motion.is_set
         self._process_revision = 0
+        self._analysis_batch_active = False
+        self._review_published = False
+        self._review_active = False
+        # Compatibility flags for old adapters; production never runs a
+        # background presence inference from these fields.
+        self._background_presence_thread = None
+        self._background_presence_result = None
+        self._background_presence_usable = False
+        self._background_presence_generation = 0
         # Снимки inspection остаются операторским стоп-кадром до следующего
         # движения, хотя физические камеры уже вернулись в live.
         self._inspection_display_roles = ()
@@ -149,22 +253,33 @@ class ProductionCycle:
         self._selected_analysis_role = None
         self._shutdown = False
 
-        # Пауза в рабочем цикле
-        self._pause_requested = threading.Event()
+        # Visual/manual context for a formal PAUSED state. Pending intent and
+        # continuation live only in LineSnapshot.
         self._pause_frame_active = False
 
         # Первый шаг после пуска: сначала контроль того, что уже стоит под
         # камерами, и только потом движение ленты.
         self._await_initial_inspection = False
+        self._resume_inspection_only = False
+        self._jog_moved = False
+        self._snapshot_after = None
+        self._snapshot_generation = None
+        self._pause_before_settle = False
+        # Fixed before a movement command.  STOP accepted after that point may
+        # close RUNNING, but it cannot revoke the INPUT cell that physically
+        # entered during this transaction.
+        self._accept_input_for_active_step = None
+        self._exact_motion_confirmed = False
 
-        # Фоновая проверка наличия детали (InputPartPresence). Результат
-        # действителен только до первой паузы: после паузы положение детали
-        # может быть скорректировано, поэтому старый live-кадр нельзя
-        # использовать для решения о том, что сейчас находится под INPUT-камерами.
-        self._background_presence_thread = None
-        self._background_presence_result = None
-        self._background_presence_usable = False
-        self._background_presence_generation = 0
+    def _journal_append(self, event: str, **fields):
+        journal = getattr(self, "journal", None)
+        if journal is None:
+            return None
+        fields.setdefault("batch_id", self.batch_id)
+        formal_run_id = getattr(getattr(self, "sm", None), "run_id", self.run_id)
+        fields.setdefault("run_id", formal_run_id or None)
+        fields.setdefault("current_step", self.current_step)
+        return journal.append(event, **fields)
 
     # Process telemetry
 
@@ -193,7 +308,8 @@ class ProductionCycle:
             "revision": self._process_revision,
             "updated_at": time.time(),
         }
-        self._refresh_monitor()
+        if not getattr(self, "_analysis_batch_active", False):
+            self._refresh_monitor()
 
     def _on_conveyor_progress(self, status: dict):
         current = self._process
@@ -214,27 +330,203 @@ class ProductionCycle:
 
     # Public API
 
+    def dispatch_command(self, command_id: str, command: str, *args, **payload):
+        """HMI entry point; all mutating commands pass one arbiter."""
+        normalized = {
+            "ПУСК": "START", "СТОП": "STOP", "ПАУЗА": "PAUSE",
+            "ПРОДОЛЖИТЬ": "RESUME", "ВЫХОД": "EXIT",
+            "FORCE_EXIT": "FORCE_EXIT",
+        }.get(str(command).upper(), str(command).upper())
+        if args:
+            payload["args"] = args
+        return self.command_arbiter.submit(command_id, normalized, **payload)
+
+    def _handle_command(self, command: str, **payload):
+        args = tuple(payload.pop("args", ()))
+        handlers = {
+            "START": self.request_start, "STOP": self.request_stop,
+            "PAUSE": self.request_pause, "RESUME": self.request_resume,
+            "EXIT": self.request_exit, "FORCE_EXIT": self.request_force_exit,
+        }
+        if command == "JOG":
+            return self.jog_hold_start(*args)
+        handler = handlers.get(command)
+        if handler is None:
+            raise ValueError(f"unsupported command: {command}")
+        return handler()
+
+    def _current_threshold_revision(self) -> str | None:
+        thresholds = getattr(getattr(self.inspector, "decision", None), "thresholds", None)
+        if not isinstance(thresholds, dict):
+            return self.config_revision
+        encoded = json.dumps(thresholds, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _thresholds_valid(self) -> bool:
+        thresholds = getattr(getattr(self.inspector, "decision", None), "thresholds", None)
+        if thresholds is None and not hasattr(self.inspector, "decision"):
+            return True  # explicit offline/test adapter
+        if not isinstance(thresholds, dict) or not thresholds:
+            return False
+        return all(
+            type(value) in (int, float) and math.isfinite(value)
+            for value in thresholds.values()
+        )
+
+    def _command_guards(self):
+        from core.control_model import CommandGuards
+
+        try:
+            health_ready = self.health.report().ready
+        except Exception:
+            health_ready = False
+        jog_busy = bool(self.jog is not None and self.jog.status.get("busy"))
+        return CommandGuards(
+            health_ready=health_ready,
+            line_empty=not self.parts,
+            previous_run_closed=self.control_core.snapshot.step_phase is StepPhase.NONE,
+            thresholds_valid=self._thresholds_valid(),
+            storage_ready=self.health.report().disk_reserve,
+            service_idle=not self._selected_analysis_active and not jog_busy,
+            hardware_idle=not jog_busy,
+            hmi_heartbeat=True,
+        )
+
+    def _part_snapshots(self) -> dict:
+        return {
+            part.id: PartSnapshot(
+                part_id=part.id,
+                birth_step=part.birth_step,
+                input_completed=bool(part.input_inspected),
+                control_completed=bool(part.spider_inspected),
+                defects=tuple(part.get_all_defects()),
+                category=part.route_category,
+                final_decision=part.final_decision,
+            )
+            for part in self.parts
+        }
+
+    def _counter_snapshot(self) -> Counters:
+        return Counters(
+            total=self.part_counter,
+            good=self.good_count,
+            bad=self.bad_count,
+            cleanup=self.cleanup_count,
+            empty=self.empty_count,
+        )
+
+    def _commit_tracking_state(
+        self,
+        *,
+        persistence_state: PersistenceState | None = None,
+        reason: str = "TRACKING_COMMIT",
+    ):
+        return self.sm.mutate(
+            lambda state: LineReducer.commit_tracking_snapshot(
+                state,
+                parts=self._part_snapshots(),
+                counters=self._counter_snapshot(),
+                persistence_state=persistence_state,
+            ),
+            reason,
+        )
+
+    def _update_health(self, *, pre_motion: bool = False):
+        camera_gate = getattr(self.cameras, "require_live_health", None)
+        try:
+            if callable(camera_gate):
+                camera_gate()
+            if self.live.error or getattr(self.cameras, "live_error", None):
+                raise RuntimeError(self.live.error or self.cameras.live_error)
+            for role in CAMERA_ROLES:
+                self.health.update_camera(role, True)
+        except Exception:
+            for role in CAMERA_ROLES:
+                self.health.update_camera(role, False)
+            self.sm.mutate(
+                lambda state: LineReducer.set_health(state, HealthState.NOT_READY),
+                "HEALTH_NOT_READY",
+            )
+            raise
+
+        storage_ready = True
+        if self.archive is not None and getattr(self.archive, "enabled", False):
+            require_space = getattr(self.archive, "require_space", None)
+            if callable(require_space):
+                require_space()
+        transport = getattr(self.conveyor, "transport", None)
+        serial_handle = getattr(transport, "ser", None)
+        controller_links = bool(
+            transport is None  # explicit simulator/test adapter
+            or serial_handle is None
+            or getattr(serial_handle, "is_open", True)
+        )
+        vision = getattr(self.inspector, "vision", None)
+        workers_ready = bool(
+            vision is None  # explicit simulator/test adapter
+            or not hasattr(vision, "models")
+            or getattr(vision, "models", None)
+        )
+        self.health.update(
+            controller_links=controller_links,
+            conveyor_telemetry=True,
+            distributor_telemetry=True,
+            workers_ready=workers_ready,
+            journal_writable=(self.journal is not None or self.simulation),
+            archive_writable=True,
+            disk_reserve=storage_ready,
+            no_root_fault=not self._fault_latch.active,
+            hardware_idle=not self.jog_active,
+        )
+        report = self.health.gate()
+        self.sm.mutate(
+            lambda state: LineReducer.set_health(state, report.state),
+            "HEALTH_GATE",
+        )
+        return report
+
     def request_start(self):
         if not self._operation_lock.acquire(blocking=False):
             return False
         try:
             if self._selected_analysis_active:
                 return False
-            if self.live.error:
+            if self.live.error or getattr(getattr(self, "cameras", None), "live_error", None):
                 return False
+            if self.archive is not None and getattr(self.archive, "enabled", False):
+                require_space = getattr(self.archive, "require_space", None)
+                if callable(require_space):
+                    try:
+                        require_space()
+                    except Exception as exc:
+                        self._handle_fault(f"archive storage gate failed: {exc}")
+                        return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
             if self.jog_active:
                 print("[JOG] auto-exit on START")
                 self.exit_jog()
             # The frame thread may fail while START waits for JOG shutdown.
-            if self.live.error:
+            if self.live.error or getattr(getattr(self, "cameras", None), "live_error", None):
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
-            if self.state not in ("IDLE", "STOPPED"):
+            require_camera_health = getattr(getattr(self, "cameras", None), "require_live_health", None)
+            if callable(require_camera_health):
+                try:
+                    require_camera_health()
+                except Exception as exc:
+                    self._handle_fault(f"camera health gate failed at START: {exc}")
+                    return False
+            if self.state not in ("IDLE", "STOPPED") or self.parts:
                 return False
             self._cancel_motion.clear()
+            # LineReducer resets current_step and increments the integer run_id
+            # atomically with START. Batch and part counters remain unchanged.
+            self.config_revision = self._current_threshold_revision()
+            verify_reset = getattr(self.conveyor, "verify_reset_state", None)
+            if callable(verify_reset):
+                verify_reset()
             self._set_process(
                 "START_POSITIONING",
                 "Возврат распределителя в рабочее положение",
@@ -246,10 +538,25 @@ class ProductionCycle:
                 raise
             accepted = self.sm.request_start()
             if accepted:
+                run_identity = self.identity.new_run()
+                if run_identity.run_id != self.sm.run_id:
+                    raise RuntimeError("run identity counter diverged from LineReducer")
+                self.run_id = self.sm.run_id
+                try:
+                    self._journal_append("run_started", threshold_revision=self.config_revision)
+                except Exception as exc:
+                    self._handle_fault(f"run start journal failed: {exc}")
+                    raise
+                register_run = getattr(self.archive, "register_run", None)
+                if callable(register_run):
+                    try:
+                        register_run(self.run_id, self.config_revision)
+                    except Exception as exc:
+                        self._handle_fault(f"batch run manifest failed: {exc}")
+                        raise
                 self._drain_start_time = 0
                 self._fault_reason = None
                 self._reset_frame_analysis()
-                self._invalidate_background_presence()
                 # Деталь могла остаться под входными камерами ещё до пуска:
                 # первый шаг выполняется без движения ленты, чтобы она
                 # попала в учёт, а не уехала дальше непроверенной.
@@ -273,34 +580,36 @@ class ProductionCycle:
             self._operation_lock.release()
 
     def request_stop(self):
-        self._pause_requested.clear()
-        if self._pause_frame_active:
+        accepted = self.sm.request_stop()
+        if accepted and self.sm.state is not State.PAUSED and self._pause_frame_active:
             self._stop_pause_frame_loop()
-        return self.sm.request_stop()
+        return accepted
 
     def request_exit(self):
-        self._pause_requested.clear()
-        if self._pause_frame_active:
+        if self.state == "FAULT":
+            return self.request_force_exit()
+        accepted = self.sm.request_exit()
+        if accepted and self.sm.state is not State.PAUSED and self._pause_frame_active:
             self._stop_pause_frame_loop()
-        return self.sm.request_exit()
+        return accepted
 
     def request_pause(self) -> bool:
-        """Запросить паузу после остановки шага и до работы нейронок."""
+        """Submit PAUSE to the formal reducer at the current safe boundary."""
         if self.state != "RUNNING" or self.exit_requested:
             return False
-        if self._pause_requested.is_set():
-            return True
-        # Фоновая проверка могла уже закончить работу на кадре до паузы.
-        # После PAUSED этот результат больше не описывает текущую позицию:
-        # при продолжении INPUT нужно проверить заново.
         self._invalidate_background_presence()
-        self._pause_requested.set()
-        self._set_process(
-            "PAUSE_REQUESTED",
-            "Пауза будет применена после остановки шага и до работы нейронок",
-            positions=range(self.OFFSET_REJECT + 1),
-        )
-        self._refresh_monitor()
+        accepted = self.sm.request_pause()
+        if not accepted:
+            return False
+        if self.sm.state is State.PAUSED:
+            self._enter_pause_frame()
+        else:
+            self._set_process(
+                "PAUSE_REQUESTED",
+                "Пауза применится на формальной безопасной границе",
+                positions=range(self.OFFSET_REJECT + 1),
+            )
+            self._refresh_monitor()
         return True
 
     def request_resume(self) -> bool:
@@ -316,7 +625,14 @@ class ProductionCycle:
             # live-кадр уже мог устареть. INPUT будет снят заново после
             # возобновления, а не решён по результату до паузы.
             self._invalidate_background_presence()
-            self._pause_requested.clear()
+            continuation = self.sm.pause_continuation
+            # Usually a committed-step pause is still blocked inside the same
+            # _run_once call. The fallback covers restored/external executors;
+            # NEXT_STEP must never be turned into a stationary re-inspection.
+            self._resume_inspection_only = bool(
+                continuation is PauseContinuation.INSPECT_COMMITTED_STEP
+                and not getattr(self, "_pause_before_settle", False)
+            )
             accepted = self.sm.request_resume()
             if not accepted:
                 return False
@@ -380,8 +696,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
             # cap.read() может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(self.cameras, "drain_buffers", None)
-            if callable(drain):
+            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
+            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
                 drain()
             frames = self.cameras.capture_all()
             camera_rows = []
@@ -432,8 +748,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
             # cap.read() может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(self.cameras, "drain_buffers", None)
-            if callable(drain):
+            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
+            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
                 drain()
             frames = self.cameras.capture_all()
             vision_results = self.inspector.vision.process_all(frames)
@@ -505,88 +821,27 @@ class ProductionCycle:
         )
 
     def _invalidate_background_presence(self):
-        """Запретить быстрый live-результат для текущей позиции.
-
-        ``_run_background_presence_check`` смотрит кадры из UI-кэша, а не
-        захватывает инспекционный кадр. Это безопасно только пока положение
-        ленты не менялось. Поэтому после запроса/снятия паузы нужно
-        обязательно пройти обычный свежий захват INPUT; ограничения JOG
-        этот механизм не вводит.
-        """
-        self._background_presence_generation = (
-            getattr(self, "_background_presence_generation", 0) + 1
-        )
+        """Clear legacy cache flags; no background production inference exists."""
+        self._background_presence_generation += 1
         self._background_presence_usable = False
         self._background_presence_result = None
 
-    def _background_presence_is_current(self, generation: int) -> bool:
-        """Проверить, что фоновый поток относится к текущей позиции."""
-        pause_requested = getattr(self, "_pause_requested", None)
-        return (
-            getattr(self, "_background_presence_usable", False)
-            and getattr(self, "_background_presence_generation", 0) == generation
-            and not (pause_requested is not None and pause_requested.is_set())
-        )
-
-    def _run_background_presence_check(self, generation: int | None = None):
-        """Проверка наличия детали по последнему лайв-изображению.
-
-        Выполняется в отдельном потоке сразу после остановки ленты, пока
-        основной цикл ждёт затухания вибраций (SETTLE). Это позволяет
-        мгновенно определить пустой лоток и пропустить полноценный захват
-        кадров для этой позиции. Если в это время запрошена пауза, результат
-        отбрасывается: после паузы позицию нужно подтвердить свежим кадром.
-        """
+    def _manual_presence_result(self, vision_results):
+        checker = getattr(self.inspector, "_evaluate_part_presence")
         try:
-            if generation is None:
-                generation = self._background_presence_generation
-
-            # Даем лайв-просмотру время обновить хотя бы один кадр после
-            # физической остановки ленты. 150мс — это 2-3 такта FPS_AUX.
-            time.sleep(0.15)
-
-            if not self._background_presence_is_current(generation):
-                return
-            if not self.monitor or not self.monitor.server:
-                return
-
-            with self.monitor.server.lock:
-                # Берем последние кадры из монитора (лайв-поток).
-                # Нас интересует только входная группа.
-                frames = {
-                    role: self.monitor.server.frames[role].copy()
-                    for role in self.inspector.INPUT_ROLES
-                    if role in self.monitor.server.frames
-                }
-
-            if len(frames) < len(self.inspector.INPUT_ROLES):
-                return
-            if not self._background_presence_is_current(generation):
-                return
-
-            # Выполняем быстрый прогон моделей и правила наличия
-            vision_results = self.inspector.vision.process_all(frames)
-            presence_result = self.inspector._evaluate_part_presence(vision_results)
-
-            # Пауза могла быть нажата во время работы моделей. Не публикуем
-            # результат, рассчитанный до изменения физической позиции.
-            if not self._background_presence_is_current(generation):
-                return
-
-            # Сохраняем результат для основного цикла
-            health_with_run = [
-                {**h, "run": 1}
-                for h in (getattr(self.inspector.vision, "last_health", None) or [])
-            ]
-            self._background_presence_result = {
-                "is_empty": bool(presence_result.details.get("empty_tray")),
-                "frames": frames,
-                "vision_results": vision_results,
-                "presence_result": presence_result,
-                "model_health": summarize_model_health(health_with_run),
-            }
-        except Exception as exc:
-            print(f"[BG-PRESENCE] Ошибка фоновой проверки наличия: {exc}")
+            return checker(vision_results, production=False)
+        except TypeError as exc:
+            # Offline/test adapters may predate the explicit manual-mode flag;
+            # their single-role check is already diagnostic-only.
+            if "production" not in str(exc):
+                raise
+            # Legacy inspector wrappers may call the rule with its production
+            # default.  Manual diagnostic mode must still be explicitly
+            # single-camera and must not be allowed to fake production data.
+            thresholds = getattr(getattr(self.inspector, "decision", None), "thresholds", {})
+            return InputPartPresenceRule(thresholds).check(
+                vision_results, production=False
+            )
 
     def _set_diagnostic_running(self, kind: str, message: str):
         self._diagnostics = {
@@ -626,7 +881,7 @@ class ProductionCycle:
         try:
             if not self._prestart_diagnostic_allowed():
                 return False
-            available_roles = set(getattr(self.cameras, "mapping", {}))
+            available_roles = set(getattr(getattr(self, "cameras", None), "mapping", {}))
             if not available_roles:
                 available_roles = set(
                     self.inspector.INPUT_ROLES + self.inspector.SPIDER_ROLES
@@ -641,8 +896,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: после паузы live cap.read()
             # может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(self.cameras, "drain_buffers", None)
-            if callable(drain):
+            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
+            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
                 drain((role,))
 
             self._selected_analysis_active = True
@@ -691,7 +946,7 @@ class ProductionCycle:
 
                 if is_input:
                     presence_runs.append(
-                        self.inspector._evaluate_part_presence(vision_results)
+                        self._manual_presence_result(vision_results)
                     )
 
                 health_rows = getattr(
@@ -905,7 +1160,7 @@ class ProductionCycle:
 
     def request_force_exit(self):
         self._cancel_motion.set()
-        self._pause_requested.clear()
+        terminate_all_workers()
         if self._pause_frame_active:
             self._stop_pause_frame_loop()
         self.stages.reset()
@@ -926,6 +1181,18 @@ class ProductionCycle:
         return self.sm.state.value
 
     @property
+    def current_step(self) -> int:
+        if hasattr(self, "control_core"):
+            return self.control_core.snapshot.current_step
+        return self.__dict__.get("_legacy_current_step", 0)
+
+    @current_step.setter
+    def current_step(self, value: int):
+        if hasattr(self, "control_core"):
+            raise AttributeError("current_step changes only through STEP_COMMIT")
+        self.__dict__["_legacy_current_step"] = int(value)
+
+    @property
     def exit_requested(self) -> bool:
         return self.sm.exit_requested
 
@@ -939,11 +1206,112 @@ class ProductionCycle:
 
     # Main loop
 
+    def _pump_commands(self):
+        pump = getattr(self, "_command_pump", None)
+        if callable(pump):
+            pump()
+
+    @property
+    def _transaction_id(self) -> str | None:
+        if not hasattr(self, "control_core"):
+            return None
+        return self.control_core.snapshot.active_transaction_id
+
+    def _begin_formal_step(self, *, accept_input: bool, initial: bool = False):
+        pending = None if initial else self._find_pending_drop()
+        if pending is not None and (
+            pending.route_category in (CATEGORY_UNKNOWN, "IN_PROGRESS")
+            or not pending.fully_inspected
+        ):
+            missing = []
+            if not pending.input_inspected:
+                missing.append("INPUT")
+            if not pending.spider_inspected:
+                missing.append("CONTROL")
+            pending.mark_incomplete_inspection("/".join(missing) or "evidence")
+            self._commit_tracking_state(reason="INCOMPLETE_FAIL_SAFE")
+        reset_status = None
+        verify_reset = getattr(self.conveyor, "verify_reset_state", None)
+        if callable(verify_reset) and not initial:
+            reset_status = verify_reset()
+        start_ready = (
+            reset_status.get("lastreadyms")
+            if isinstance(reset_status, dict) else 0
+        )
+        route_targets = {}
+        if pending is not None:
+            category = pending.route_category
+            route_targets = {
+                "DIST1": (
+                    0 if category == CATEGORY_GOOD
+                    else int(getattr(self.distributor, "dist1_open_position", 340))
+                ),
+                "DIST2": (
+                    int(getattr(self.distributor, "dist2_cleanup_position", 340))
+                    if category == CATEGORY_CLEANUP
+                    else int(getattr(self.distributor, "dist2_bad_position", 0))
+                ),
+            }
+        result = self.sm.begin_step(
+            transaction_id=uuid.uuid4().hex,
+            accept_input_for_step=accept_input,
+            pending_transfer_part_id=(pending.id if pending else None),
+            route_category=(pending.route_category if pending else None),
+            route_targets=route_targets,
+            start_last_ready_ms=start_ready,
+            expected_target=getattr(self.conveyor, "production_target", 38_096),
+        )
+        if not result.accepted:
+            raise RuntimeError(result.reason or "cannot begin formal step")
+        return pending, reset_status
+
+    def _set_formal_phase(self, phase: StepPhase, **payload):
+        if not hasattr(self, "control_core"):
+            return None  # isolated legacy unit-test adapter
+        transaction_id = self._transaction_id
+        if transaction_id is None:
+            raise RuntimeError(f"{phase.value}: active transaction is missing")
+        result = self.sm.set_phase(
+            phase, transaction_id=transaction_id, **payload,
+        )
+        if not result.accepted:
+            raise RuntimeError(result.reason or f"cannot enter {phase.value}")
+        return result
+
+    def _complete_empty_drain(self) -> bool:
+        """Confirm both distributor axes home before publishing STOPPED."""
+        if self.sm.state != State.STOPPING or self.parts:
+            return False
+        boundary = self.sm.mutate(LineReducer.line_empty, "LINE_EMPTY")
+        if not boundary.accepted:
+            raise RuntimeError(boundary.reason or "line-empty boundary rejected")
+        transaction_id = self._transaction_id
+        self._update_health(pre_motion=True)
+        self._set_process(
+            "DISTRIBUTOR_HOME",
+            "Линия пуста; возврат и подтверждение обеих осей распределителя",
+        )
+        return_home = getattr(self.distributor, "return_home", None)
+        if not callable(return_home):
+            raise RuntimeError("distributor home policy is unavailable")
+        return_home()
+        event = CoreEvent(
+            EventGroup.HARDWARE,
+            "AxisHomed",
+            run_id=self.run_id,
+            transaction_id=transaction_id,
+        )
+        result = self.sm.handle_event(event)
+        if not result.accepted:
+            raise RuntimeError(result.reason or "home confirmation rejected")
+        return True
+
     def start(self):
         print("Система готова. Ожидание команды START.")
 
         try:
             while True:
+                self._pump_commands()
                 if self.sm.force_exit:
                     print("[EXIT] Force exit.")
                     break
@@ -951,7 +1319,7 @@ class ProductionCycle:
                 if self.sm.is_active:
                     # STOP on an already empty line must not advance Conveyor.
                     if self.sm.state == State.STOPPING and not self.parts:
-                        self.sm.notify_line_empty()
+                        self._complete_empty_drain()
                         self._refresh_monitor()
                         if self.sm.exit_requested:
                             print("[EXIT] Line empty -> exit.")
@@ -964,7 +1332,7 @@ class ProductionCycle:
                         self.sm.state == State.STOPPING
                         and not self.parts
                     ):
-                        self.sm.notify_line_empty()
+                        self._complete_empty_drain()
                         self._refresh_monitor()
 
                         if self.sm.exit_requested:
@@ -975,9 +1343,9 @@ class ProductionCycle:
                         print("[EXIT] Not active -> exit.")
                         break
 
-                    if self.live.error and self.sm.state != State.FAULT:
+                    if (self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)) and self.sm.state != State.FAULT:
                         self._handle_fault(
-                            f"Ошибка камеры в режиме ручного управления: {self.live.error}"
+                            f"Ошибка камеры в режиме ручного управления: {self.live.error or getattr(getattr(self, 'cameras', None), 'live_error', None)}"
                         )
                         continue
                     if self.jog is not None:
@@ -990,6 +1358,8 @@ class ProductionCycle:
                             self._process.get("phase") == "JOG_HOLD"
                             and not jog_status.get("busy")
                         ):
+                            self.sm.request_jog_release()
+                            self._record_jog_motion_if_any()
                             self._set_process(
                                 "JOG_STOPPED",
                                 f"JOG остановлен: {jog_status.get('last_action', '-')}",
@@ -1005,7 +1375,6 @@ class ProductionCycle:
         finally:
             self._shutdown = True
             self._cancel_motion.set()
-            self._pause_requested.clear()
             try:
                 self._stop_pause_frame_loop()
             except Exception as e:
@@ -1024,27 +1393,95 @@ class ProductionCycle:
     # Fault
 
     def _handle_fault(self, reason: str):
+        faulted_transaction_id = self._transaction_id
+        faulted_phase = self.control_core.snapshot.step_phase
+        positions_known = not (
+            faulted_phase in {StepPhase.MOTION_COMMAND, StepPhase.MOTION_CONFIRM}
+            and not self._exact_motion_confirmed
+        )
         self._cancel_motion.set()
-        self._pause_requested.clear()
+        terminate_all_workers()
         self._stop_pause_frame_loop()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
+        self._analysis_batch_active = False
         self.stages.reset()
         self.live.reset_pause()
-        self.live.stop()
-        self._fault_reason = reason
-        print(f"[FAULT] {reason}")
+        # Physical CameraManager live readers remain active until application
+        # close, including FAULT.  HMI may continue showing healthy roles.
+        latch = getattr(self, "_fault_latch", None)
+        if latch is None:
+            latch = FaultLatch()
+            self._fault_latch = latch
+        if latch.root is None:
+            lower_reason = str(reason).lower()
+            code = "PRODUCTION_FAULT"
+            for marker, candidate in (
+                ("camera", "CAMERA_HEALTH"),
+                ("model", "MODEL_WORKER"),
+                ("rule", "RULE_EXECUTION"),
+                ("archive", "ARCHIVE_TRACEABILITY"),
+                ("journal", "OPERATIONAL_LOG"),
+                ("conveyor", "CONVEYOR_TELEMETRY"),
+                ("distributor", "DISTRIBUTOR_TELEMETRY"),
+                ("storage", "DISK_RESERVE"),
+            ):
+                if marker in lower_reason:
+                    code = candidate
+                    break
+            root = latch.latch(
+                code,
+                reason,
+                phase=self._process.get("phase") if hasattr(self, "_process") else None,
+                details={
+                    "traceback": traceback.format_exc(),
+                    "step_phase": faulted_phase.value,
+                    "positions_known": positions_known,
+                    "exact_motion_confirmed_before_journal": self._exact_motion_confirmed,
+                    "possible_step_commit": bool(
+                        faulted_phase is StepPhase.MOTION_CONFIRM
+                        and self._exact_motion_confirmed
+                    ),
+                },
+            )
+            self._fault_reason = root.message
+        else:
+            latch.add_secondary("SECONDARY_FAULT", reason, phase=self._process.get("phase"))
+        print(f"[FAULT] {self._fault_reason}")
         print(
             f"[FAULT] В очереди осталось "
             f"{len(self.parts)} деталей"
         )
-        self.sm.notify_fault()
+        if faulted_transaction_id:
+            try:
+                self._journal_append(
+                    "transaction_faulted",
+                    transaction_id=faulted_transaction_id,
+                    fault=latch.root.as_dict() if latch.root else str(reason),
+                )
+            except Exception as journal_exc:
+                latch.add_secondary(
+                    "FAULT_JOURNAL_WRITE",
+                    str(journal_exc),
+                    phase=self._process.get("phase"),
+                )
+        fault_event = CoreEvent(
+            EventGroup.INTERNAL,
+            "FaultRaised",
+            run_id=(self.run_id or None),
+            transaction_id=faulted_transaction_id,
+            payload={
+                "fault": latch.root,
+                "positions_known": positions_known,
+            },
+        )
+        self.sm.handle_event(fault_event)
         if self.jog_active:
             try:
                 self.exit_jog()
             except Exception as exc:
                 print(f"[JOG] release during fault failed: {exc}")
-        self._set_process("FAULT", reason)
+        self._set_process("FAULT", self._fault_reason)
         self._safe_emergency_stop()
         self._refresh_monitor()
 
@@ -1062,6 +1499,7 @@ class ProductionCycle:
                 return
 
         try:
+            self._update_health(pre_motion=True)
             self._run_once()
         except Exception as e:
             # Повтор неудачного физического шага теряет соответствие
@@ -1100,121 +1538,305 @@ class ProductionCycle:
         defect rules физически не могут быть сняты во время движения.
         """
         self._check_motion_cancelled()
-        print(f"\nШАГ {self.current_step + 1}")
+        # Commands have already been reduced by the sole control loop before
+        # a new transaction can begin.
+        # STOP can be accepted while this call is waiting in PAUSED. If no
+        # tracked Part remains, returning here is the drain boundary: issuing
+        # a conveyor command would create a meaningless empty movement.
+        if self.sm.state == State.STOPPING and not self.parts:
+            return
+        if self.run_id != self.sm.run_id:
+            self.run_id = self.sm.run_id  # explicit simulator/test START facade
+        initial_inspection = bool(self._await_initial_inspection)
+        stationary_resume = bool(getattr(self, "_resume_inspection_only", False))
+        self._resume_inspection_only = False
 
-        # Право принять INPUT фиксируется до движения: если STOP придёт уже
-        # во время проезда, вошедшая этим шагом деталь всё равно будет
-        # проинспектирована и останется синхронной со своей ячейкой.
-        accept_input_for_this_step = self.sm.accepts_new_parts
+        if self.control_core.snapshot.step_phase is StepPhase.NONE:
+            self._update_health(pre_motion=True)
+            self._begin_formal_step(
+                accept_input=(self.sm.state is State.RUNNING),
+                initial=initial_inspection,
+            )
 
+        transaction = self.control_core.snapshot.transaction
+        if transaction is None:
+            raise RuntimeError("formal step transaction was not created")
+        accept_input_for_this_step = transaction.accept_input_for_step
+        self._accept_input_for_active_step = accept_input_for_this_step
+
+        print(f"\nШАГ {self.current_step + (0 if initial_inspection else 1)}")
         self._last_vision_results = {}
         self._last_rule_results = []
 
-        # Запоминаем особый первый шаг до _stage_motion(): внутри него флаг
-        # _await_initial_inspection сбрасывается, иначе фоновая проверка могла
-        # ошибочно заменить обязательный свежий захват детали, уже стоящей
-        # под INPUT при пуске.
-        initial_inspection = self._await_initial_inspection
-        pending_id = self._stage_motion()
+        if stationary_resume:
+            self.stages.reset()
+            self.stages.enter_motion()
+            self._pending_drop = None
+            self._initial_inspection_active = False
+            pending_id = None
+        else:
+            self._initial_inspection_active = initial_inspection
+            pending_id = self._stage_motion()
+            if pending_id is _STEP_ABORTED_BEFORE_MOTION:
+                self._accept_input_for_active_step = None
+                return
 
-        # Фоновая проверка наличия: запускается сразу после wait_stop()
-        # внутри _stage_motion, чтобы работать параллельно с _stage_settle.
-        # Её результат — лишь оптимизация пустого лотка. При паузе он
-        # инвалидируется и _stage_capture всегда получает свежие INPUT-кадры.
-        self._background_presence_generation = (
-            getattr(self, "_background_presence_generation", 0) + 1
-        )
-        background_generation = self._background_presence_generation
-        self._background_presence_result = None
-        self._background_presence_thread = None
-        self._background_presence_usable = (
-            accept_input_for_this_step
-            and not initial_inspection
-            and not self._pause_requested.is_set()
-        )
-        if self._background_presence_usable:
-            self._background_presence_thread = threading.Thread(
-                target=self._run_background_presence_check,
-                args=(background_generation,),
-                daemon=True,
-                name="background-presence-check",
-            )
-            self._background_presence_thread.start()
-
-        self._stage_settle(pending_id)
+        # Presence is evaluated from the immutable post-motion snapshot.
+        # A pre-settle/live optimisation is forbidden: it could create an
+        # empty decision from a different frame than the other INPUT rules.
+        # A PAUSE requested during movement is applied before SETTLE and
+        # snapshots.  STOP remains pending and the already issued movement is
+        # still completed/confirmed.
+        self._pause_before_settle = True
         self._check_pause_barrier()
+        self._pause_before_settle = False
+        self._stage_settle(
+            pending_id,
+            settle=(not stationary_resume or bool(getattr(self, "_jog_moved", False))),
+        )
+        self._jog_moved = False
         frame_runs = self._stage_capture()
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
         )
         self._stage_review(display_frames)
         self._stage_publish(display_frames)
+        self._apply_pending_at_boundary()
+        self._accept_input_for_active_step = None
+
+    def _apply_pending_at_boundary(self):
+        """Apply the one formal PendingIntent at COMMAND_GATE."""
+        if self.control_core.snapshot.step_phase is not StepPhase.COMMAND_GATE:
+            raise RuntimeError("step did not reach COMMAND_GATE")
+        transaction_id = self._transaction_id
+        self._journal_append(
+            "transaction_completed",
+            transaction_id=transaction_id,
+        )
+        result = self.sm.command_gate(transaction_id)
+        if not result.accepted:
+            raise RuntimeError(result.reason or "COMMAND_GATE failed")
+        if self.sm.state is State.PAUSED:
+            self._enter_pause_frame()
+        self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
+        self._last_inspection_execution = self.logical_publisher.inspection_result(
+            self.control_core.snapshot,
+            aggregate={"transaction_id": transaction_id},
+        )
 
     def _stage_motion(self):
-        """MOTION: подготовить маршрут и переместить ленту на шаг."""
+        """Execute the formal physical half with one exactly-once command."""
         self.stages.enter_motion()
         self._inspection_display_roles = ()
-        # Разметка прошлого шага построена по статичному кадру и на
-        # движущемся изображении указывала бы мимо детали.
+        self._review_published = False
         self.live.clear_overlays()
 
+        transaction = self.control_core.snapshot.transaction
+        if transaction is None:
+            raise RuntimeError("motion phase has no formal transaction")
+        transaction_id = transaction.transaction_id
+        self._exact_motion_confirmed = False
+
         if self._await_initial_inspection:
-            # Деталь уже стоит под входными камерами: сначала её контроль,
-            # движение ленты начнётся со следующего шага. Счётчик шагов не
-            # увеличивается — физическая позиция не изменилась.
             self._await_initial_inspection = False
             self._set_process(
                 "INITIAL_INSPECTION",
                 "Корпус уже под камерами: контроль без движения ленты",
-                positions=[self.OFFSET_INPUT, self.OFFSET_SPIDER],
+                positions=[self.OFFSET_INPUT],
             )
             self._check_motion_cancelled()
             return None
 
         self._pending_drop = self._find_pending_drop()
         pending_id = self._pending_drop.id if self._pending_drop else None
-        self._set_process(
-            "ROUTE_PREPARE",
-            "Подготовка маршрута распределителя",
-            part_id=pending_id,
-            positions=[self.OFFSET_REJECT] if pending_id else [],
+        if pending_id != transaction.pending_transfer_part_id:
+            raise RuntimeError("pending transfer latch changed before motion")
+
+        if self._pending_drop is not None:
+            self._set_formal_phase(StepPhase.ROUTE_PREPARE)
+            self._set_process(
+                "ROUTE_PREPARE",
+                "Подготовка и подтверждение маршрута распределителя",
+                part_id=pending_id,
+                positions=[self.OFFSET_REJECT],
+            )
+            self._prepare_drop()
+            self._check_motion_cancelled()
+            self._pump_commands()
+            if self._transaction_id != transaction_id:
+                self._journal_append(
+                    "transaction_completed",
+                    transaction_id=transaction_id,
+                    outcome="cancelled_before_motion",
+                )
+                self.stages.reset()
+                return _STEP_ABORTED_BEFORE_MOTION
+
+        self._set_formal_phase(StepPhase.JOURNAL_INTENT)
+        motion = MotionTransaction(
+            transaction_id,
+            self.run_id,
+            start_last_ready_ms=(transaction.start_last_ready_ms or 0),
+            expected_target=transaction.expected_target,
         )
-        self._prepare_drop()
-        self._check_motion_cancelled()
+        motion.commit_intent(
+            self._journal_append,
+            part_id=pending_id,
+            route=transaction.route_category,
+            route_targets=dict(transaction.route_targets),
+        )
+        intent_event = CoreEvent(
+            EventGroup.PERSISTENCE,
+            "IntentCommitted",
+            run_id=self.run_id,
+            transaction_id=transaction_id,
+        )
+        if not self.sm.handle_event(intent_event).accepted:
+            raise RuntimeError("motion intent event was rejected")
+        self._pump_commands()
+        if self._transaction_id != transaction_id:
+            self._journal_append(
+                "motion_cancelled_before_command",
+                transaction_id=transaction_id,
+            )
+            self._journal_append(
+                "transaction_completed",
+                transaction_id=transaction_id,
+                outcome="cancelled_before_motion",
+            )
+            self.stages.reset()
+            return _STEP_ABORTED_BEFORE_MOTION
+
+        self._set_formal_phase(StepPhase.MOTION_COMMAND)
+        issued_event = CoreEvent(
+            EventGroup.HARDWARE,
+            "MotionCommandIssued",
+            run_id=self.run_id,
+            transaction_id=transaction_id,
+        )
+        if not self.sm.handle_event(issued_event).accepted:
+            raise RuntimeError("motion command latch was rejected")
 
         self._set_process(
             "CONVEYOR_COMMAND",
-            "Команда движения ленты отправлена",
+            "Единственная команда движения ленты отправляется",
             part_id=pending_id,
             positions=range(self.OFFSET_REJECT + 1),
         )
-        self.conveyor.move_step()
-        self.conveyor.wait_stop(progress_callback=self._on_conveyor_progress)
+        motion.issue_once(self.conveyor.move_step)
+        self._set_formal_phase(StepPhase.MOTION_CONFIRM)
+
+        strict_evidence = bool(
+            hasattr(self.conveyor, "production_target")
+            and callable(getattr(self.conveyor, "read_status", None))
+        )
+
+        def on_progress(status):
+            self._on_conveyor_progress(status)
+            if strict_evidence:
+                motion.observe(status, stopped_reply=False)
+            self._pump_commands()
+
+        final_status = self.conveyor.wait_stop(progress_callback=on_progress)
         self._check_motion_cancelled()
-        # Логическая позиция фиксируется только после подтверждения
-        # физического завершения движения.
-        self.current_step += 1
+        if strict_evidence:
+            motion.observe(final_status, stopped_reply=True)
+            evidence = motion.commit()
+        else:
+            # Explicit simulator/test adapters prove completion by their
+            # wait_stop contract. Production Conveyor always uses strict path.
+            evidence = None
+        self._exact_motion_confirmed = True
+
+        self._journal_append(
+            "motion_confirmed",
+            transaction_id=transaction_id,
+            part_id=pending_id,
+            target=transaction.expected_target,
+            evidence=(
+                {
+                    "armed_target_seen": evidence.armed_target_seen,
+                    "ready_epoch_changed": evidence.ready_epoch_changed,
+                    "final_reset_seen": evidence.final_reset_seen,
+                }
+                if evidence is not None else {"simulator_contract": True}
+            ),
+        )
+        commit_event = CoreEvent(
+            EventGroup.HARDWARE,
+            "MotionConfirmed",
+            run_id=self.run_id,
+            transaction_id=transaction_id,
+            payload={
+                "exact_motion_proof": True,
+                "armed_target_seen": True,
+                "ready_epoch_changed": True,
+                "final_reset_seen": True,
+            },
+        )
+        committed = self.sm.handle_event(commit_event)
+        if not committed.accepted:
+            raise RuntimeError(committed.reason or "STEP_COMMIT rejected")
+
+        if self._pending_drop is not None:
+            self._execute_drop(transaction_id=transaction_id)
+
+        post_gate = self.sm.post_motion_gate(transaction_id)
+        if not post_gate.accepted:
+            raise RuntimeError(post_gate.reason or "POST_MOTION_GATE rejected")
         return pending_id
 
-    def _stage_settle(self, pending_id):
-        """SETTLE: подтвердить передачу корпуса и погасить вибрацию."""
+    def _accepts_input_in_active_step(self) -> bool:
+        """Return the pre-motion INPUT latch, falling back outside a step."""
+        latched = getattr(self, "_accept_input_for_active_step", None)
+        if latched is not None:
+            return bool(latched)
+        return bool(self.sm.accepts_new_parts)
+
+    def _control_parts_for_current_step(self) -> list:
+        mapping = {
+            getattr(part, "id", index): part
+            for index, part in enumerate(self.parts, 1)
+        }
+        try:
+            expected = PartTracker.expected_control(mapping, self.current_step)
+        except Exception as exc:
+            raise RuntimeError(
+                f"tracking invariant violated: multiple Part objects at CONTROL +4 ({exc})"
+            ) from exc
+        return [expected] if expected is not None else []
+
+    def _stage_settle(self, pending_id, settle: bool = True):
+        """SETTLE: confirm transfer and optionally wait for vibration."""
         self._set_process(
             "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
             part_id=pending_id, positions=range(self.OFFSET_REJECT + 1),
         )
-        if self._pending_drop is not None:
-            self._set_process(
-                "PART_TRANSFER", "Корпус прошёл распределитель",
-                part_id=pending_id, positions=[self.OFFSET_REJECT],
-            )
-        self._execute_drop()
         self._check_motion_cancelled()
+        if self.control_core.snapshot.step_phase in {
+            StepPhase.HEALTH_GATE,
+            StepPhase.POST_MOTION_GATE,
+        }:
+            self._set_formal_phase(StepPhase.SETTLE)
         active_cam_positions = []
-        if self.sm.accepts_new_parts: active_cam_positions.append(self.OFFSET_INPUT)
-        if any(p.step_created + self.OFFSET_SPIDER == self.current_step for p in self.parts):
+        if self._accepts_input_in_active_step():
+            active_cam_positions.append(self.OFFSET_INPUT)
+        if self._control_parts_for_current_step():
             active_cam_positions.append(self.OFFSET_SPIDER)
         self._set_process("SETTLE", "Ожидание затухания вибрации перед съёмкой", positions=active_cam_positions)
-        self.stages.enter_settle()
+        self.stages.enter_settle(wait=settle)
+        self._pump_commands()
+        # Freshness starts only after confirmed stop and complete SETTLE.  The
+        # initial START inspection may use the last live frame within its age
+        # limit, while every later snapshot must cross this boundary.
+        if getattr(self, "_initial_inspection_active", False):
+            # A pre-START JOG may have invalidated the previous live frame;
+            # otherwise the last frame is allowed within initial_frame_max_age.
+            if getattr(self, "_snapshot_after", None) is None:
+                self._snapshot_after = None
+        else:
+            boundary = getattr(getattr(self, "cameras", None), "freshness_boundary", None)
+            self._snapshot_after = boundary() if callable(boundary) else None
         self._check_motion_cancelled()
 
     def _capture_roles_for_current_step(self) -> tuple[str, ...]:
@@ -1227,44 +1849,25 @@ class ProductionCycle:
         """
         roles = []
 
-        # Ожидаем завершения фоновой проверки, если она была запущена.
-        # После паузы фоновый результат намеренно игнорируется: это кадр,
-        # снятый до паузы, а не подтверждение текущего состояния под INPUT.
-        background_thread = getattr(self, "_background_presence_thread", None)
-        if background_thread:
-            background_thread.join(timeout=1.5)
-
-        input_needed = self.sm.accepts_new_parts
-        background_result = getattr(self, "_background_presence_result", None)
-        background_usable = getattr(self, "_background_presence_usable", False)
-        if input_needed and background_usable and background_result:
-            if background_result["is_empty"]:
-                input_needed = False
-                print(
-                    f"[BG-PRESENCE] Step {self.current_step}: лоток пуст "
-                    "по live-кадру, захват INPUT пропущен"
-                )
-
+        input_needed = self._accepts_input_in_active_step()
         if input_needed:
             roles.extend(self.inspector.INPUT_ROLES)
-        if any(
-            part.step_created + self.OFFSET_SPIDER == self.current_step
-            for part in self.parts
-        ):
+        if self._control_parts_for_current_step():
             roles.extend(self.inspector.SPIDER_ROLES)
         return tuple(roles)
 
     def _stage_capture(self):
         """CAPTURE: свежие кадры только для занятых инспекционных позиций."""
+        self._set_formal_phase(StepPhase.CAPTURE)
         roles = self._capture_roles_for_current_step()
         self._inspection_display_roles = roles
         # Пауза только у ролей, которые сейчас дают inspection-кадр.
         # Остальные камеры продолжают live-поток для оператора.
         self.stages.enter_capture(roles)
         active_cam_positions = []
-        if self.sm.accepts_new_parts:
+        if self._accepts_input_in_active_step():
             active_cam_positions.append(self.OFFSET_INPUT)
-        if any(part.step_created + self.OFFSET_SPIDER == self.current_step for part in self.parts):
+        if self._control_parts_for_current_step():
             active_cam_positions.append(self.OFFSET_SPIDER)
 
         self._set_process(
@@ -1280,12 +1883,28 @@ class ProductionCycle:
         # Драйвер может отдать старый кадр из буфера после движения. Дренируем
         # только нужные роли, затем получаем один свежий набор именно для
         # соответствующей стадии Part.
-        drain = getattr(self.cameras, "drain_buffers", None)
-        if callable(drain):
+        drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
+        if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
+            # Legacy/offline adapters without a continuous buffer need a
+            # driver drain.  Production CameraManager never steals a frame
+            # from the live reader.
             drain(roles=roles)
-        capture_roles = getattr(self.cameras, "capture_roles", None)
+        capture_roles = getattr(getattr(self, "cameras", None), "capture_roles", None)
         if callable(capture_roles):
-            frames = capture_roles(roles)
+            try:
+                after = getattr(self, "_snapshot_after", None)
+                max_age = (
+                    getattr(self, "initial_frame_max_age", None)
+                    if getattr(self, "_initial_inspection_active", False) else None
+                )
+                if after is None and max_age is None:
+                    frames = capture_roles(roles)
+                else:
+                    frames = capture_roles(roles, after=after, max_age=max_age)
+            except TypeError:
+                # Test doubles/legacy adapters expose the old positional API;
+                # they still receive the one immutable capture set.
+                frames = capture_roles(roles)
         else:
             # Совместимость со старыми test doubles; production CameraManager
             # всегда предоставляет capture_roles().
@@ -1296,85 +1915,341 @@ class ProductionCycle:
                 f"Неполный набор кадров для инспекции: ожидались {sorted(roles)}, "
                 f"получены {sorted(frames)}"
             )
+        self._snapshot_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
         self._check_motion_cancelled()
-        # Нейросети используют только frames в памяти. Освобождаем камеры
-        # немедленно: INPUT/SPIDER, не участвующие в следующем чтении,
-        # уже продолжают live во время part_presence и defect rules.
-        release_capture = getattr(self.stages, "release_capture_roles", None)
-        if callable(release_capture):
-            release_capture()
-        # Публикуем frozen snapshot отдельным inspection-слоем. Live может
-        # сразу обновлять физические камеры, но UI выбранной inspection-роли
-        # видит именно кадр, по которому сейчас считается решение.
-        self._refresh_monitor(run_frames=[frames], run_rule_results=[[]])
+        # Нейросети используют только frames в памяти.  Physical CameraManager
+        # continues reading in the background; the UI gate remains held until
+        # REVIEW/PUBLISH has finished so the inspected roles stay frozen.
+        # Do not publish a stop-frame here.  During capture and inference HMI
+        # remains live; the immutable snapshot becomes visible only in the
+        # atomic analysis publication below.
         return [frames]
 
+    def _inspect_input_worker(self, frame_runs, candidate_id, on_presence):
+        """Worker-side INPUT computation; never mutates control state."""
+        inspect_consensus = getattr(self.inspector, "inspect_input_consensus", None)
+        if not callable(inspect_consensus):
+            raise RuntimeError("Inspector не поддерживает обязательную INPUT инспекцию")
+        try:
+            return inspect_consensus(
+                part_id=candidate_id,
+                step=self.current_step,
+                frame_runs=frame_runs,
+                force_bad=self.force_all_bad,
+                on_presence=on_presence,
+            )
+        except TypeError as exc:
+            if "on_presence" not in str(exc):
+                raise
+            return inspect_consensus(
+                part_id=candidate_id,
+                step=self.current_step,
+                frame_runs=frame_runs,
+                force_bad=self.force_all_bad,
+            )
+
+    def _inspect_control_worker(self, frame_runs, part):
+        """Worker-side CONTROL computation; Part is read-only in this call."""
+        inspect_consensus = getattr(self.inspector, "inspect_spider_consensus", None)
+        if not callable(inspect_consensus):
+            raise RuntimeError("Inspector не поддерживает обязательную CONTROL инспекцию")
+        return inspect_consensus(
+            part_id=part.id,
+            step=self.current_step,
+            frame_runs=frame_runs,
+            force_bad=self.force_all_bad,
+        )
+
+    def _commit_input_presence(self, candidate_id, presence_result):
+        if candidate_id != self.part_counter + 1:
+            raise RuntimeError("INPUT part identity reservation is stale")
+        details = dict(getattr(presence_result, "details", {}) or {})
+        presence_by_role = dict(details.get("presence_by_role", {}))
+        if set(presence_by_role) != {"INPUT_LEFT", "INPUT_RIGHT"}:
+            # Legacy/offline result already established non-empty presence.
+            presence_by_role = {"INPUT_LEFT": True, "INPUT_RIGHT": True}
+        decision = PartTracker.commit_input_presence(
+            {part.id: part for part in self.parts},
+            presence_by_role=presence_by_role,
+            next_part_id=candidate_id,
+            birth_step=self.current_step,
+            batch_id=self.batch_id,
+            part_factory=Part,
+        )
+        part = decision.created_part
+        if part is None:
+            raise RuntimeError("non-empty INPUT presence did not create Part")
+        self.part_counter = part.id
+        self._journal_append(
+            "part_created",
+            transaction_id=self._transaction_id,
+            part_id=part.id,
+            birth_step=part.birth_step,
+            presence=details,
+        )
+        part.threshold_revision = self.config_revision
+        part.part_manifest = dict(self.manifest)
+        part.inspection_consensus["input_presence"] = {
+            "presence_by_role": dict(details.get("presence_by_role", {})),
+            "count_by_role": dict(details.get("count_by_role", {})),
+        }
+        if details.get("presence_mismatch"):
+            part.add_input_defect("input_presence_mismatch")
+        self.parts.append(part)
+        # Identity exists durably before ordinary INPUT rules continue.
+        self._commit_tracking_state(reason="INPUT_PRESENCE_COMMIT")
+        return part
+
+    def _commit_input_result(self, result, part=None):
+        if result is None:
+            return None
+        if result.is_empty_tray:
+            if part is not None:
+                raise RuntimeError("presence-created Part cannot become empty")
+            self.empty_count += 1
+            self._frame_analysis_groups["INPUT"] = self._empty_frame_analysis_entry()
+            for role in self.inspector.INPUT_ROLES:
+                self._last_vision_results[role] = []
+            self._last_rule_results.extend(result.rule_results)
+            print(
+                f"[EMPTY] Пустой лоток на step {self.current_step} "
+                f"(total empty: {self.empty_count})"
+            )
+            return None
+        if part is None:
+            presence = next(
+                (row for row in result.rule_results
+                 if getattr(row, "rule_name", None) == "part_presence"),
+                type("Presence", (), {"details": {}})(),
+            )
+            part = self._commit_input_presence(self.part_counter + 1, presence)
+        part.inspection_consensus["input"] = dict(result.consensus)
+        self._record_frame_analysis("INPUT", part.id, result)
+        for defect in result.defects:
+            part.add_input_defect(defect)
+        part.mark_input_done()
+        self._journal_append(
+            "input_completed",
+            transaction_id=self._transaction_id,
+            part_id=part.id,
+            defects=list(result.defects),
+        )
+        self._last_vision_results.update(result.vision_results)
+        self._last_rule_results.extend(result.rule_results)
+        if self.archive:
+            self.archive.store_frames(
+                part_id=part.id,
+                stage="input",
+                raw_frames=result.raw_frames,
+                annotated_frames=result.annotated,
+                raw_overlay_frames=result.raw_overlay_frames,
+                run_frames=getattr(result, "run_frames", None),
+                run_rule_results=getattr(result, "run_rule_results", None),
+                run_vision_results=getattr(result, "run_vision_results", None),
+            )
+        print(f"[INPUT] Деталь #{part.id} дефекты: {result.defects or ['none']}")
+        return part
+
+    def _commit_control_result(self, part, result):
+        if part not in self.parts:
+            raise RuntimeError("CONTROL result belongs to an untracked Part")
+        expected = self._control_parts_for_current_step()
+        if expected != [part]:
+            raise RuntimeError("CONTROL result no longer matches logical +4")
+        self._record_frame_analysis("SPIDER", part.id, result)
+        part.inspection_consensus["spider"] = dict(result.consensus)
+        for defect in result.defects:
+            part.add_spider_defect(defect)
+        part.mark_spider_done()
+        self._journal_append(
+            "control_completed",
+            transaction_id=self._transaction_id,
+            part_id=part.id,
+            defects=list(result.defects),
+        )
+        self._last_vision_results.update(result.vision_results)
+        self._last_rule_results.extend(result.rule_results)
+        if self.archive:
+            self.archive.store_frames(
+                part_id=part.id,
+                stage="spider",
+                raw_frames=result.raw_frames,
+                annotated_frames=result.annotated,
+                raw_overlay_frames=result.raw_overlay_frames,
+                run_frames=getattr(result, "run_frames", None),
+                run_rule_results=getattr(result, "run_rule_results", None),
+                run_vision_results=getattr(result, "run_vision_results", None),
+            )
+        print(
+            f"[CONTROL] Деталь #{part.id} дефекты: "
+            f"{result.defects or ['none']} категория={part.route_category}"
+        )
+
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
-        """ANALYSIS: модели и defect rules по уже снятым кадрам."""
+        """Run independent INPUT and CONTROL transactions in parallel.
+
+        The frame set is copied once after the freshness boundary.  Both
+        workers receive that immutable-by-convention set; neither worker may
+        capture another frame or retry inference.  CONTROL is submitted even
+        when INPUT later reports defects.
+        """
+        self._set_formal_phase(StepPhase.ANALYSIS)
         self.stages.enter_analysis()
-
-        # Единственный набор кадров стадии: он же уходит в UI и архив.
-        display_frames = dict(frame_runs[-1])
-        run_frames = []
-        run_rule_results = []
-
-        # Определяем активные позиции для подсветки в UI
+        self._review_active = False
+        display_frames = dict(frame_runs[-1]) if frame_runs else {}
+        spider_parts = self._control_parts_for_current_step()
         active_positions = []
         if accept_input_for_this_step:
             active_positions.append(self.OFFSET_INPUT)
-        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
-            active_positions.append(self.OFFSET_SPIDER)
-
-        if accept_input_for_this_step:
-            self._set_process(
-                "INPUT_ANALYSIS",
-                "Вход: модели и правила по свежему кадру",
-                positions=active_positions,
-            )
-            input_result = self._process_input_stage(frame_runs)
-            if input_result is not None:
-                display_frames.update(input_result.raw_frames)
-                run_frames = self._merge_run_frames(
-                    run_frames,
-                    getattr(input_result, "run_frames", None) or [],
-                )
-                run_rules = getattr(input_result, "run_rule_results", None) or []
-                if run_rules:
-                    run_rule_results.extend(run_rules)
-                # Если деталь на входе не обнаружена, убираем подсветку
-                if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
-                    active_positions.remove(self.OFFSET_INPUT)
-            self._check_motion_cancelled()
-
-        spider_parts = [
-            part for part in self.parts
-            if part.step_created + self.OFFSET_SPIDER == self.current_step
-        ]
         if spider_parts:
-            self._set_process(
-                "SPIDER_CHECK",
-                "Проверка корпуса на +4: свежий кадр",
-                positions=active_positions,
-            )
-            spider_result = self._run_spider_inspection(frame_runs)
-            if spider_result is not None:
-                display_frames.update(spider_result.raw_frames)
-                run_frames = self._merge_run_frames(
-                    run_frames,
-                    getattr(spider_result, "run_frames", None) or [],
-                )
-                run_rules = getattr(spider_result, "run_rule_results", None) or []
-                if run_rules:
-                    run_rule_results = self._merge_run_rule_rows(
-                        run_rule_results, run_rules,
-                    )
-            self._check_motion_cancelled()
+            active_positions.append(self.OFFSET_SPIDER)
+        self._set_process(
+            "ANALYSIS",
+            "Параллельная проверка INPUT и CONTROL по одному snapshot",
+            positions=active_positions,
+        )
 
-        # Набор кадров стадии уходит в UI. Кадры, разметка, правила,
-        # статус линии и цвет корпусов публикуются ОДНИМ вызовом: фронтенд
-        # видит единый снимок и может показать обрисовку правил и цвет
-        # корпуса на линии синхронно.
+        inspection_transaction = InspectionTransaction(
+            self._transaction_id,
+            self.run_id,
+            self._inspection_display_roles,
+            dict(frame_runs[0]) if frame_runs else {},
+        )
+        immutable_frame_runs = [dict(inspection_transaction.snapshots)]
+        input_future = None
+        spider_future = None
+        created_input_part = None
+        presence_messages = queue.Queue(maxsize=1)
+        presence_release = threading.Event()
+        presence_failure = []
+
+        def on_presence(presence_result):
+            presence_messages.put(presence_result)
+            while not presence_release.wait(0.05):
+                if self._cancel_motion.is_set():
+                    raise RuntimeError("INPUT presence commit cancelled")
+            if presence_failure:
+                raise presence_failure[0]
+
+        self._analysis_batch_active = True
+        worker_timeout = max(
+            30.0,
+            float(getattr(getattr(self.inspector, "vision", None), "worker_timeout", 30.0)) * 2,
+        )
+        deadline = time.monotonic() + worker_timeout
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="inspection-pure") as pool:
+            if accept_input_for_this_step:
+                input_future = pool.submit(
+                    self._inspect_input_worker,
+                    immutable_frame_runs,
+                    self.part_counter + 1,
+                    on_presence,
+                )
+            if spider_parts:
+                spider_future = pool.submit(
+                    self._inspect_control_worker, immutable_frame_runs, spider_parts[0]
+                )
+
+            futures = [future for future in (input_future, spider_future) if future]
+            while futures and not all(future.done() for future in futures):
+                self._pump_commands()
+                if created_input_part is None:
+                    try:
+                        presence_result = presence_messages.get_nowait()
+                    except queue.Empty:
+                        presence_result = None
+                    if presence_result is not None:
+                        try:
+                            created_input_part = self._commit_input_presence(
+                                self.part_counter + 1, presence_result,
+                            )
+                        except Exception as exc:
+                            presence_failure.append(exc)
+                        finally:
+                            presence_release.set()
+                if time.monotonic() >= deadline:
+                    presence_failure.append(TimeoutError("inspection aggregate timeout"))
+                    presence_release.set()
+                    for future in futures:
+                        future.cancel()
+                    raise TimeoutError("inspection aggregate timeout")
+                time.sleep(0.01)
+
+            # A production Inspector cannot finish a non-empty INPUT without
+            # the callback handshake. Legacy test adapters are committed below.
+            input_result = input_future.result() if input_future is not None else None
+            spider_result = spider_future.result() if spider_future is not None else None
+            if presence_failure:
+                raise presence_failure[0]
+
+        aggregate = inspection_transaction.complete(
+            input_result=input_result,
+            control_result=spider_result,
+        )
+        input_result = aggregate.input_result
+        spider_result = aggregate.control_result
+        # Workers are result-only. All Part/rule/archive mutations happen here
+        # on the serialized control thread after the aggregate is complete.
+        self._commit_input_result(input_result, created_input_part)
+        if spider_result is not None:
+            self._commit_control_result(spider_parts[0], spider_result)
+        self._set_formal_phase(StepPhase.PERSIST)
+        self._commit_tracking_state(
+            persistence_state=PersistenceState.STAGE_COMMITTED,
+            reason="INSPECTION_AGGREGATE_COMMIT",
+        )
+        current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
+        if (
+            getattr(self, "_snapshot_generation", None) is not None
+            and current_generation is not None
+            and current_generation != getattr(self, "_snapshot_generation", None)
+        ):
+            raise RuntimeError(
+                "camera stream recovered during inspection; snapshot is no longer current"
+            )
+        self._analysis_batch_active = False
+        run_frames = []
+        run_rule_results = []
+        input_is_empty = bool(input_result is not None and input_result.is_empty_tray)
+        if input_result is not None and not input_is_empty:
+            display_frames.update(input_result.raw_frames)
+            run_frames = self._merge_run_frames(
+                run_frames, getattr(input_result, "run_frames", None) or []
+            )
+            run_rules = getattr(input_result, "run_rule_results", None) or []
+            if run_rules:
+                run_rule_results = self._merge_run_rule_rows(run_rule_results, run_rules)
+        elif input_is_empty:
+            release_roles = getattr(self.stages, "release_roles", None)
+            if callable(release_roles):
+                release_roles(self.inspector.INPUT_ROLES)
+            for role in self.inspector.INPUT_ROLES:
+                display_frames.pop(role, None)
+            self._inspection_display_roles = tuple(
+                role for role in self._inspection_display_roles
+                if role not in self.inspector.INPUT_ROLES
+            )
+
+        if spider_result is not None:
+            display_frames.update(spider_result.raw_frames)
+            run_frames = self._merge_run_frames(
+                run_frames, getattr(spider_result, "run_frames", None) or []
+            )
+            run_rules = getattr(spider_result, "run_rule_results", None) or []
+            if run_rules:
+                run_rule_results = self._merge_run_rule_rows(run_rule_results, run_rules)
+
+        self._set_formal_phase(StepPhase.PUBLISH)
+        # Atomic publication of the complete aggregate and logical snapshot.
         if run_frames:
+            self._review_active = True
+            self._set_formal_phase(
+                StepPhase.REVIEW,
+                frozen_roles=self._inspection_display_roles,
+            )
+            # This is the single publication boundary at which the UI may
+            # replace live pixels with immutable inspection evidence.
+            self._review_published = True
             self._refresh_monitor(
                 display_frames,
                 run_frames=run_frames,
@@ -1413,9 +2288,21 @@ class ProductionCycle:
 
         Кадры со статичной разметкой уже опубликованы и остаются на
         экране, а лента стоит: оператор успевает отсмотреть результат
-        до начала следующего шага. Паузу можно прервать остановкой или
-        выходом из программы.
+        до начала следующего шага. Обычные STOP/EXIT/PAUSE остаются pending;
+        немедленно прервать окно может только FORCE EXIT.
         """
+        if not getattr(self, "_review_active", False):
+            return
+        current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
+        if (
+            getattr(self, "_snapshot_generation", None) is not None
+            and current_generation is not None
+            and current_generation != getattr(self, "_snapshot_generation", None)
+        ):
+            raise RuntimeError("camera stream recovered before REVIEW; evidence must be recaptured")
+        enter_review = getattr(self.stages, "enter_review", None)
+        if callable(enter_review):
+            enter_review()
         if self.review_seconds <= 0:
             return
         self._refresh_monitor(display_frames)
@@ -1425,13 +2312,16 @@ class ProductionCycle:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            if (
-                self._cancel_motion.is_set()
-                or self.sm.force_exit
-                or self.sm.exit_requested
-                or self.sm.state != State.RUNNING
-            ):
+            self._pump_commands()
+            if self._cancel_motion.is_set() or self.sm.force_exit:
                 break
+            current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
+            if (
+                getattr(self, "_snapshot_generation", None) is not None
+                and current_generation is not None
+                and current_generation != getattr(self, "_snapshot_generation", None)
+            ):
+                raise RuntimeError("camera stream recovered during REVIEW")
             whole = int(remaining + 0.999)
             if whole != shown_seconds:
                 shown_seconds = whole
@@ -1447,11 +2337,33 @@ class ProductionCycle:
         self._check_motion_cancelled()
 
     def _stage_publish(self, display_frames):
-        """PUBLISH: маршрут годных деталей и вывод результата на экран."""
+        """CLEAR_REVIEW then enter the formal COMMAND_GATE."""
+        phase = self.control_core.snapshot.step_phase
+        if phase is StepPhase.REVIEW:
+            event = CoreEvent(
+                EventGroup.TIMER,
+                "ReviewElapsed",
+                run_id=self.run_id,
+                transaction_id=self._transaction_id,
+            )
+            cleared = self.sm.handle_event(event)
+            if not cleared.accepted:
+                raise RuntimeError(cleared.reason or "CLEAR_REVIEW rejected")
+            phase = self.control_core.snapshot.step_phase
+        if phase not in {StepPhase.CLEAR_REVIEW, StepPhase.PUBLISH}:
+            raise RuntimeError(f"unexpected final publication phase: {phase.value}")
+        self._set_formal_phase(StepPhase.COMMAND_GATE)
         self.stages.enter_publish()
-
-        self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
-        self._refresh_monitor(display_frames)
+        release_capture = getattr(self.stages, "release_capture_roles", None)
+        if callable(release_capture):
+            release_capture()
+        self._review_published = False
+        self._review_active = False
+        self._inspection_display_roles = ()
+        # Snapshot evidence remains in Part/archive; final logical publication
+        # happens only after COMMAND_GATE has cleared the active transaction.
+        self.live.clear_overlays()
+        self._reset_frame_analysis()
 
     # Пауза в рабочем цикле
 
@@ -1460,30 +2372,16 @@ class ProductionCycle:
 
         Оператор может поправить линию с помощью jog без ограничений.
         """
-        if (
-            self.sm.state == State.RUNNING
-            and self._pause_requested.is_set()
-            and not self.sm.exit_requested
-        ):
-            # Барьер может быть достигнут уже после завершения фоновой
-            # проверки. С этого момента её live-кадр больше не является
-            # основанием пропускать INPUT-захват.
-            self._invalidate_background_presence()
-            if self.sm.request_pause():
-                self._enter_pause_frame()
-            else:
-                self._pause_requested.clear()
-
         while self.sm.state == State.PAUSED:
-            if self.sm.exit_requested or self.sm.force_exit:
-                self._pause_requested.clear()
+            self._pump_commands()
+            if self.sm.force_exit:
                 self._stop_pause_frame_loop()
-                self.sm.request_stop()
                 break
-            if self.live.error:
+            camera_error = self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)
+            if camera_error:
                 self._handle_fault(
                     "Ошибка камеры во время паузы: "
-                    f"{self.live.error}"
+                    f"{camera_error}"
                 )
                 break
             jog_error = (
@@ -1519,192 +2417,17 @@ class ProductionCycle:
 
     # Input stage
 
-    def _process_input_stage(self, frame_runs):
-        """Обработать INPUT по свежему кадру."""
-
-        candidate_id = self.part_counter + 1
-
-        # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
-        # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
-        # После паузы этот кэш недействителен, поэтому INPUT проходит обычный
-        # свежий захват и анализ даже при старом is_empty=True.
-        background_result = getattr(self, "_background_presence_result", None)
-        background_usable = getattr(self, "_background_presence_usable", False)
-        if background_usable and background_result and background_result["is_empty"]:
-            res = background_result
-            result = InspectionResult(
-                stage="input",
-                defects=[],
-                vision_results=res["vision_results"],
-                rule_results=[res["presence_result"]],
-                annotated={},
-                raw_frames=res["frames"],
-                raw_overlay_frames={},
-                is_empty_tray=True,
-                consensus={
-                    "runs": 1,
-                    "required_votes": 1,
-                    "evidence_run": 1,
-                    "part_presence": 1.0,
-                    "rules": {},
-                    "picture_run": 1,
-                    "picture_reason": "background_live_check",
-                },
-                model_health=res["model_health"],
-                run_frames=[res["frames"]],
-                run_rule_results=[[]],
-            )
-            self._record_frame_analysis("INPUT", None, result)
-            self.empty_count += 1
-            for role in self.inspector.INPUT_ROLES:
-                self._last_vision_results[role] = []
-            self._last_rule_results.extend(result.rule_results)
-            print(
-                f"[EMPTY] Step {self.current_step}: пустой лоток подтвержден "
-                "фоновым анализом (live)"
-            )
-            return result
-
-        self._set_process(
-            "INPUT_ANALYSIS",
-            f"Вход: анализ кандидата #{candidate_id}",
-            part_id=candidate_id,
-            positions=[self.OFFSET_INPUT],
-        )
-
-        inspect_consensus = getattr(
-            self.inspector,
-            "inspect_input_consensus",
-            None,
-        )
-        if not callable(inspect_consensus):
-            raise RuntimeError(
-                "Inspector не поддерживает обязательную INPUT инспекцию"
-            )
-        result = inspect_consensus(
-            part_id=candidate_id,
-            step=self.current_step,
-            frame_runs=frame_runs,
-            force_bad=self.force_all_bad,
-        )
-        if result.is_empty_tray:
-            self._record_frame_analysis("INPUT", None, result)
-            self.empty_count += 1
-            # Очищаем детекции для входных камер, чтобы не рисовать прямоугольники
-            # на пустом лотке.
-            for role in self.inspector.INPUT_ROLES:
-                self._last_vision_results[role] = []
-            self._last_rule_results.extend(result.rule_results)
-            print(
-                f"[EMPTY] Пустой лоток на step {self.current_step} "
-                f"(total empty: {self.empty_count})"
-            )
-            # Пустой лоток остаётся нейтральным: Part и архив не создаются.
-            return result
-
-        self.part_counter += 1
-        part = Part(self.part_counter, self.current_step)
-        part.inspection_consensus["input"] = dict(result.consensus)
-        self.parts.append(part)
-        self._record_frame_analysis("INPUT", part.id, result)
-        print(f"[INPUT] Деталь #{part.id}")
-
-        for defect in result.defects:
-            part.add_input_defect(defect)
-        part.mark_input_done()
-
-        self._last_vision_results.update(result.vision_results)
-        self._last_rule_results.extend(result.rule_results)
-
-        if self.archive:
-            self.archive.store_frames(
-                part_id=part.id,
-                stage="input",
-                raw_frames=result.raw_frames,
-                annotated_frames=result.annotated,
-                raw_overlay_frames=result.raw_overlay_frames,
-                run_frames=getattr(result, "run_frames", None),
-                run_rule_results=getattr(result, "run_rule_results", None),
-                run_vision_results=getattr(result, "run_vision_results", None),
-            )
-
-        print(
-            f"[INPUT] Деталь #{part.id} "
-            f"дефекты: {result.defects or ['none']}"
-        )
-        return result
-
-    # Inspection
-
-    def _run_spider_inspection(self, frame_runs):
-        for part in self.parts:
-            if (part.step_created + self.OFFSET_SPIDER
-                    != self.current_step):
-                continue
-
-            self._set_process(
-                "SPIDER_ANALYSIS",
-                f"Контроль корпуса #{part.id}",
-                part_id=part.id,
-                positions=[self.OFFSET_SPIDER],
-            )
-            inspect_consensus = getattr(
-                self.inspector,
-                "inspect_spider_consensus",
-                None,
-            )
-            if not callable(inspect_consensus):
-                raise RuntimeError(
-                    "Inspector не поддерживает обязательную SPIDER инспекцию"
-                )
-            result = inspect_consensus(
-                part_id=part.id,
-                step=self.current_step,
-                frame_runs=frame_runs,
-                force_bad=self.force_all_bad,
-            )
-            self._record_frame_analysis("SPIDER", part.id, result)
-            part.inspection_consensus["spider"] = dict(result.consensus)
-
-            for defect in result.defects:
-                part.add_spider_defect(defect)
-
-            part.mark_spider_done()
-
-            self._last_vision_results.update(result.vision_results)
-            self._last_rule_results.extend(result.rule_results)
-
-            if self.archive:
-                self.archive.store_frames(
-                    part_id=part.id,
-                    stage="spider",
-                    raw_frames=result.raw_frames,
-                    annotated_frames=result.annotated,
-                    raw_overlay_frames=result.raw_overlay_frames,
-                    run_frames=getattr(result, "run_frames", None),
-                    run_rule_results=getattr(result, "run_rule_results", None),
-                    run_vision_results=getattr(result, "run_vision_results", None),
-                )
-
-            print(
-                f"[SPIDER] Деталь #{part.id} "
-                f"дефекты: {result.defects or ['none']} "
-                f"категория={part.route_category}"
-            )
-            return result
-        # На позиции +4 в этом шаге детали нет: старый результат другой
-        # детали показывать нельзя.
-        self._frame_analysis_groups["SPIDER"] = self._empty_frame_analysis_entry()
-        return None
-
     # Distributor flow
 
     def _find_pending_drop(self):
-        """Вернуть корпус на +7, который на следующем шаге пройдёт заслонки."""
-        for part in self.parts:
-            if part.step_created + self.OFFSET_REJECT == self.current_step:
-                return part
-        return None
+        """Return the only Part at +7, rejecting overlapping tracking."""
+        mapping = {part.id: part for part in self.parts}
+        try:
+            return PartTracker.pending_transfer(mapping, self.current_step)
+        except Exception as exc:
+            raise RuntimeError(
+                f"tracking invariant violated: multiple Part objects at transfer +7 ({exc})"
+            ) from exc
 
     def _prepare_drop(self):
         part = self._pending_drop
@@ -1712,18 +2435,49 @@ class ProductionCycle:
             self.distributor.reset_target()
             return
         category = part.route_category
-        if category == CATEGORY_UNKNOWN:
-            print(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
-            part.route_category, part.final_decision, category = CATEGORY_BAD, "incomplete_inspection", CATEGORY_BAD
+        if category in (CATEGORY_UNKNOWN, "IN_PROGRESS") or (
+            not part.fully_inspected and not category
+        ):
+            missing = []
+            if not part.input_inspected:
+                missing.append("INPUT")
+            if not part.spider_inspected:
+                missing.append("CONTROL")
+            part.mark_incomplete_inspection("/".join(missing) or "evidence")
+            category = CATEGORY_BAD
+            print(
+                f"[FAIL-SAFE] Деталь #{part.id} достигла +7 без полного "
+                f"контроля: {missing or ['data']} -> BAD"
+            )
         # GOOD: DIST1=0. BAD/CLEANUP: сначала DIST2, затем DIST1=340.
+        self._journal_append(
+            "route_selected",
+            transaction_id=self._transaction_id,
+            part_id=part.id,
+            category=category,
+        )
         self.distributor.prepare_route(category, part.id)
 
-    def _execute_drop(self):
+    def _execute_drop(self, transaction_id: str | None = None):
         part = self._pending_drop
         if part is None:
             return
         category = part.route_category
         self.distributor.confirm_transfer(part.id, category)
+
+        formal = transaction_id is not None and hasattr(self, "control_core")
+        if formal:
+            committed = self.sm.mutate(
+                lambda state: LineReducer.commit_transfer(
+                    state, transaction_id, category=category,
+                ),
+                "TRANSFER_COMMIT",
+            )
+            if not committed.accepted:
+                raise RuntimeError(committed.reason or "TRANSFER_COMMIT rejected")
+
+        # Mirror the already committed physical truth for legacy domain/UI
+        # consumers. Failure below must never put the Part back or retry route.
         if category == CATEGORY_GOOD:
             self.good_count += 1
             print(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
@@ -1733,10 +2487,35 @@ class ProductionCycle:
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
             print(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
-        self._archive_part(part)
-        self._register_finished(part)
         self._remove_part(part)
         self._pending_drop = None
+        try:
+            self._journal_append(
+                "transfer_confirmed",
+                transaction_id=transaction_id,
+                part_id=part.id,
+                category=category,
+            )
+            self._archive_part(part)
+            self._journal_append(
+                "archive_finalized",
+                transaction_id=transaction_id,
+                part_id=part.id,
+                category=category,
+            )
+            if formal:
+                event = CoreEvent(
+                    EventGroup.PERSISTENCE,
+                    "ArchiveFinalized",
+                    run_id=self.run_id,
+                    transaction_id=transaction_id,
+                )
+                finalized = self.sm.handle_event(event)
+                if not finalized.accepted:
+                    raise RuntimeError(finalized.reason or "archive finalization rejected")
+        finally:
+            if not any(item.get("id") == part.id for item in self.recent_parts):
+                self._register_finished(part)
 
     # Archive
 
@@ -1750,7 +2529,17 @@ class ProductionCycle:
             "defects": part.get_all_defects(),
             "step": part.step_created,
         }
-        archive_extra = {}
+        archive_extra = {
+            "run_id": self.run_id,
+            "birth_step": getattr(part, "birth_step", part.step_created),
+            "confirmed_current_step": self.current_step,
+            "identity": {
+                "batch_id": self.batch_id,
+                "run_id": self.run_id,
+                "manifest": dict(self.manifest),
+                "threshold_revision": self.config_revision,
+            },
+        }
         consensus = getattr(part, "inspection_consensus", None)
         if consensus:
             archive_extra["inspection_consensus"] = consensus
@@ -1784,6 +2573,9 @@ class ProductionCycle:
     def _register_finished(self, part):
         record = {
             "id":       part.id,
+            "part_id":  part.id,
+            "batch_id": getattr(self, "batch_id", getattr(self.archive, "batch_id", None)),
+            "birth_step": getattr(part, "birth_step", part.step_created),
             "decision": part.final_decision,
             "category": part.route_category,
             "time":      time.time(),
@@ -1796,6 +2588,7 @@ class ProductionCycle:
             if archive_info:
                 record["batch_id"] = self.archive.batch_id
                 record["archive_folder"] = archive_info.get("relative_folder")
+                record["manifest"] = archive_info.get("manifest")
                 record["annotation_files"] = list(
                     archive_info.get("annotation_files") or []
                 )
@@ -1900,13 +2693,25 @@ class ProductionCycle:
         )
 
     def _on_state_change(self, old, new, action: str):
+        try:
+            self._journal_append(
+                "state_transition",
+                old_state=old.value,
+                new_state=new.value,
+                action=action,
+            )
+        except Exception as exc:
+            # A journal failure is itself a fault; avoid recursively calling
+            # the transition callback while the state lock is in use.
+            self._fault_reason = f"operational journal failure: {exc}"
+            print(f"[FAULT] {self._fault_reason}")
         if new == State.STOPPING:
             self._set_process("DRAINING", "Завершение корпусов на линии")
         elif new == State.STOPPED:
+            # _complete_empty_drain confirmed both axes before this transition.
             # Линия пуста: последние кадры с разметкой остаются на экране,
             # пока оператор не войдёт в JOG или не запустит цикл заново.
             self.stages.reset()
-            self.live.stop()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
@@ -1922,7 +2727,7 @@ class ProductionCycle:
             self.state in self.JOG_ALLOWED_STATES
             and not self.exit_requested
             and not self._operation_lock.locked()
-            and not self.live.error
+            and not (self.live.error or getattr(getattr(self, "cameras", None), "live_error", None))
             and not self.jog.status.get("error")
         )
 
@@ -1945,6 +2750,18 @@ class ProductionCycle:
         self._refresh_monitor()
         return True
 
+    def _record_jog_motion_if_any(self):
+        consume = getattr(self.jog, "consume_motion_happened", None)
+        happened = bool(consume()) if callable(consume) else False
+        if not happened:
+            return False
+        recorded = self.sm.mutate(LineReducer.jog_moved, "JOG_MOVED")
+        if not recorded.accepted:
+            raise RuntimeError(recorded.reason or "JOG movement event rejected")
+        self._jog_moved = True
+        self._snapshot_after = time.monotonic()
+        return True
+
     def exit_jog(self):
         with self._jog_lock:
             if not self.jog_active:
@@ -1953,12 +2770,13 @@ class ProductionCycle:
             try:
                 if self.jog is not None:
                     self.jog.release("leaving JOG mode")
+                    self._record_jog_motion_if_any()
             except Exception as exc:
                 release_error = exc
             finally:
                 self.jog_active = False
-                if not self.sm.is_active:
-                    self.live.stop()
+                # CameraManager/LivePreview remain live in IDLE, PAUSED and
+                # STOPPED; only application shutdown stops the readers.
                 print("[JOG] exited")
 
         self._refresh_monitor()
@@ -1977,6 +2795,8 @@ class ProductionCycle:
                 or self.exit_requested
                 or self._selected_analysis_active
             ):
+                return False
+            if not self.sm.request_jog_start():
                 return False
             accepted = self.jog.start_hold(direction)
             if accepted:
@@ -2011,6 +2831,8 @@ class ProductionCycle:
             return False
         accepted = self.jog.release(reason)
         if accepted:
+            self.sm.request_jog_release()
+            self._record_jog_motion_if_any()
             self._set_process("JOG_STOPPED", f"Ручное движение остановлено: {reason}")
         else:
             self._refresh_monitor()
@@ -2159,7 +2981,8 @@ class ProductionCycle:
         operation_busy = self._operation_lock.locked()
         jog_snapshot = self.jog.status if self.jog is not None else {}
         jog_busy = bool(jog_snapshot.get("busy", False))
-        jog_error = jog_snapshot.get("error") or self.live.error
+        camera_error = self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)
+        jog_error = jog_snapshot.get("error") or camera_error
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
             and not parts_snapshot
@@ -2219,8 +3042,15 @@ class ProductionCycle:
 
         status = {
             "state": state_name,
+            "line_state": state_name,
+            "simulation": bool(getattr(self, "simulation", False)),
+            "step_phase": self.control_core.snapshot.step_phase.value,
+            "pending_intent": self.control_core.snapshot.pending_intent.value,
+            "pause_continuation": sm_snap.get("pause_continuation"),
+            "state_version": self.control_core.snapshot.state_version,
             "exit_requested": sm_snap["exit_requested"],
             "fault_reason": self._fault_reason,
+            "fault": getattr(self, "_fault_latch", FaultLatch()).report(),
             "step": step_snapshot,
             "in_line": len(parts_snapshot),
             "line_parts": line_parts,
@@ -2244,14 +3074,19 @@ class ProductionCycle:
             # Inspection блокирует live только у захватываемых ролей.
             # Остальные камеры продолжают поток даже на статической фазе.
             "live": {
-                "running": self.live.running,
-                "streaming": self.live.running,
-                "static": self.stages.static,
-                "static_roles": list(self.stages.static_roles or ()),
-                "all_roles_static": self.stages.static and self.stages.static_roles is None,
+                "running": bool(getattr(getattr(self, "cameras", None), "live_running", False) or self.live.running),
+                "streaming": bool(getattr(getattr(self, "cameras", None), "live_running", False) or self.live.running),
+                # Capture/analysis remain live; only the atomic result
+                # publication creates UI-frozen roles for REVIEW.
+                "static": bool(getattr(self, "_review_published", False)),
+                "static_roles": list(
+                    self._inspection_display_roles
+                    if getattr(self, "_review_published", False) else ()
+                ),
+                "all_roles_static": False,
                 "stage": self.stages.stage.value,
                 "fps": self._current_live_fps(),
-                "error": self.live.error,
+                "error": camera_error,
             },
             "frame_analysis": self._build_frame_analysis(state_name),
             "diagnostics": {
@@ -2298,6 +3133,8 @@ class ProductionCycle:
     ):
         if not self.monitor:
             return
+        if hasattr(self, "sm") and isinstance(self.sm, CoreStateMachine):
+            self.sm.mutate(LineReducer.touch_publication, "HMI_PUBLICATION")
         status = self._build_status()
         if frames:
             self.monitor.update(

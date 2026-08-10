@@ -1,9 +1,9 @@
 {
-    "INPUT_LEFT": 0,
-    "INPUT_RIGHT": 3,
-    "SPIDER_LEFT": 1,
-    "SPIDER_RIGHT": 4,
-    "SPIDER_IN": 5,
-    "SPIDER_OUT": 6,
-    "TOP": 2
+  "INPUT_LEFT": {"serial": "UNSET-INPUT_LEFT", "index": 0, "transform": {"rotate": 0}},
+  "INPUT_RIGHT": {"serial": "UNSET-INPUT_RIGHT", "index": 3, "transform": {"rotate": 0}},
+  "SPIDER_LEFT": {"serial": "UNSET-SPIDER_LEFT", "index": 1, "transform": {"rotate": 0}},
+  "SPIDER_RIGHT": {"serial": "UNSET-SPIDER_RIGHT", "index": 4, "transform": {"rotate": 0}},
+  "SPIDER_IN": {"serial": "UNSET-SPIDER_IN", "index": 5, "transform": {"rotate": 0}},
+  "SPIDER_OUT": {"serial": "UNSET-SPIDER_OUT", "index": 6, "transform": {"rotate": 0}},
+  "TOP": {"serial": "UNSET-TOP", "index": 2, "transform": {"rotate": 0}}
 }

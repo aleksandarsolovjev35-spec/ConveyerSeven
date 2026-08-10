@@ -5,18 +5,18 @@
 ```text
 MOTION    лента едет            камеры у live-просмотра
 SETTLE    лента встала          камеры у live-просмотра, гасим вибрацию
-CAPTURE   лента неподвижна      камеры только у инспекции
-ANALYSIS  модели и правила      камеры не читаются
-PUBLISH   результат на экран    камеры не читаются
+CAPTURE   snapshot copied        physical live continues
+ANALYSIS  models/rules           HMI remains live
+REVIEW    result on screen       only real-part roles are frozen
+PUBLISH   clear result           roles return to clean live
 ```
 
 Переход между фазами — единственное место, где меняется владелец камер.
 Поэтому «снять кадр для правил во время движения» или «читать камеру из
 двух потоков» невозможно не по договорённости, а по построению:
 
-* :meth:`StepSequencer.enter_capture` не просто ставит флаг, а дожидается
-  завершения уже начатых live-чтений и только затем отдаёт кадры
-  инспекции;
+* :meth:`StepSequencer.enter_capture` marks the roles that will receive the
+  snapshot; a buffered CameraManager keeps physical live reading active;
 * порядок фаз проверяется таблицей ``_ALLOWED``: вызов не по порядку
   поднимает :class:`StageSequenceError`, а не тихо портит шаг.
 
@@ -32,6 +32,8 @@ from __future__ import annotations
 import threading
 import time
 from enum import Enum
+
+from core.control_model import StepPhase
 
 # Пауза между подтверждённой остановкой ленты и первым кадром инспекции.
 STAGE_SETTLE_SECONDS = 0.3
@@ -56,6 +58,7 @@ class StepStage(str, Enum):
     SETTLE = "SETTLE"
     CAPTURE = "CAPTURE"
     ANALYSIS = "ANALYSIS"
+    REVIEW = "REVIEW"
     PUBLISH = "PUBLISH"
 
 
@@ -66,7 +69,10 @@ _ALLOWED = {
     StepStage.MOTION: (StepStage.SETTLE,),
     StepStage.SETTLE: (StepStage.CAPTURE,),
     StepStage.CAPTURE: (StepStage.ANALYSIS,),
-    StepStage.ANALYSIS: (StepStage.PUBLISH,),
+    # PUBLISH remains accepted directly for legacy/offline callers; production
+    # enters the explicit REVIEW phase first.
+    StepStage.ANALYSIS: (StepStage.REVIEW, StepStage.PUBLISH),
+    StepStage.REVIEW: (StepStage.PUBLISH,),
     StepStage.PUBLISH: (StepStage.MOTION,),
 }
 
@@ -157,10 +163,10 @@ class StepSequencer:
         self._switch(StepStage.MOTION)
         self._release_static()
 
-    def enter_settle(self):
-        """Лента подтвердила остановку; ждём затухания вибрации."""
+    def enter_settle(self, wait: bool = True):
+        """Лента остановлена; optionally wait for calibrated vibration settle."""
         self._switch(StepStage.SETTLE)
-        if self._settle_seconds > 0:
+        if wait and self._settle_seconds > 0:
             self._sleep(self._settle_seconds)
 
     def enter_capture(self, roles=None):
@@ -174,20 +180,35 @@ class StepSequencer:
         self._acquire_static(roles)
 
     def release_capture_roles(self):
-        """Вернуть камеры в live сразу после копирования inspection-кадров.
-
-        Модели далее работают только с уже сохранёнными numpy-кадрами и не
-        требуют владения VideoCapture. Это сокращает паузу live до самого
-        чтения кадра, не смешивая корпуса.
-        """
+        """Return all currently held UI roles to live."""
         self._release_static()
+
+    def release_roles(self, roles):
+        """Release a subset after presence proves that the group is empty."""
+        requested = set(roles or ())
+        if not requested:
+            return
+        with self._lock:
+            if not self._static_held or self._static_roles is None:
+                return
+            held = tuple(self._static_roles)
+            release = tuple(role for role in held if role in requested)
+            remaining = tuple(role for role in held if role not in requested)
+            self._static_roles = remaining or None
+            self._static_held = bool(remaining)
+        if release:
+            self._live.resume_roles(release)
 
     def enter_analysis(self):
         """Анализирует сохранённые кадры; камеры уже могут быть в live."""
         self._switch(StepStage.ANALYSIS)
 
+    def enter_review(self):
+        """Hold one server-clock REVIEW window without stopping cameras."""
+        self._switch(StepStage.REVIEW)
+
     def enter_publish(self):
-        """Опубликовать результат поверх статичных кадров."""
+        """Опубликовать result and clear the REVIEW display."""
         self._switch(StepStage.PUBLISH)
 
     def reset(self):

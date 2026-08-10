@@ -1,0 +1,11 @@
+.simulation-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border: 1px solid #e0a52b;
+    color: #e0a52b;
+    background: #2a210e;
+    font: 700 11px/1.2 system-ui, sans-serif;
+    letter-spacing: .12em;
+}
+.simulation-badge.is-hidden { display: none; }
