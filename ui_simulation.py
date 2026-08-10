@@ -41,7 +41,10 @@ class LineSimulation:
     # Time with a stopped belt: the vertical input/output animation must
     # finish before another horizontal step starts.
     POST_STOP_SECONDS = 0.62
+    CAMERA_STAGE_SECONDS = 0.13
     CATEGORIES = ("GOOD", "BAD", "CLEANUP", "GOOD", "GOOD", "BAD")
+    INPUT_STAGES = ("INPUT_LEFT", "INPUT_RIGHT")
+    CONTROL_STAGES = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
 
     def __init__(self, server: UIServer):
         self.server = server
@@ -212,6 +215,28 @@ class LineSimulation:
                            "held": False, "dropping": True})
         return result
 
+    def _run_camera_stages(self) -> bool:
+        """Run the same role-by-role inspection cadence that drives the UI."""
+        target = next((part for part in self.parts if part.position == 0), None)
+        stages = self.INPUT_STAGES
+        if target is None:
+            target = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
+            stages = self.CONTROL_STAGES
+        if target is None:
+            return True
+        for role in stages:
+            self._publish(f"CAMERA_{role}")
+            if self._stop.wait(self.CAMERA_STAGE_SECONDS):
+                return False
+            with self._lock:
+                if self.state not in ("RUNNING", "STOPPING"):
+                    return False
+        if target.position == 4:
+            with self._lock:
+                self._inspect_part(target)
+            self._publish("ANALYSIS_CONFIRMED")
+        return True
+
     def _prepare_distributor(self) -> None:
         part = next((item for item in self.parts if item.position == 7), None)
         category = (part.category if part else "GOOD") or "GOOD"
@@ -262,8 +287,12 @@ class LineSimulation:
             line_parts = self._line_parts()
             position = 7 if self.egress else None
             active_roles = []
-            if any(part.position == 0 for part in self.parts): active_roles = ["INPUT_LEFT", "INPUT_RIGHT"]
-            elif any(part.position == 4 for part in self.parts): active_roles = ["SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP"]
+            if phase.startswith("CAMERA_"):
+                active_roles = [phase.removeprefix("CAMERA_")]
+            elif any(part.position == 0 for part in self.parts):
+                active_roles = list(self.INPUT_STAGES)
+            elif any(part.position == 4 for part in self.parts):
+                active_roles = list(self.CONTROL_STAGES)
             status = {
                 "state": state,
                 "exit_requested": False,
@@ -370,6 +399,10 @@ class LineSimulation:
                 self._publish("STOPPED")
                 continue
 
+            # Camera roles are processed one by one while the belt is stopped.
+            if not self._run_camera_stages():
+                continue
+
             # Set the distributor first, then perform one synchronous step.
             # This mirrors the physical route preparation before the belt moves.
             with self._lock:
@@ -403,9 +436,6 @@ class LineSimulation:
                 arriving = self._new_part() if self.state == "RUNNING" else None
                 if arriving is not None:
                     self.parts.insert(0, arriving)
-                for part in self.parts:
-                    if part.position >= 4:
-                        self._inspect_part(part)
             self._publish("SETTLE")
             # New body falls into +0 and the output body falls from +8 while
             # the conveyor is stopped. Do not begin the next step yet.
