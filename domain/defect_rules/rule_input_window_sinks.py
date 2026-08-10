@@ -280,7 +280,7 @@ class InputWindowSinksRule(BaseRule):
     @staticmethod
     def _mask_points(detection):
         mask = detection.get("mask")
-        if not mask or len(mask) < 3:
+        if mask is None or len(mask) < 3:
             return None
         points = np.asarray(mask, dtype=np.float32)
         if (

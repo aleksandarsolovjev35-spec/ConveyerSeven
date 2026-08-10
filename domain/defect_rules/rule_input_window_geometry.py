@@ -364,7 +364,7 @@ class InputWindowGeometryRule(BaseRule):
         bbox_width = max(1, x2 - x1)
         bbox_height = max(1, y2 - y1)
         mask = det.get("mask")
-        if not mask or len(mask) < 3:
+        if mask is None or len(mask) < 3:
             return {
                 "valid": False,
                 "reason": "missing_mask",

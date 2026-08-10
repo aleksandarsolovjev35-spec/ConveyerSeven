@@ -9,11 +9,13 @@ UI uses ordered classic browser modules and does not require a production bundle
 3. `diagnostics.js` — distributor diagnostics and selected-frame analysis.
 4. `status.js` — backend status, OFFLINE, process telemetry and part path.
 5. `controls.js` — START/STOP/EXIT, errors and state overlay.
-6. `cameras.js` — camera selection, RAW/RULES and frame refresh.
-7. `jog.js` — dead-man hold/heartbeat/release logic.
-8. `history.js` — recent parts, archive gallery and fullscreen.
-9. `archive.js` — настройки папки партий, качества JPEG и ZIP.
-10. `bootstrap.js` — hotkeys, initialization and test-only hook.
+6. `thresholds.js` — thresholds panel, inline parameter editing and saving.
+7. `cameras.js` — camera selection, RAW/RULES and frame refresh.
+8. `frame-analysis.js` — per-object structured metrics and inspection card display.
+9. `jog.js` — dead-man hold/heartbeat/release logic.
+10. `history.js` — recent parts, archive gallery and fullscreen.
+11. `archive.js` — настройки папки партий, качества JPEG и ZIP.
+12. `bootstrap.js` — hotkeys, initialization and test-only hook.
 
 Functions may call functions from later modules only after all scripts have loaded and `bootstrap.js` starts the UI. Do not change the order in `templates/index.html`.
 
@@ -30,6 +32,7 @@ Functions may call functions from later modules only after all scripts have load
 - `gallery.css` — archive modal and fullscreen.
 - `process.css` — process line, distributor, diagnostics and OFFLINE/error additions.
 - `motion.css` — non-blocking fades, panel collapse/expand and frame/content transitions.
+- `thresholds.css` — thresholds editor panel layout, tabbed cards and sliders.
 - `archive.css` — modal настройки хранения партий и политики сжатия.
 
 ## Блочная карта UI
@@ -42,8 +45,9 @@ Functions may call functions from later modules only after all scripts have load
 - `main-camera` + `camera-controls` — главный кадр, режимы RAW/ПРАВИЛА и анализ кадра.
 - `process-line` — путь корпусов по фактической логике линии: восемь позиций ленты (`+0 · ВХОД`, `+4 · КОНТРОЛЬ`, `+7 · СОРТИРОВКА`) и зона сброса `+8 · СБРОС`, куда падает корпус между +7 и +8; маршрут корпуса на +7 и передача (`dropping`) приходят из `line_status.line_parts[]`. DIST1=0 означает GOOD, DIST1=340 — передачу на DIST2; DIST2=0/BAD, DIST2=340/CLEANUP.
 - `history-strip` — последние детали.
+- `process-phase` — панель состояния ленты.
 - `right-panel` — прокручиваемая правая колонка.
-- `cycle-stats`, `defects`, `service-stats`, `distributor`, `jog`, `frame-analysis` — независимые блоки правой колонки.
+- `cycle-stats`, `defects`, `service-stats`, `distributor`, `thresholds`, `frame-analysis`, `jog` — независимые блоки правой колонки.
 - `operator-footer` — кнопки ПУСК/СТОП/ВЫХОД и горячие клавиши.
 - `footer-archive` — сервисная группа футера: кнопка `АРХИВ` (настройки хранения партий) вынесена из ряда операторских кнопок в правый край, за вертикальный разделитель.
 - `gallery` — архивная галерея детали.
