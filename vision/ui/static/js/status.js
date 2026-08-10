@@ -481,6 +481,7 @@ function updateLineCells(lineParts, process = {}) {
             } else {
                 piece.style.left = targetLeft;
             }
+            piece.textContent = `#${token.id}`;
             piece.title = `Корпус #${token.id} · ${categoryLabel(token.category)}`;
             nextPieces.push(piece);
         }

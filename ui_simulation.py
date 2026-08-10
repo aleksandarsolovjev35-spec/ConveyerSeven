@@ -34,6 +34,9 @@ class LineSimulation:
 
     STEP_SECONDS = 0.72
     SETTLE_SECONDS = 0.28
+    # Time with a stopped belt: the vertical input/output animation must
+    # finish before another horizontal step starts.
+    POST_STOP_SECONDS = 0.62
     CATEGORIES = ("GOOD", "BAD", "CLEANUP", "GOOD", "GOOD", "BAD")
 
     def __init__(self, server: UIServer):
@@ -222,6 +225,10 @@ class LineSimulation:
                     if part.position >= 4 and not part.category:
                         part.category = self.CATEGORIES[(part.id - 1) % len(self.CATEGORIES)]
             self._publish("SETTLE")
+            # New body falls into +0 and the output body falls from +8 while
+            # the conveyor is stopped. Do not begin the next step yet.
+            if self._stop.wait(self.POST_STOP_SECONDS):
+                break
 
 
 def configure_simulated_thresholds(server: UIServer) -> None:
