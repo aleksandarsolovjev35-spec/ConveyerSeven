@@ -150,16 +150,36 @@ function markUiOffline() {
     updateStateOverlay({state: 'OFFLINE', in_line: 0});
 }
 
-function updateProcessPhaseLabel(lineState) {
+const PROCESS_PHASE_LABELS = {
+    READY: 'ЦИКЛ ЗАПУЩЕН',
+    ROUTE_PREPARE: 'ПОДГОТОВКА МАРШРУТА',
+    MOTION: 'ЛЕНТА ДВИЖЕТСЯ',
+    SETTLE: 'ЛЕНТА ОСТАНОВЛЕНА',
+    CAPTURE: 'СТОП-КАДР · ЗАХВАТ',
+    ANALYSIS: 'АНАЛИЗ КАДРА',
+    PUBLISH: 'ПУБЛИКАЦИЯ РЕЗУЛЬТАТА',
+    STOPPING: 'ЗАВЕРШЕНИЕ КОРПУСОВ',
+    STOPPED: 'ЛЕНТА ОСТАНОВЛЕНА',
+    JOG: 'РУЧНОЕ ПЕРЕМЕЩЕНИЕ',
+    SELECTED_ANALYSIS: 'АНАЛИЗ ВЫБРАННОГО КАДРА',
+};
+
+function updateProcessPhaseLabel(lineState, process = {}) {
     const phaseEl = els.processPhaseLabel || document.getElementById('process-phase-label');
     if (!phaseEl) return;
     const activeState = String(lineState || 'IDLE').toUpperCase();
-    setIfChanged(phaseEl, lineStateLabel(activeState));
+    const phase = String(process.phase || '').toUpperCase();
+    const useProcessPhase = activeState === 'RUNNING' && !!PROCESS_PHASE_LABELS[phase];
+    const label = useProcessPhase ? PROCESS_PHASE_LABELS[phase] : lineStateLabel(activeState);
+    setIfChanged(phaseEl, label);
     phaseEl.dataset.lineState = activeState;
+    phaseEl.dataset.processPhase = phase;
     phaseEl.style.opacity = '1';
-    if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
+    if (activeState === 'FAULT' || activeState === 'OFFLINE') phaseEl.style.color = 'var(--bad)';
     else if (activeState === 'PAUSED' || activeState === 'STOPPING') phaseEl.style.color = 'var(--warn)';
-    else if (activeState === 'FAULT' || activeState === 'OFFLINE') phaseEl.style.color = 'var(--bad)';
+    else if (phase === 'CAPTURE' || phase === 'SETTLE') phaseEl.style.color = 'var(--warn)';
+    else if (phase === 'ANALYSIS' || phase === 'PUBLISH') phaseEl.style.color = 'var(--accent)';
+    else if (activeState === 'RUNNING') phaseEl.style.color = 'var(--ok)';
     else phaseEl.style.color = 'var(--text-dim)';
 }
 
@@ -175,7 +195,7 @@ function updateLineStatus(ls) {
     if (els.stateIndicator) els.stateIndicator.className = `state-dot state-${lineState.toLowerCase()}`;
     if (els.stateSection) els.stateSection.className = `state-section state-box-${lineState.toLowerCase()}`;
     setIfChanged(els.stateLabel, lineStateLabel(lineState));
-    updateProcessPhaseLabel(lineState);
+    updateProcessPhaseLabel(lineState, ls.process || {});
     setIfChanged(els.metricStep, ls.step || 0);
 
     state.backendControls = ls.controls || {};
