@@ -643,8 +643,6 @@ class UIServer:
             root_folder=config["root_path"],
             enabled=config["enabled"],
             jpeg_quality=config["jpeg_quality"],
-            zip_compression=config["zip_compression"],
-            zip_level=config["zip_level"],
             compress_on_shutdown=config["compress_on_shutdown"],
             delete_original_after_zip=config["delete_original_after_zip"],
         )

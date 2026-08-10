@@ -53,8 +53,6 @@ function renderArchiveSettings(data, preserveForm = false) {
     if (!preserveForm) {
         if (els.archiveRootPath) els.archiveRootPath.value = data.root_path || '';
         if (els.archiveJpegQuality) els.archiveJpegQuality.value = data.jpeg_quality ?? 92;
-        if (els.archiveZipCompression) els.archiveZipCompression.value = data.zip_compression || 'deflated';
-        if (els.archiveZipLevel) els.archiveZipLevel.value = data.zip_level ?? 6;
         if (els.archiveEnabled) els.archiveEnabled.checked = data.enabled !== false;
         if (els.archiveCompressOnShutdown) els.archiveCompressOnShutdown.checked = data.compress_on_shutdown !== false;
         if (els.archiveDeleteOriginal) els.archiveDeleteOriginal.checked = data.delete_original_after_zip !== false;
@@ -142,8 +140,6 @@ async function saveArchiveSettings() {
         root_path: String(els.archiveRootPath && els.archiveRootPath.value || '').trim(),
         enabled: !!(els.archiveEnabled && els.archiveEnabled.checked),
         jpeg_quality: quality,
-        zip_compression: String(els.archiveZipCompression && els.archiveZipCompression.value || 'deflated'),
-        zip_level: Math.max(0, Math.min(9, Number(els.archiveZipLevel && els.archiveZipLevel.value) || 6)),
         compress_on_shutdown: !!(els.archiveCompressOnShutdown && els.archiveCompressOnShutdown.checked),
         delete_original_after_zip: !!(els.archiveDeleteOriginal && els.archiveDeleteOriginal.checked),
     };
@@ -192,8 +188,6 @@ function setupArchiveSettings() {
     [
         els.archiveRootPath,
         els.archiveJpegQuality,
-        els.archiveZipCompression,
-        els.archiveZipLevel,
         els.archiveEnabled,
         els.archiveCompressOnShutdown,
         els.archiveDeleteOriginal,

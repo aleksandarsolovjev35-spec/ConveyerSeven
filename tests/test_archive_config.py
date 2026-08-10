@@ -1,4 +1,4 @@
-"""Проверки отдельной конфигурации архива партий."""
+"""Проверки упрощённой конфигурации архива партий."""
 
 import json
 import os
@@ -17,20 +17,18 @@ class ArchiveConfigTest(unittest.TestCase):
         config = normalise_archive_config({})
         self.assertTrue(config["enabled"])
         self.assertEqual(config["jpeg_quality"], 92)
-        self.assertEqual(config["zip_compression"], "deflated")
-        self.assertEqual(config["zip_level"], 6)
+        self.assertTrue(config["compress_on_shutdown"])
+        self.assertTrue(config["delete_original_after_zip"])
         self.assertEqual(config["root_path"], "archive")
 
     def test_values_are_clamped(self):
         config = normalise_archive_config({
             "root_path": "~/inspection",
             "jpeg_quality": 1,
-            "zip_compression": "unknown",
-            "zip_level": 99,
         })
         self.assertEqual(config["jpeg_quality"], 70)
-        self.assertEqual(config["zip_compression"], "deflated")
-        self.assertEqual(config["zip_level"], 9)
+        config = normalise_archive_config({"jpeg_quality": 999})
+        self.assertEqual(config["jpeg_quality"], 98)
 
     def test_save_and_load_is_atomic_json(self):
         with tempfile.TemporaryDirectory() as root:
@@ -38,8 +36,7 @@ class ArchiveConfigTest(unittest.TestCase):
             saved = save_archive_config(path, {
                 "root_path": os.path.join(root, "data"),
                 "jpeg_quality": 88,
-                "zip_compression": "stored",
-                "zip_level": 0,
+                "compress_on_shutdown": False,
             })
             loaded = load_archive_config(path)
             self.assertEqual(loaded, saved)

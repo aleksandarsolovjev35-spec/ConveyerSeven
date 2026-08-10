@@ -13,12 +13,9 @@ from core.step_stages import (
 )
 from domain.defect_rules import InputPartPresenceRule
 from inspection.consensus import (
-    CONSENSUS_MIN_VOTES,
-    INSPECTION_RUNS,
     combine_presence_results,
     combine_rule_results,
     describe_picture_run,
-    select_picture_run,
     summarize_model_health,
 )
 from inspection.result import InspectionResult
@@ -663,149 +660,88 @@ class ProductionCycle:
                     f"Для камеры {role} нет активных правил анализа"
                 )
 
-            frame_runs = []
-            vision_runs = []
-            presence_runs = []
-            rule_results_by_run = []
-            raw_model_health = []
-            detection_counts = []
-
             is_input = role in self.inspector.INPUT_ROLES
 
-            for run_number in range(1, INSPECTION_RUNS + 1):
-                self._set_process(
-                    "SELECTED_MODEL_ANALYSIS",
-                    f"{role}: свежий кадр",
+            self._set_process(
+                "SELECTED_MODEL_ANALYSIS", f"{role}: свежий кадр",
+            )
+            frame = self.cameras.capture_single(role)
+            stage_frames = {role: frame}
+            vision_results = self.inspector.vision.process_all(stage_frames)
+            if role not in vision_results:
+                raise RuntimeError(
+                    f"Модели не вернули результат камеры {role}"
                 )
-                frame = self.cameras.capture_single(role)
-                stage_frames = {role: frame}
-                vision_results = self.inspector.vision.process_all(stage_frames)
-                if role not in vision_results:
-                    raise RuntimeError(
-                        f"Модели не вернули результат камеры {role}"
-                    )
+            detection_count = len(vision_results.get(role, []))
 
-                frame_runs.append(frame)
-                vision_runs.append(vision_results)
-                detection_counts.append(len(vision_results.get(role, [])))
+            raw_model_health = [
+                {**item, "run": 1}
+                for item in (getattr(self.inspector.vision, "last_health", None) or [])
+                if isinstance(item, dict)
+            ]
 
-                if is_input:
-                    presence_runs.append(
-                        self.inspector._evaluate_part_presence(vision_results)
-                    )
-
-                health_rows = getattr(
-                    self.inspector.vision,
-                    "last_health",
-                    None,
-                )
-                if isinstance(health_rows, list):
-                    raw_model_health.extend(
-                        {**item, "run": run_number}
-                        for item in health_rows
-                        if isinstance(item, dict)
-                    )
-
+            presence_result = None
+            rule_results = []
             if is_input:
-                presence_result, presence_vote, presence_evidence = (
-                    combine_presence_results(presence_runs)
+                presence_result, presence_vote, _ = combine_presence_results(
+                    [self.inspector._evaluate_part_presence(vision_results)]
                 )
-
-                if presence_result.details.get("empty_tray"):
-                    # Пустой лоток: defect-правила не выполняются (проверять
-                    # нечего), итог — только по part_presence. Важно:
-                    # combine_rule_results здесь вызывать нельзя — прогонов
-                    # defect-правил нет (0).
-                    rule_results = []
-                    evidence_index = presence_evidence
+                if not presence_result.details.get("empty_tray"):
+                    rule_results, consensus, _ = combine_rule_results([
+                        decision.evaluate_rules_detailed(
+                            decision_rules, vision_results, frames=stage_frames,
+                        )
+                    ])
+                    consensus["part_presence"] = presence_vote
+                else:
+                    # Пустой лоток: defect-правила не выполняются.
                     consensus = {
-                        "runs": INSPECTION_RUNS,
-                        "required_votes": CONSENSUS_MIN_VOTES,
-                        "evidence_run": presence_evidence + 1,
+                        "runs": 1,
+                        "required_votes": 1,
+                        "evidence_run": 1,
                         "part_presence": presence_vote,
                         "rules": {},
                     }
-                    # Пустой лоток: картинка по самому пограничному flatness
-                    # (ближайший к порогу ложных срабатываний замер).
-                    picture_index = select_picture_run([presence_result])
-                    if picture_index is None:
-                        picture_index = evidence_index
-                    consensus["picture_run"] = picture_index + 1
-                    consensus["picture_reason"] = describe_picture_run(
-                        [presence_result], picture_index,
-                    )
-                    evidence_index = picture_index
-                else:
-                    for v_res, frame in zip(vision_runs, frame_runs):
-                        rule_results_by_run.append(
-                            decision.evaluate_rules_detailed(
-                                decision_rules,
-                                v_res,
-                                frames={role: frame},
-                            )
-                        )
-                    rule_results, consensus, evidence_index = (
-                        combine_rule_results(rule_results_by_run)
-                    )
-                    consensus["part_presence"] = presence_vote
             else:
-                presence_result = None
-                for v_res, frame in zip(vision_runs, frame_runs):
-                    rule_results_by_run.append(
-                        decision.evaluate_rules_detailed(
-                            decision_rules,
-                            v_res,
-                            frames={role: frame},
-                        )
+                rule_results, consensus, _ = combine_rule_results([
+                    decision.evaluate_rules_detailed(
+                        decision_rules, vision_results, frames=stage_frames,
                     )
-                rule_results, consensus, evidence_index = (
-                    combine_rule_results(rule_results_by_run)
-                )
+                ])
 
-            # Картинка — по замеру, ближе всего к порогу (в норме), либо
-            # ближайшему к порогу браку.
-            if is_input:
-                picture_candidates = [presence_result] + list(rule_results)
-            else:
-                picture_candidates = rule_results
-            picture_index = select_picture_run(picture_candidates)
-            if picture_index is None:
-                picture_index = evidence_index
-            consensus["picture_run"] = picture_index + 1
-            consensus["picture_reason"] = describe_picture_run(
-                picture_candidates, picture_index,
+            picture_candidates = (
+                [presence_result] + list(rule_results)
+                if is_input and presence_result is not None
+                else rule_results
             )
-            evidence_index = picture_index
+            consensus["picture_run"] = 1
+            consensus["picture_reason"] = describe_picture_run(
+                picture_candidates, 0,
+            )
 
-            evidence_frame = frame_runs[evidence_index]
-            vision_results = vision_runs[evidence_index]
-            stage_frames = {role: evidence_frame}
             model_rows = summarize_model_health(raw_model_health)
             if not model_rows or any(not row.get("ok") for row in model_rows):
                 raise RuntimeError(
-                    f"Нет полного комплекта model health "
-                    f"{INSPECTION_RUNS}/{INSPECTION_RUNS} для камеры {role}"
+                    f"Нет полного комплекта model health для камеры {role}"
                 )
 
             rule_rows = []
-            if is_input:
+            if is_input and presence_result is not None:
                 rule_rows.append(self._rule_report_row(presence_result))
-
             rule_rows.extend(
-                self._rule_report_row(result)
-                for result in rule_results
+                self._rule_report_row(result) for result in rule_results
             )
 
-            height, width = evidence_frame.shape[:2]
+            height, width = frame.shape[:2]
             camera_rows = [{
                 "role": role,
                 "selected": True,
                 "ok": True,
                 "width": int(width),
                 "height": int(height),
-                "runs": INSPECTION_RUNS,
-                "detections": int(detection_counts[evidence_index]),
-                "detections_by_run": list(detection_counts),
+                "runs": 1,
+                "detections": int(detection_count),
+                "detections_by_run": [int(detection_count)],
             }]
 
             self._last_vision_results = vision_results
@@ -815,39 +751,25 @@ class ProductionCycle:
                 "kind": "SELECTED_MODEL",
                 "message": (
                     f"{role}: свежий кадр; моделей {len(model_rows)}; "
-                    f"правил {len(rule_rows)}; объекты "
-                    + "/".join(str(value) for value in detection_counts)
+                    f"правил {len(rule_rows)}; объекты {detection_count}"
                 ),
                 "selected_role": role,
                 "cameras": camera_rows,
                 "models": model_rows,
                 "rules": rule_rows,
                 "consensus": consensus,
-                "picture_run": (
-                    int(consensus.get("picture_run"))
-                    if consensus and consensus.get("picture_run") else None
-                ),
-                "picture_reason": (
-                    str(consensus.get("picture_reason"))
-                    if consensus and consensus.get("picture_reason") else None
-                ),
+                "picture_run": 1,
+                "picture_reason": consensus.get("picture_reason"),
                 "updated_at": time.time(),
             }
             self._set_process(
                 "SELECTED_MODEL_READY",
                 f"Анализ кадра {role} завершён; поток приостановлен",
             )
-            # Разметка кадра — по правилам этого кадра. Публикуется тем же
-            # вызовом, что и кадры: единый снимок.
             self._refresh_monitor(
                 stage_frames,
-                run_frames=[{role: frame_runs[index]}
-                            for index in range(INSPECTION_RUNS)],
-                run_rule_results=(
-                    rule_results_by_run
-                    if rule_results_by_run
-                    else [[]]
-                ),
+                run_frames=[stage_frames],
+                run_rule_results=[rule_results],
             )
             return True
         except Exception as exc:
@@ -1315,8 +1237,9 @@ class ProductionCycle:
 
         # Единственный набор кадров стадии: он же уходит в UI и архив.
         display_frames = dict(frame_runs[-1])
-        run_frames = []
-        run_rule_results = []
+        # Один прогон: общие кадры и общие правила для разметки стадии.
+        markup_frames = {}
+        markup_rules = []
 
         # Определяем активные позиции для подсветки в UI
         active_positions = []
@@ -1334,13 +1257,11 @@ class ProductionCycle:
             input_result = self._process_input_stage(frame_runs)
             if input_result is not None:
                 display_frames.update(input_result.raw_frames)
-                run_frames = self._merge_run_frames(
-                    run_frames,
-                    getattr(input_result, "run_frames", None) or [],
-                )
-                run_rules = getattr(input_result, "run_rule_results", None) or []
-                if run_rules:
-                    run_rule_results.extend(run_rules)
+                markup_frames.update(input_result.raw_frames)
+                # Для разметки INPUT используются только defect-правила
+                # (run_rule_results), служебный part_presence не рисует.
+                if input_result.run_rule_results:
+                    markup_rules.extend(input_result.run_rule_results[0])
                 # Если деталь на входе не обнаружена, убираем подсветку
                 if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
                     active_positions.remove(self.OFFSET_INPUT)
@@ -1359,54 +1280,19 @@ class ProductionCycle:
             spider_result = self._run_spider_inspection(frame_runs)
             if spider_result is not None:
                 display_frames.update(spider_result.raw_frames)
-                run_frames = self._merge_run_frames(
-                    run_frames,
-                    getattr(spider_result, "run_frames", None) or [],
-                )
-                run_rules = getattr(spider_result, "run_rule_results", None) or []
-                if run_rules:
-                    run_rule_results = self._merge_run_rule_rows(
-                        run_rule_results, run_rules,
-                    )
+                markup_frames.update(spider_result.raw_frames)
+                if spider_result.run_rule_results:
+                    markup_rules.extend(spider_result.run_rule_results[0])
             self._check_motion_cancelled()
 
-        # Набор кадров стадии уходит в UI. Кадры, разметка, правила,
-        # статус линии и цвет корпусов публикуются ОДНИМ вызовом: фронтенд
-        # видит единый снимок и может показать обрисовку правил и цвет
-        # корпуса на линии синхронно.
-        if run_frames:
+        # Набор кадров стадии уходит в UI одним снимком.
+        if markup_frames:
             self._refresh_monitor(
                 display_frames,
-                run_frames=run_frames,
-                run_rule_results=run_rule_results,
+                run_frames=[markup_frames],
+                run_rule_results=[markup_rules],
             )
         return display_frames
-
-    @staticmethod
-    def _merge_run_frames(acc: list, incoming: list) -> list:
-        """Слить наборы кадров по номерам прогонов (INPUT + SPIDER)."""
-        if not incoming:
-            return acc
-        merged = []
-        for index in range(INSPECTION_RUNS):
-            base = dict(acc[index]) if index < len(acc) else {}
-            if index < len(incoming) and isinstance(incoming[index], dict):
-                base.update(incoming[index])
-            merged.append(base)
-        return merged
-
-    @staticmethod
-    def _merge_run_rule_rows(acc: list, incoming: list) -> list:
-        """Слить правила по прогонам (INPUT + SPIDER) для разметки кадров."""
-        if not incoming:
-            return acc
-        merged = []
-        for index in range(INSPECTION_RUNS):
-            base = list(acc[index]) if index < len(acc) else []
-            if index < len(incoming) and isinstance(incoming[index], list):
-                base.extend(incoming[index])
-            merged.append(base)
-        return merged
 
     def _stage_review(self, display_frames):
         """REVIEW: пауза на просмотр работы нейросетей после анализа.
@@ -1796,12 +1682,6 @@ class ProductionCycle:
             if archive_info:
                 record["batch_id"] = self.archive.batch_id
                 record["archive_folder"] = archive_info.get("relative_folder")
-                record["annotation_files"] = list(
-                    archive_info.get("annotation_files") or []
-                )
-                record["sample_count"] = int(
-                    archive_info.get("sample_count") or 0
-                )
         self.recent_parts.append(record)
 
     # Анализ кадра по группам камер (ВХОД / КОНТРОЛЬ +4)

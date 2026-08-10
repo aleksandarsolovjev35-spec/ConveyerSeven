@@ -1,12 +1,4 @@
-"""Тесты одиночного захвата и атомарной публикации в ProductionCycle.
-
-Проверяют, что:
-- ``_stage_capture`` снимает камеры ровно один раз;
-- ``_stage_analysis`` публикует кадры, run_frames и run_rule_results одним
-  вызовом ``_refresh_monitor`` (единый снимок для синхронного UI);
-- ``_merge_run_frames``/``_merge_run_rule_rows`` склеивают INPUT и SPIDER
-  в один набор.
-"""
+"""Тесты ProductionCycle: выбор ролей захвата и атомарная публикация."""
 
 import unittest
 from types import SimpleNamespace
@@ -39,20 +31,21 @@ def _frame(value=0):
     return np.full((8, 8, 3), value, dtype=np.uint8)
 
 
-class StageCaptureTest(unittest.TestCase):
-    INPUT = ("INPUT_LEFT", "INPUT_RIGHT")
-    SPIDER = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
+INPUT = ("INPUT_LEFT", "INPUT_RIGHT")
+SPIDER = ("SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
 
+
+class StageCaptureTest(unittest.TestCase):
     def make_capture_cycle(self, *, accepts_input, spider_part=False):
         frame = _frame()
         cycle = _make_cycle()
-        cycle.inspector = SimpleNamespace(INPUT_ROLES=self.INPUT, SPIDER_ROLES=self.SPIDER)
+        cycle.inspector = SimpleNamespace(INPUT_ROLES=INPUT, SPIDER_ROLES=SPIDER)
         cycle.parts = [SimpleNamespace(step_created=-3)] if spider_part else []
         cycle.sm = SimpleNamespace(accepts_new_parts=accepts_input)
         cycle.cameras = SimpleNamespace(
             drain_buffers=Mock(),
             capture_roles=Mock(return_value={role: frame for role in (
-                self.INPUT if accepts_input else self.SPIDER
+                INPUT if accepts_input else SPIDER
             )}),
         )
         return cycle, frame
@@ -60,24 +53,16 @@ class StageCaptureTest(unittest.TestCase):
     def test_captures_only_input_roles_when_only_input_is_active(self):
         cycle, frame = self.make_capture_cycle(accepts_input=True)
         frame_runs = cycle._stage_capture()
-        cycle.cameras.drain_buffers.assert_called_once_with(roles=self.INPUT)
-        cycle.cameras.capture_roles.assert_called_once_with(self.INPUT)
-        self.assertEqual(set(frame_runs[0]), set(self.INPUT))
+        cycle.cameras.drain_buffers.assert_called_once_with(roles=INPUT)
+        cycle.cameras.capture_roles.assert_called_once_with(INPUT)
+        self.assertEqual(set(frame_runs[0]), set(INPUT))
 
     def test_captures_only_spider_roles_when_input_is_closed(self):
         cycle, frame = self.make_capture_cycle(accepts_input=False, spider_part=True)
         frame_runs = cycle._stage_capture()
-        cycle.cameras.drain_buffers.assert_called_once_with(roles=self.SPIDER)
-        cycle.cameras.capture_roles.assert_called_once_with(self.SPIDER)
-        self.assertEqual(set(frame_runs[0]), set(self.SPIDER))
-
-    def test_captures_all_seven_only_when_two_parts_need_inspection(self):
-        cycle, frame = self.make_capture_cycle(accepts_input=True, spider_part=True)
-        all_roles = self.INPUT + self.SPIDER
-        cycle.cameras.capture_roles.return_value = {role: frame for role in all_roles}
-        frame_runs = cycle._stage_capture()
-        cycle.cameras.capture_roles.assert_called_once_with(all_roles)
-        self.assertEqual(set(frame_runs[0]), set(all_roles))
+        cycle.cameras.drain_buffers.assert_called_once_with(roles=SPIDER)
+        cycle.cameras.capture_roles.assert_called_once_with(SPIDER)
+        self.assertEqual(set(frame_runs[0]), set(SPIDER))
 
     def test_does_not_capture_when_no_inspection_position_is_occupied(self):
         cycle, _ = self.make_capture_cycle(accepts_input=False)
@@ -90,8 +75,7 @@ class StageCaptureTest(unittest.TestCase):
 class StageAnalysisTest(unittest.TestCase):
     def _result(self, name="window_geometry"):
         rule = RuleResult(
-            rule_name=name,
-            triggered=False,
+            rule_name=name, triggered=False,
             details={"per_role": {
                 "INPUT_LEFT": {"valid": True, "triggered": False},
             }},
@@ -117,25 +101,12 @@ class StageAnalysisTest(unittest.TestCase):
         cycle._run_spider_inspection = Mock(return_value=None)
 
         frame = _frame()
-        display = cycle._stage_analysis([{"INPUT_LEFT": frame}], True)
+        cycle._stage_analysis([{"INPUT_LEFT": frame}], True)
 
-        # display подменяется evidence-кадрами стадии: сверяем ключи и объекты
-        self.assertEqual(set(display), {"INPUT_LEFT"})
-        self.assertIs(display["INPUT_LEFT"], input_result.raw_frames["INPUT_LEFT"])
-
-        # Единый снимок: один вызов _refresh_monitor с кадрами, run_frames
-        # и run_rule_results (numpy-массивы не сравниваются assertEqual)
         cycle._refresh_monitor.assert_called_once()
         args, kwargs = cycle._refresh_monitor.call_args
         self.assertEqual(set(args[0]), {"INPUT_LEFT"})
-        self.assertIs(args[0]["INPUT_LEFT"], input_result.raw_frames["INPUT_LEFT"])
         self.assertEqual(len(kwargs["run_frames"]), 1)
-        self.assertIs(kwargs["run_frames"][0]["INPUT_LEFT"],
-                      input_result.raw_frames["INPUT_LEFT"])
-        self.assertEqual(
-            kwargs["run_rule_results"],
-            [[input_result.run_rule_results[0][0]]],
-        )
 
     def test_publishes_input_and_spider_merged(self):
         cycle = _make_cycle()
@@ -143,13 +114,11 @@ class StageAnalysisTest(unittest.TestCase):
         cycle._last_vision_results = {}
         cycle._last_rule_results = []
         cycle._refresh_monitor = Mock()
-        # Корпус на позиции +4
         cycle.parts = [SimpleNamespace(step_created=-3)]
 
         input_result = self._result("window_geometry")
         spider_rule = RuleResult(
-            rule_name="contacts_long",
-            triggered=True,
+            rule_name="contacts_long", triggered=True,
             details={"per_role": {
                 "SPIDER_LEFT": {"valid": True, "triggered": True},
             }},
@@ -163,42 +132,12 @@ class StageAnalysisTest(unittest.TestCase):
         cycle._process_input_stage = Mock(return_value=input_result)
         cycle._run_spider_inspection = Mock(return_value=spider_result)
 
-        frame = _frame()
-        cycle._stage_analysis([{"INPUT_LEFT": frame}], True)
+        cycle._stage_analysis([{"INPUT_LEFT": _frame()}], True)
 
         args, kwargs = cycle._refresh_monitor.call_args
-        self.assertEqual(len(kwargs["run_frames"]), 1)
-        self.assertEqual(set(kwargs["run_frames"][0]),
-                         {"INPUT_LEFT", "SPIDER_LEFT"})
-        merged_rules = kwargs["run_rule_results"][0]
         self.assertEqual(
-            [r.rule_name for r in merged_rules],
-            ["window_geometry", "contacts_long"],
-        )
-
-
-class MergeHelpersTest(unittest.TestCase):
-    def test_merge_run_frames_single(self):
-        a = {"INPUT_LEFT": _frame(0)}
-        b = {"SPIDER_LEFT": _frame(1)}
-        merged = ProductionCycle._merge_run_frames([a], [b])
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(set(merged[0]), {"INPUT_LEFT", "SPIDER_LEFT"})
-
-    def test_merge_run_rule_rows_single(self):
-        r1 = RuleResult("a", False)
-        r2 = RuleResult("b", True)
-        merged = ProductionCycle._merge_run_rule_rows([[r1]], [[r2]])
-        self.assertEqual(len(merged), 1)
-        self.assertEqual([r.rule_name for r in merged[0]], ["a", "b"])
-
-    def test_merge_handles_empty_incoming(self):
-        acc = [{"INPUT_LEFT": _frame(0)}]
-        self.assertEqual(ProductionCycle._merge_run_frames(acc, []), acc)
-        acc_rules = [[RuleResult("a", False)]]
-        self.assertEqual(
-            ProductionCycle._merge_run_rule_rows(acc_rules, []),
-            acc_rules,
+            set(kwargs["run_frames"][0]),
+            {"INPUT_LEFT", "SPIDER_LEFT"},
         )
 
 

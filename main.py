@@ -250,8 +250,6 @@ def main():
                     root_folder=archive_config["root_path"],
                     enabled=archive_config["enabled"],
                     jpeg_quality=archive_config["jpeg_quality"],
-                    zip_compression=archive_config["zip_compression"],
-                    zip_level=archive_config["zip_level"],
                     compress_on_shutdown=archive_config["compress_on_shutdown"],
                     delete_original_after_zip=archive_config[
                         "delete_original_after_zip"

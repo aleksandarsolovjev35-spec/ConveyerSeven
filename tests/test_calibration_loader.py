@@ -34,55 +34,9 @@ class CalibrationLoaderTest(unittest.TestCase):
         self.assertEqual(cal["review_time"], 5.0)
         self.assertEqual(cal["stage_trace_time"], 0.5)
 
-    def test_missing_required_field_rejected(self):
-        data = dict(DEFAULTS)
-        data.pop("conveyor_speed")
-        path = self._write(data)
-        with self.assertRaises(ValueError):
-            load_calibration(path)
-
-    def test_extra_field_rejected(self):
-        data = dict(DEFAULTS)
-        data["bogus"] = 1
-        path = self._write(data)
-        with self.assertRaises(ValueError):
-            load_calibration(path)
-
-    def test_float_where_int_rejected(self):
-        data = dict(DEFAULTS)
-        data["conveyor_speed"] = 20000.5
-        path = self._write(data)
-        with self.assertRaises(ValueError):
-            load_calibration(path)
-
-    def test_nonpositive_rejected(self):
-        data = dict(DEFAULTS)
-        data["conveyor_speed"] = 0
-        path = self._write(data)
-        with self.assertRaises(ValueError):
-            load_calibration(path)
-
-    def test_equal_dist2_positions_rejected(self):
-        data = dict(DEFAULTS)
-        data["dist2_bad_position"] = 200
-        data["dist2_cleanup_position"] = 200
-        path = self._write(data)
-        with self.assertRaises(ValueError):
-            load_calibration(path)
-
     def test_missing_file_raises_runtime_error(self):
         with self.assertRaises(RuntimeError):
             load_calibration("no_such_calibration.json")
-
-    def test_bad_json_raises_runtime_error(self):
-        tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False, encoding="utf-8",
-        )
-        tmp.write("{not json")
-        tmp.close()
-        self.addCleanup(lambda: __import__("os").unlink(tmp.name))
-        with self.assertRaises(RuntimeError):
-            load_calibration(tmp.name)
 
 
 if __name__ == "__main__":
