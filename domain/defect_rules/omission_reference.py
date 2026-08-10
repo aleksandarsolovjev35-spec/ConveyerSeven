@@ -20,7 +20,7 @@ def fit_omission_top_line(
     polygons = []
     for detection in omissions:
         mask = detection.get("mask")
-        if not mask or len(mask) < 3:
+        if mask is None or len(mask) < 3:
             continue
         points = np.asarray(mask, dtype=np.float32)
         if (

@@ -506,7 +506,7 @@ class SpiderContactsShortRule(BaseRule):
     @staticmethod
     def _try_inscribe_in_contact(det, expected_short_px, expected_long_px, common_angle):
         mask = det.get("mask")
-        if not mask or len(mask) < 3: return {"fits": False}
+        if mask is None or len(mask) < 3: return {"fits": False}
 
         pts = np.array(mask, dtype=np.float32)
         x_min, x_max = float(pts[:,0].min()), float(pts[:,0].max())
@@ -641,7 +641,7 @@ class SpiderContactsShortRule(BaseRule):
     @staticmethod
     def _mask_points(det):
         mask = det.get("mask")
-        if not mask or len(mask) < 3:
+        if mask is None or len(mask) < 3:
             return None
         points = np.asarray(mask, dtype=np.float32)
         if (
