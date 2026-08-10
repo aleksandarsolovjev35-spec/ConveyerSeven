@@ -190,13 +190,13 @@ def main():
         rp = st3.get("recent_parts", [])
         check("recent parts present", len(rp) > 0, f"recent={len(rp)}")
 
-        # Archive gallery: each part stores all seven camera roles, so the
-        # "Последние корпуса" block shows a full set of images for every part.
+        # Full archive viewer is deliberately blocked while RUNNING; recent
+        # lightweight references remain available.
         if rp:
             part_id = rp[-1]["id"]
-            ap = httpx.get(base + f"/api/archive/part/{part_id}").json()
-            roles = ap.get("roles", [])
-            check("archive part has 7 roles", len(roles) == 7, f"roles={len(roles)}")
+            response = httpx.get(base + f"/api/archive/part/{part_id}")
+            check("archive viewer blocked while running", response.status_code == 409,
+                  f"status={response.status_code}")
 
         print("\n=== SUMMARY ===")
         if FAILURES:

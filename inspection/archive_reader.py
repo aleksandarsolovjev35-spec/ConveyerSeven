@@ -26,7 +26,10 @@ class ReadOnlyArchiveReader:
         if not path.is_dir() or not PartArchive._verify_committed_part(str(path)):
             raise ArchiveReadError("part is not a verified committed catalog")
         try:
-            with (path / "meta.json").open(encoding="utf-8") as stream:
+            metadata_path = path / "part.json"
+            if not metadata_path.is_file():
+                metadata_path = path / "meta.json"
+            with metadata_path.open(encoding="utf-8") as stream:
                 return json.load(stream)
         except (OSError, ValueError) as exc:
             raise ArchiveReadError(f"invalid part metadata: {exc}") from exc

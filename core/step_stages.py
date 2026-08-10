@@ -33,6 +33,8 @@ import threading
 import time
 from enum import Enum
 
+from core.control_model import StepPhase
+
 # Пауза между подтверждённой остановкой ленты и первым кадром инспекции.
 STAGE_SETTLE_SECONDS = 0.3
 

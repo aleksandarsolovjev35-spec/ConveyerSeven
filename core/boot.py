@@ -76,9 +76,15 @@ class BootCoordinator:
             self.close_process(batch_id=previous_batch, status="cleanup_acknowledged")
         self.abandoned_process = None
 
-    def mark_process_open(self, batch_id: str):
+    def mark_process_open(self, batch_id: str, **metadata):
         self.marker_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"status": "open", "batch_id": batch_id, "pid": os.getpid(), "started_at": time.time()}
+        payload = {
+            "status": "open",
+            "batch_id": batch_id,
+            "pid": os.getpid(),
+            "started_at": time.time(),
+            **metadata,
+        }
         temp = self.marker_path.with_name(self.marker_path.name + ".tmp")
         with temp.open("w", encoding="utf-8") as stream:
             json.dump(payload, stream, sort_keys=True)

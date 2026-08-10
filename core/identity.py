@@ -28,14 +28,16 @@ class ProcessIdentity:
 @dataclass(frozen=True)
 class RunIdentity:
     batch_id: str
-    run_id: str
+    run_id: int
     started_at: float
 
     @classmethod
-    def create(cls, batch_id: str) -> "RunIdentity":
+    def create(cls, batch_id: str, run_id: int) -> "RunIdentity":
+        if type(run_id) is not int or run_id < 1:
+            raise ValueError("run_id must be a positive integer")
         return cls(
             batch_id=batch_id,
-            run_id=f"run-{uuid.uuid4().hex}",
+            run_id=run_id,
             started_at=time.time(),
         )
 
@@ -48,6 +50,7 @@ class IdentityCounters:
             str(batch_id), time.time()
         )
         self._next_part_id = 1
+        self._next_run_id = 1
 
     @property
     def batch_id(self) -> str:
@@ -63,4 +66,6 @@ class IdentityCounters:
         return self._next_part_id
 
     def new_run(self) -> RunIdentity:
-        return RunIdentity.create(self.batch_id)
+        identity = RunIdentity.create(self.batch_id, self._next_run_id)
+        self._next_run_id += 1
+        return identity

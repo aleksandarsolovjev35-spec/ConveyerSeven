@@ -1,1674 +1,488 @@
 #!/usr/bin/env python3
-"""Полноценный эмулятор HMI-интерфейса конвейерного комплекса без железа.
+"""Formal production lifecycle running on deterministic simulated adapters.
 
-Поднимает настоящий UIServer (весь фронтенд из ``vision/ui``) и имитирует
-буквально всю производственную линию без камер, моделей, контроллера и
-распределителя:
-
-- появление корпуса решают две первые камеры (INPUT_LEFT / INPUT_RIGHT):
-  обе отрицательные дают пустую ячейку, одиночное положительное создаёт Part
-  с input_presence_mismatch, как в production;
-- при наличии корпуса входные defect-правила (window_geometry, window_sinks)
-  дают дефекты входа, на +4 spider-правила — дефекты контроля, а маршрут
-  GOOD / BAD / CLEANUP вычисляется строго как в Part._recompute() (нет
-  дефектов → GOOD; только glass/glass → CLEANUP; иначе BAD);
-- лента движется по шагам, позиции корпусов анимируются в «Пути корпусов»;
-- распределитель DIST1/DIST2 выставляет маршрут строго по
-  ``DISTRIBUTOR_LOGIC.md`` до каждого шага ленты;
-- работают ВСЕ кнопки: ПУСК / СТОП / ПАУЗА / ПРОДОЛЖИТЬ / ВЫХОД,
-  ручное управление лентой (JOG), диагностика камер / моделей / распределителя,
-  анализ выбранного кадра, редактирование порогов правил и архив партий;
-- панель «Анализ кадра» наполняется реалистичными замерами и правилами;
-- главная камера показывает синтетическое изображение линии с деталью.
-
-Использование:
-
-    python ui_emulator.py                  # http://localhost:8000
-    python ui_emulator.py --host 0.0.0.0 --port 8000 --seed 42
-    python ui_emulator.py --review 2 --auto-start --no-archive
-
-Горячие клавиши недоступны (это браузерный режим); все команды — через
-кнопки интерфейса.
+The simulator replaces only camera/hardware/model ports.  Commands, reducer,
+StepPhase sequence, pending intents, inspection aggregate, publication, drain,
+fault handling and archive boundaries are the same ProductionCycle used by the
+real executable.  The HMI is permanently marked ``SIMULATION``.
 """
+
+from __future__ import annotations
 
 import argparse
 import random
 import threading
 import time
-from collections import deque
+import uuid
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 
-from vision.ui.live_monitor import LiveMonitor
-from vision.ui.server.server import CAMERA_ORDER
-from core.state_machine import StateMachine, State
-from core.rule_report import HUMAN_CAUSE_MAP
+from config import load_archive_config
+from core.control_runtime import ControlRuntime
+from core.production_cycle import ProductionCycle
+from core.recovery_journal import RecoveryJournal
+from domain.defect_rules.base import RuleResult
+from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
 from domain.threshold_loader import ThresholdLoader
-from config import load_archive_config, load_calibration
+from inspection.part_archive import PartArchive
+from inspection.result import InspectionResult
+from vision.ui.live_monitor import LiveMonitor
 
-from domain.part import (
-    CATEGORY_GOOD,
-    CATEGORY_BAD,
-    CATEGORY_CLEANUP,
-    CATEGORY_IN_PROGRESS,
+ROLES = (
+    "INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT",
+    "SPIDER_IN", "SPIDER_OUT", "TOP",
 )
-
-# ─────────────────────────────────────────────────────────────────────
-# Конфигурация имитации
-# ─────────────────────────────────────────────────────────────────────
-
-# Позиция сортировки (совпадает с ProductionCycle.OFFSET_REJECT).
-OFFSET_REJECT = 7
-# Позиция входа.
-OFFSET_INPUT = 0
-# Позиция контроля (SPIDER/TOP).
-OFFSET_SPIDER = 4
-
-# Распределитель: положения, как в calibration.json.
-DIST1_OPEN = 340
-DIST2_BAD = 0
-DIST2_CLEANUP = 340
-
-# Какие правила показывать для каждой роли камеры в «Анализе кадра».
-ROLE_RULES = {
-    "INPUT_LEFT": ["window_geometry", "window_sinks"],
-    "INPUT_RIGHT": ["window_geometry", "window_sinks"],
-    "SPIDER_LEFT": ["contacts_long", "long_omission"],
-    "SPIDER_RIGHT": ["contacts_long", "long_omission"],
-    "SPIDER_IN": ["contacts_short", "short_omission"],
-    "SPIDER_OUT": ["contacts_short", "short_omission"],
-    "TOP": [
-        "top_contacts",
-        "top_platform",
-        "platform_contacts_overlap",
-        "sinks",
-        "glass",
-        "glass_on_contacts",
-    ],
-}
-
-# Набор метрик для каждого правила (label, limit, key). Значение генерируется
-# случайно около порога; при срабатывании правила — за порогом.
-RULE_METRICS = {
-    "window_geometry": [
-        ("Найдено окон, шт", "7", "found"),
-        ("T до перекладины: мин., px", "20", "top_px_min"),
-        ("T до перекладины: макс., px", "40", "top_px_max"),
-        ("B после перекладины: мин., px", "20", "bottom_px_min"),
-        ("B после перекладины: макс., px", "40", "bottom_px_max"),
-        ("Окон вне допуска, шт", "0", "windows_out_of_tolerance"),
-    ],
-    "window_sinks": [
-        ("Найдено раковин, шт", "2", "sinks_found"),
-        ("Пересечений с окнами, шт", "0", "sinks_hits"),
-    ],
-    "contacts_long": [
-        ("Найдено контактов, шт", "5", "found"),
-        ("Заслонка: перепад, px", "5.0", "damper_open_max_px"),
-        ("Стены: разброс, px", "4.0", "gap_dev_max_px"),
-    ],
-    "long_omission": [
-        ("Толщина полосы, px", "12.0", "allowed_thickness_px"),
-        ("Избыток: крупнейший фрагмент, px", "400", "largest_component_px"),
-    ],
-    "contacts_short": [
-        ("Найдено контактов, шт", "2", "found"),
-        ("Заслонка: открытие, px", "4.0", "damper_open_max_px"),
-    ],
-    "short_omission": [
-        ("Толщина полосы, px", "10.0", "allowed_thickness_px"),
-        ("Избыток: крупнейший фрагмент, px", "300", "largest_component_px"),
-    ],
-    "top_contacts": [
-        ("Найдено контактов, шт", "14", "found"),
-        ("Допуск до края, доля", "0.5", "edge_distance_deviation_ratio"),
-    ],
-    "top_platform": [
-        ("Ширина платформы, px", "420", "rect_width_px"),
-        ("Смещение центра, px", "12.0", "shift_distance_px"),
-    ],
-    "platform_contacts_overlap": [
-        ("Заплыв: крупнейший фрагмент, px", "200", "largest_component_px"),
-        ("Контактов в области, шт", "14", "used_contacts"),
-    ],
-    "sinks": [
-        ("Раковин внутри корпуса, шт", "2", "sinks_hits"),
-        ("Пересечений с платформой, шт", "0", "forbidden_px"),
-    ],
-    "glass": [
-        ("Стекол, шт", "2", "glass_hits"),
-        ("Совпадений платформы, шт", "0", "platform_overlap_px"),
-    ],
-    "glass_on_contacts": [
-        ("Пар стекло/контакт, шт", "0", "glass_contact_pairs"),
-        ("Стекол на контактах, шт", "0", "overlap_pixels"),
-    ],
-}
-
-# ── Присутствие детали (как реальное правило part_presence) ─────
-# Деталь под входными камерами засчитывается, только если её видят ОБЕ
-# INPUT-камеры (flatness >= порога на каждой). Эмулятор моделирует это так:
-# каждая камера «видит» деталь с вероятностью INPUT_CAMERA_PRESENT_PROB,
-# а наличие корпуса = присутствие на обеих. Это и есть «случайное появление
-# ячеек под первыми двумя камерами».
-INPUT_CAMERA_PRESENT_PROB = 0.93
-# Порог присутствия детали на каждой камере (совпадает со смыслом
-# presence_min_count = 3).
-INPUT_PRESENCE_THRESHOLD = 3
-
-# Дефекты, которые приводят на CLEANUP (как в domain/part.py).
-CLEANUP_DEFECTS = {"glass"}
-
-# INPUT defect-правила (вход +0): их срабатывание даёт дефекты входа.
-INPUT_RULES = ("window_geometry", "window_sinks")
-
-# SPIDER/TOP defect-правила (контроль +4): дефекты контроля.
-SPIDER_RULES = (
-    "contacts_long",
-    "long_omission",
-    "contacts_short",
-    "short_omission",
-    "top_contacts",
-    "top_platform",
-    "platform_contacts_overlap",
-    "sinks",
-    "glass",
-    "glass_on_contacts",
-)
-
-# Вероятность срабатывания каждого defect-правила (эмуляция «по алгоритму»:
-# правило сработало -> дефект в список, как в инспекции).
-RULE_TRIGGER_PROB = {
-    "window_geometry": 0.10,
-    "window_sinks": 0.05,
-    "contacts_long": 0.08,
-    "long_omission": 0.05,
-    "contacts_short": 0.06,
-    "short_omission": 0.04,
-    "top_contacts": 0.07,
-    "top_platform": 0.05,
-    "platform_contacts_overlap": 0.05,
-    "sinks": 0.05,
-    "glass": 0.05,
-    "glass_on_contacts": 0.05,
-}
-
-# ── Реалистичные тайминги фаз шага (сек) ────────────────────────
-# Согласованы с calibration.json (см. conveyor_speed, settle_time, drop_time,
-# axis_speed) и с реальной физикой железа. Фронтенд анимирует ленту в течение
-# `8400000 / conveyor_speed` мс (при 20000 — 420 мс), поэтому фаза движения
-# ленты должна длиться не меньше этой анимации.
-DEFAULT_CONVEYOR_SPEED = 20000
-DEFAULT_SETTLE_TIME = 0.5
-DEFAULT_DROP_TIME = 0.8
-DEFAULT_AXIS_SPEED = 300
-DEFAULT_REVIEW_SECONDS = 4.0
-
-# Базовые тайминги (сек). Могут быть переопределены значениями из
-# calibration.json, если он существует.
-TIME_ROUTE_PREPARE = 1.2     # перемещение DIST1/DIST2 на маршрут (ось ~300 шаг/с)
-TIME_BELT_MOVE = 1.4         # лента на 2 деления (движение + разгон/торможение)
-TIME_CONVEYOR_CONFIRM = 0.3  # подтверждение позиций контроллером
-TIME_PART_TRANSFER = 0.6     # корпус прошёл распределитель
-TIME_SETTLE = 0.5            # затухание вибрации перед съёмкой
-TIME_CAPTURE = 0.35          # съёмка камер
-TIME_INPUT_ANALYSIS = 0.7    # модели + входные правила
-TIME_SPIDER_ANALYSIS = 0.7   # модели + правила контроля +4
+INPUT_ROLES = ROLES[:2]
+CONTROL_ROLES = ROLES[2:]
 
 
-def _metric(label, value, limit, ok, key):
-    """Метрика панели «Анализ кадра» (тот же формат, что у UIServer)."""
-    def _to_float(text):
-        try:
-            return float(text)
-        except (TypeError, ValueError):
-            return None
-    return {
-        "label": label,
-        "value": value,
-        "limit": limit,
-        "ok": ok,
-        "value_raw": _to_float(value),
-        "limit_raw": _to_float(limit),
-        "key": key,
-    }
+class SimulatedCameras:
+    def __init__(self, frame_source):
+        self.mapping = {role: {"serial": f"SIM-{index}"} for index, role in enumerate(ROLES)}
+        self.serials = {role: f"SIM-{index}" for index, role in enumerate(ROLES)}
+        self.cameras = dict(self.mapping)
+        self._frame_source = frame_source
+        self.live_running = True
+        self.live_error = None
+        self.live_generation = 1
+
+    def require_live_health(self):
+        if self.live_error:
+            raise RuntimeError(self.live_error)
+        return True
+
+    def freshness_boundary(self):
+        return time.monotonic()
+
+    def capture_roles(self, roles, after=None, max_age=None):
+        return {role: self._frame_source(role) for role in roles}
+
+    def capture_single(self, role):
+        return self._frame_source(role)
+
+    def capture_all(self):
+        return self.capture_roles(ROLES)
+
+    def get_live_snapshot(self, roles=None, **_kwargs):
+        return self.capture_roles(tuple(roles or ROLES))
+
+    def drain_buffers(self, roles=None):
+        return None
+
+    def release(self):
+        self.live_running = False
 
 
-def _generate_metrics(rule_name, triggered):
-    """Случайные замеры для правила; при срабатывании — вне допуска."""
-    pool = RULE_METRICS.get(rule_name)
-    if not pool:
-        return []
-    out = []
-    for idx, (label, limit, key) in enumerate(pool):
-        limit_f = float(limit) if limit not in ("", None) else 0.0
-        # При срабатывании первый и каждый третий замер за порогом.
-        bad = triggered and (idx == 0 or idx % 3 == 0)
-        if bad:
-            value = round(limit_f * random.uniform(1.15, 2.2), 1)
-            ok = False
-        else:
-            value = round(limit_f * random.uniform(0.25, 0.95), 1)
-            ok = True
-        text = str(int(value)) if isinstance(limit, str) and limit.isdigit() else f"{value:g}"
-        out.append(_metric(label, text, limit, ok, key))
-    return out
+class SimulatedConveyor:
+    speed = 20_000
+    steps_per_division = 19_048
+    production_target = 38_096
 
+    def __init__(self, delay=0.03):
+        self.delay = delay
+        self.moves = 0
+        self.cancel_check = None
 
-def _rule_row(rule_name, role, part_id, present=True, defects=None):
-    """Строка правила для панели «Анализ кадра».
-
-    ``present`` — подтверждено ли присутствие корпуса хотя бы одной входной камерой;
-    ``defects`` — сработавшие defect-правила этого корпуса (на текущей стадии).
-    ``triggered`` для правила берётся из ``defects``, как в реальной инспекции.
-    """
-    defects = defects or []
-    if rule_name == "part_presence":
-        if not present:
-            return {
-                "name": "part_presence",
-                "triggered": False,
-                "skipped": False,
-                "part_absent": True,
-                "status_label": "КОРПУС НЕ ОБНАРУЖЕН",
-                "human_cause": None,
-                "vote_details": {
-                    "decision": "empty", "empty_votes": 1,
-                    "present_votes": 0, "triggered_votes": 1,
-                    "total_runs": 1, "required_votes": 1,
-                },
-                "run_cards": [[{
-                    "role": role, "ok": None,
-                    "verdict": "лоток пуст", "metrics": [],
-                }]],
-            }
+    def verify_reset_state(self):
         return {
-            "name": "part_presence",
-            "triggered": False,
-            "skipped": False,
-            "part_absent": False,
-            "status_label": "КОРПУС ОБНАРУЖЕН",
-            "human_cause": None,
-            "vote_details": {
-                "decision": "present", "present_votes": 1,
-                "empty_votes": 0, "total_runs": 1, "required_votes": 1,
-            },
-            "run_cards": [[{
-                "role": role, "ok": True, "verdict": "корпус виден",
-                "metrics": [
-                    _metric("flatness", "12", "30", True, "presence_min_count"),
-                    _metric("Зачтено, шт", "12", None, None, "effective_flatness"),
-                ],
-            }]],
+            "pos": 0, "tgt": 0, "mov": 0, "wait": 0, "lasterr": 0,
+            "lastreadyms": self.moves,
         }
 
-    triggered = rule_name in defects
-    human = HUMAN_CAUSE_MAP.get((rule_name, True))
-    metrics = _generate_metrics(rule_name, triggered)
-    return {
-        "name": rule_name,
-        "triggered": triggered,
-        "skipped": False,
-        "part_absent": False,
-        "status_label": ("СРАБОТАЛО" if triggered else "НОРМА") + " · 1/1",
-        "human_cause": human,
-        "vote_details": {
-            "decision": ("triggered" if triggered else "normal"),
-            "triggered_votes": (1 if triggered else 0),
-            "normal_votes": (0 if triggered else 1),
-            "total_runs": 1, "required_votes": 1,
-        },
-        "run_cards": [[{
-            "role": role, "ok": (not triggered),
-            "verdict": ("отклонение" if triggered else "в норме"),
-            "metrics": metrics,
-        }]],
-    }
+    def move_step(self):
+        if self.cancel_check and self.cancel_check():
+            raise RuntimeError("simulated conveyor cancelled")
+        self.moves += 1
+
+    def wait_stop(self, progress_callback=None, **_kwargs):
+        if progress_callback:
+            progress_callback({
+                "pos": 10_000, "tgt": self.production_target,
+                "mov": 1, "wait": 0, "lasterr": 0,
+                "lastreadyms": self.moves - 1, "paused": 1, "auto": 1,
+            })
+        time.sleep(self.delay)
+        final = {
+            "pos": 0, "tgt": 0, "mov": 0, "wait": 0, "lasterr": 0,
+            "lastreadyms": self.moves, "paused": 1, "auto": 1,
+        }
+        if progress_callback:
+            progress_callback(final)
+        return final
+
+    def emergency_stop(self):
+        return None
+
+
+class SimulatedDistributor:
+    dist1_open_position = 340
+    dist2_bad_position = 0
+    dist2_cleanup_position = 340
+
+    def __init__(self):
+        self.on_state_changed = None
+        self.cancel_check = None
+        self._dist1 = 0
+        self._dist2 = 0
+        self._target = "BAD"
+        self.last_action = "SIMULATION READY"
+        self.transfers = []
+
+    @property
+    def status(self):
+        return {
+            "dist1_state": "GOOD" if self._dist1 == 0 else "TO_DIST2",
+            "dist1_position": self._dist1, "dist1_max": 340,
+            "dist2_state": "IDLE", "dist2_position": self._dist2,
+            "dist2_max": 340, "dist2_target": self._target,
+            "last_distributor_action": self.last_action,
+        }
+
+    def _notify(self):
+        if callable(self.on_state_changed):
+            self.on_state_changed()
+
+    def initialize(self):
+        self.return_home()
+
+    def verify_routes(self):
+        for category in (CATEGORY_GOOD, CATEGORY_BAD, CATEGORY_CLEANUP):
+            self.prepare_route(category)
+        self.return_home()
+
+    def park_production(self):
+        self.return_home()
+
+    def return_home(self):
+        self._dist1 = self._dist2 = 0
+        self._target = CATEGORY_BAD
+        self.last_action = "HOME CONFIRMED"
+        self._notify()
+
+    def prepare_route(self, category, part_id=None):
+        if category == CATEGORY_GOOD:
+            self._dist1 = 0
+        else:
+            self._dist2 = 340 if category == CATEGORY_CLEANUP else 0
+            self._dist1 = 340
+        self._target = category
+        self.last_action = f"ROUTE #{part_id} -> {category}"
+        self._notify()
+
+    def confirm_transfer(self, part_id, category):
+        self.transfers.append((part_id, category))
+        self.last_action = f"TRANSFER #{part_id} -> {category}"
+        self._notify()
+
+    def reset_target(self):
+        return None
+
+    def emergency_stop(self):
+        self.last_action = "EMERGENCY STOP"
+
+    def diagnostic_gate(self, command):
+        self._dist1 = 0 if command == "HOME" else 340
+        self._notify()
+
+    def diagnostic_route(self, category):
+        self.prepare_route(category, "DIAG")
+
+
+class SimulatedJog:
+    def __init__(self):
+        self.busy = False
+        self.direction = None
+        self.error = None
+        self.hold_steps = 100_000
+        self.last_action = "-"
+        self._motion = False
+
+    @property
+    def status(self):
+        return {
+            "busy": self.busy, "direction": self.direction,
+            "error": self.error, "hold_steps": self.hold_steps,
+            "last_action": self.last_action,
+        }
+
+    def start_hold(self, direction):
+        self.busy = True
+        self.direction = direction
+        self.last_action = f"HOLD {direction}"
+        return True
+
+    def heartbeat(self, direction):
+        if not self.busy or direction != self.direction:
+            return False
+        self._motion = True
+        return True
+
+    def release(self, reason="released"):
+        self.busy = False
+        self.direction = None
+        self.last_action = f"STOP: {reason}"
+        return True
+
+    def consume_motion_happened(self):
+        value = self._motion
+        self._motion = False
+        return value
+
+
+class SimulatedInspector:
+    INPUT_ROLES = INPUT_ROLES
+    SPIDER_ROLES = CONTROL_ROLES
+
+    def __init__(self, rng):
+        self.rng = rng
+        try:
+            thresholds = ThresholdLoader().get_all()
+        except Exception:
+            thresholds = {"SIM.threshold": 1.0}
+        self.decision = SimpleNamespace(thresholds=thresholds)
+        self.vision = SimpleNamespace(worker_timeout=3.0, last_health=[])
+
+    def inspect_input_consensus(
+        self, part_id, step, frame_runs, force_bad=False, on_presence=None,
+    ):
+        frames = {role: frame_runs[0][role] for role in INPUT_ROLES}
+        left = self.rng.random() < 0.90
+        right = self.rng.random() < 0.90
+        present = left or right
+        presence = RuleResult(
+            "part_presence", False,
+            details={
+                "empty_tray": not present,
+                "presence_by_role": {"INPUT_LEFT": left, "INPUT_RIGHT": right},
+                "count_by_role": {
+                    "INPUT_LEFT": 4 if left else 0,
+                    "INPUT_RIGHT": 4 if right else 0,
+                },
+                "presence_mismatch": left != right,
+            },
+        )
+        if not present:
+            return InspectionResult(
+                stage="input", is_empty_tray=True,
+                vision_results={role: [] for role in INPUT_ROLES},
+                rule_results=[presence], raw_frames=frames,
+                consensus={"runs": 1, "required_votes": 1},
+                run_frames=[frames], run_rule_results=[[]],
+            )
+        if callable(on_presence):
+            on_presence(presence)
+        defects = []
+        if force_bad or self.rng.random() < 0.08:
+            defects.append("window_geometry")
+        rule = RuleResult("window_geometry", bool(defects))
+        return InspectionResult(
+            stage="input", defects=defects,
+            vision_results={role: [] for role in INPUT_ROLES},
+            rule_results=[presence, rule], raw_frames=frames,
+            raw_overlay_frames=frames, annotated=frames,
+            consensus={"runs": 1, "required_votes": 1},
+            run_frames=[frames], run_rule_results=[[rule]],
+            run_vision_results=[{role: [] for role in INPUT_ROLES}],
+        )
+
+    def inspect_spider_consensus(self, part_id, step, frame_runs, force_bad=False):
+        frames = {role: frame_runs[0][role] for role in CONTROL_ROLES}
+        defects = []
+        value = self.rng.random()
+        if force_bad or value < 0.08:
+            defects.append("contacts_long")
+        elif value < 0.13:
+            defects.append("glass")
+        rule = RuleResult(defects[0] if defects else "contacts_long", bool(defects))
+        return InspectionResult(
+            stage="spider", defects=defects,
+            vision_results={role: [] for role in CONTROL_ROLES},
+            rule_results=[rule], raw_frames=frames,
+            raw_overlay_frames=frames, annotated=frames,
+            consensus={"runs": 1, "required_votes": 1},
+            run_frames=[frames], run_rule_results=[[rule]],
+            run_vision_results=[{role: [] for role in CONTROL_ROLES}],
+        )
 
 
 class Emulator:
-    """Имитация производственной линии поверх настоящего UIServer."""
-
-    def __init__(self, seed=None, review_seconds=4.0, auto_start=False,
-                 archive_enabled=True, time_scale=1.0):
+    def __init__(
+        self,
+        seed=None,
+        review_seconds=5.0,
+        auto_start=False,
+        archive_enabled=True,
+        time_scale=1.0,
+    ):
         self.rng = random.Random(seed)
-        if seed is not None:
-            random.seed(seed)
-
-        self.monitor = LiveMonitor(
-            start_callback=None, stop_callback=None, exit_callback=None,
-            fullscreen=False,
-        )
-        self.server = self.monitor.server
-
-        self.sm = StateMachine(on_transition=self._on_state_change)
-
-        # Состояние линии
-        self.parts = []                 # list[dict {id, step_created, category}]
-        self.part_counter = 0
-        self.current_step = 0
-        self.good = 0
-        self.rejected = 0
-        self.cleanup = 0
-        self.empty = 0
-        self.recent_parts = deque(maxlen=10)
-        self._process = self._empty_process()
-        # Первый шаг после пуска — контроль корпуса под камерами без движения
-        # ленты (INITIAL_INSPECTION), как в реальном ProductionCycle.
-        self._await_initial_inspection = False
-        # Корпус на +7, который на следующем шаге пройдёт распределитель.
-        # Хранится как ссылка на объект детали (как в ProductionCycle), чтобы
-        # flag «dropping» держался весь шаг сброса, а не пересчитывался по
-        # позиции после инкремента шага (иначе маркер не уезжал бы в +8).
-        self._pending_drop_ref = None
-
-        # Имитация распределителя
-        self.dist1_position = 0
-        self.dist1_state = "GOOD"
-        self.dist2_position = 0
-        self.dist2_state = "IDLE"
-        self.dist2_target = CATEGORY_BAD
-        self.last_distributor_action = "PRODUCTION READY"
-
-        # JOG
-        self.jog_active = False
-        self.jog_busy = False
-        self.jog_hold_steps = 0
-        self.jog_direction = None
-        self.jog_last_action = "-"
-        self.jog_error = None
-        self._jog_lock = threading.Lock()
-
-        # Анализ выбранного кадра
-        self.selected_analysis_active = False
-        self.selected_analysis_role = None
-
-        self._diagnostics = {
-            "status": "NOT_RUN", "kind": None,
-            "message": "Проверки ещё не запускались",
-            "cameras": [], "models": [], "rules": [],
-            "updated_at": None,
-        }
-
-        self.review_seconds = max(0.0, float(review_seconds))
-        self.auto_start = auto_start
-        self._cancel = threading.Event()
-        self._cycle_thread = None
-        self._live_thread = None
-
-        self._current_camera_role = CAMERA_ORDER[0]
-
-        # Масштаб таймингов: 1.0 — реалистичные паузы; меньше — ускорение
-        # (удобно для тестов). Базовые значения умножаются на масштаб.
+        self.auto_start = bool(auto_start)
         self.time_scale = max(0.01, float(time_scale))
-        # Тайминги из calibration.json (если файл доступен), иначе — базовые.
-        self._load_timings()
+        self.monitor = LiveMonitor(fullscreen=False)
+        self.server = self.monitor.server
+        self.distributor = SimulatedDistributor()
+        self.conveyor = SimulatedConveyor(delay=0.03 * self.time_scale)
+        self.jog = SimulatedJog()
+        self.cycle = None
+        self.cameras = SimulatedCameras(self._frame)
+        self.inspector = SimulatedInspector(self.rng)
 
-        self._setup_thresholds()
-        self._setup_archive(archive_enabled)
-        self._bind_server_callbacks()
-
-    # ── Настройка порогов и архива ─────────────────────────────
-
-    def _setup_thresholds(self):
-        try:
-            loader = ThresholdLoader()
-            thresholds = loader.get_all()
-            self.server.thresholds = dict(thresholds)
-            self.server.threshold_labels = dict(loader.labels or {})
-            self.server.thresholds_path = "thresholds.json"
-            self.server.on_thresholds_apply = self._thresholds_apply
-            self.server.on_thresholds_reload = self._thresholds_reload
-            print(f"[EMU] Пороги загружены: {len(thresholds)} значений")
-        except Exception as exc:
-            print(f"[EMU] Пороги недоступны: {exc}")
-
-    def _thresholds_apply(self, role, values, labels):
-        if self.sm.state not in (State.IDLE, State.STOPPED):
-            raise RuntimeError(
-                "Изменение порогов доступно только до пуска "
-                "и после полной остановки"
-            )
-        updated = dict(self.server.thresholds or {})
-        changed = []
-        for key, value in values.items():
-            full_key = f"{role}.{key}" if not str(key).startswith(f"{role}.") else str(key)
-            if full_key not in updated:
-                raise ValueError(f"Неизвестный порог: {full_key}")
-            updated[full_key] = value
-            changed.append(full_key)
-        ThresholdLoader.validate(updated)
-        full_labels = dict(self.server.threshold_labels or {})
-        for key, name in (labels or {}).items():
-            full_key = f"{role}.{key}" if not str(key).startswith(f"{role}.") else str(key)
-            if name is None or not str(name).strip():
-                full_labels.pop(full_key, None)
-            else:
-                full_labels[full_key] = str(name).strip()
-        ThresholdLoader.save_file("thresholds.json", updated, labels=full_labels)
-        self.server.thresholds = dict(updated)
-        self.server.threshold_labels = dict(full_labels)
-        print(f"[EMU] Применено порогов {role}: {len(changed)}")
-        return updated
-
-    def _thresholds_reload(self, fresh):
-        self.server.thresholds = dict(fresh)
-        return fresh
-
-    def _setup_archive(self, enabled):
-        try:
-            cfg = load_archive_config()
-            from inspection.part_archive import PartArchive
-            archive = PartArchive(
-                root_folder=cfg["root_path"] if enabled else "archive",
-                enabled=enabled,
-                jpeg_quality=cfg["jpeg_quality"],
-                zip_compression=cfg["zip_compression"],
-                zip_level=cfg["zip_level"],
-                compress_on_shutdown=cfg["compress_on_shutdown"],
-                delete_original_after_zip=cfg["delete_original_after_zip"],
-            )
-            self.archive = archive
-            self.server.archive = archive
-            self.server.archive_config_path = "archive_config.json"
-            print(f"[EMU] Архив партий готов: {archive.batch_id}")
-        except Exception as exc:
-            self.archive = None
-            self.server.archive = None
-            print(f"[EMU] Архив недоступен: {exc}")
-
-    def _load_timings(self):
-        """Тайминги фаз шага из calibration.json (реалистичная физика).
-
-        Берём conveyor_speed / settle_time / drop_time / axis_speed и
-        пересчитываем длительности фаз. Если файла нет — оставляем базовые
-        значения DEFAULT_*/TIME_*.
-        """
-        try:
-            calib = load_calibration()
-        except Exception as exc:
-            print(f"[EMU] calibration.json недоступен, тайминги по умолчанию: {exc}")
-            calib = {}
-
-        conveyor_speed = float(calib.get("conveyor_speed", DEFAULT_CONVEYOR_SPEED) or DEFAULT_CONVEYOR_SPEED)
-        settle_time = float(calib.get("settle_time", DEFAULT_SETTLE_TIME) or DEFAULT_SETTLE_TIME)
-        drop_time = float(calib.get("drop_time", DEFAULT_DROP_TIME) or DEFAULT_DROP_TIME)
-        axis_speed = float(calib.get("axis_speed", DEFAULT_AXIS_SPEED) or DEFAULT_AXIS_SPEED)
-
-        # Движение ленты не должно быть короче фронтенд-анимации маркера
-        # (8400000 / speed мс). Фактический ход ленты — с разгоном/торможением.
-        belt_anim = 8400000 / max(1.0, conveyor_speed) / 1000.0
-        # Реальный шаг ленты (2 деления) с учётом скорости: аппроксимация.
-        steps = 2 * float(calib.get("normal_steps", 19048) or 19048)
-        belt_phys = steps / max(1.0, conveyor_speed)
-        # Фаза движения = максимум анимации и физики, с небольшим запасом.
-        scale = self.time_scale
-        self.time_belt_move = max(TIME_BELT_MOVE, belt_anim + 0.15, belt_phys * 0.5) * scale
-        # Позиционирование заслонок: DIST1 ход 340 при скорости оси.
-        self.time_route_prepare = max(TIME_ROUTE_PREPARE, 340.0 / max(1.0, axis_speed)) * scale
-        self.time_settle = max(0.3, settle_time) * scale
-        self.time_part_transfer = max(0.4, drop_time) * scale
-        # Съёмка/анализ — фиксированные реалистичные паузы.
-        self.time_capture = TIME_CAPTURE * scale
-        self.time_input_analysis = TIME_INPUT_ANALYSIS * scale
-        self.time_spider_analysis = TIME_SPIDER_ANALYSIS * scale
-        self.time_conveyor_confirm = TIME_CONVEYOR_CONFIRM * scale
-        print(
-            f"[EMU] Тайминги: маршрут {self.time_route_prepare:.2f}с, "
-            f"лента {self.time_belt_move:.2f}с, оседание {self.time_settle:.2f}с, "
-            f"передача {self.time_part_transfer:.2f}с"
+        cfg = load_archive_config()
+        self.archive = PartArchive(
+            root_folder=cfg["root_path"], enabled=bool(archive_enabled),
+            jpeg_quality=cfg["jpeg_quality"],
+            zip_compression=cfg["zip_compression"],
+            zip_level=cfg["zip_level"],
+            compress_on_shutdown=False,
         )
-
-    def _sleep_cancellable(self, seconds: float):
-        """Пауза с проверкой отмены (СТОП / принудительный выход)."""
-        deadline = time.monotonic() + max(0.0, seconds)
-        while True:
-            self._check_cancelled()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return
-            time.sleep(min(0.1 * self.time_scale, remaining))
-
-    # ── Привязка серверных колбэков ────────────────────────────
-
-    def _bind_server_callbacks(self):
-        s = self.server
-        s.on_start = self.request_start
-        s.on_stop = self.request_stop
-        s.on_pause = self.request_pause
-        s.on_resume = self.request_resume
-        s.on_exit = self.request_exit
-        s.on_distributor_diagnostic = self.distributor_diagnostic
-        s.on_camera_diagnostic = self.diagnostic_check_cameras
-        s.on_vision_rule_diagnostic = self.diagnostic_check_vision_rules
-        s.on_selected_model_analysis = self.diagnostic_analyze_selected_camera
-        s.on_selected_model_release = self.diagnostic_release_selected_camera
-        s.on_active_camera_changed = self._on_active_camera_changed
-        s.on_jog_enter = self.enter_jog
-        s.on_jog_exit = self.exit_jog
-        s.on_jog_hold_start = self.jog_hold_start
-        s.on_jog_hold_heartbeat = self.jog_hold_heartbeat
-        s.on_jog_hold_release = self.jog_hold_release
-
-    def _on_active_camera_changed(self, role):
-        if role in self.server.frames:
-            self._current_camera_role = role
-        self._refresh()
-
-    # ── Команды оператора ──────────────────────────────────────
-
-    def request_start(self):
-        if self.sm.state not in (State.IDLE, State.STOPPED):
-            return False
-        if self.selected_analysis_active:
-            return False
-        if self.jog_busy:
-            return False
-        self._set_route_good()
-        self.last_distributor_action = "PRODUCTION READY"
-        self._set_process("START_POSITIONING", "Возврат распределителя в рабочее положение")
-        if not self.sm.request_start():
-            return False
-        # Первый шаг после пуска — контроль уже стоящего под камерами корпуса
-        # без движения ленты (INITIAL_INSPECTION), как в ProductionCycle.
-        self._await_initial_inspection = True
-        self._set_process("READY", "Цикл запущен")
-        return True
-
-    def request_stop(self):
-        return self.sm.request_stop()
-
-    def request_pause(self):
-        if self.sm.state != State.RUNNING:
-            return False
-        self._set_process("PAUSE_REQUESTED", "Пауза будет применена после остановки шага")
-        # Пауза применяется на границе шага в цикле.
-        return self.sm.request_pause()
-
-    def request_resume(self):
-        if self.sm.state != State.PAUSED:
-            return False
-        if self.jog_busy:
-            return False
-        ok = self.sm.request_resume()
-        if ok:
-            self._set_process("RESUMED", "Работа возобновлена после паузы")
-        return ok
-
-    def request_exit(self):
-        self.sm.request_exit()
-        self._set_process("STOPPING", "Штатная остановка -> завершение деталей на линии")
-        return True
-
-    def request_force_exit(self):
-        self._cancel.set()
-        self.sm.request_force_exit()
-        return True
-
-    def _on_state_change(self, old, new, action):
-        if new == State.STOPPING:
-            self._set_process("DRAINING", "Завершение корпусов на линии")
-        elif new == State.STOPPED:
-            self._park_distributor_home()
-            self._set_process("STOPPED", "Линия остановлена и пуста")
-        elif new == State.FAULT:
-            self._set_process("FAULT", "Цикл остановлен из-за ошибки")
-        else:
-            self._refresh()
-
-    # ── Диагностика ────────────────────────────────────────────
-
-    def _prestart_diagnostic_allowed(self):
-        return (
-            self.sm.state in (State.IDLE, State.STOPPED)
-            and not self.parts
-            and not self.jog_busy
-            and not self.selected_analysis_active
-            and not self.sm.exit_requested
+        self.server.archive = self.archive
+        self.journal = RecoveryJournal(
+            str(self.archive.root_folder) + "/simulation_recovery_v2.jsonl"
         )
+        self.server.thresholds = dict(self.inspector.decision.thresholds)
+        self.server.thresholds_path = "thresholds.json"
 
-    def distributor_diagnostic(self, command):
-        if not self._prestart_diagnostic_allowed():
-            return False
-        self._set_process("DISTRIBUTOR_DIAGNOSTIC", f"Проверка распределителя: {command}")
-        if command == "DIST1_HOME":
-            self._set_route_good()
-            self.last_distributor_action = "DIAGNOSTIC DIST1 -> GOOD"
-        elif command == "DIST1_OPEN":
-            self._set_route_bad(animate=True)
-            self.last_distributor_action = "DIAGNOSTIC DIST1 -> DIST2"
-        elif command == "DIST2_BAD":
-            self._set_dist1_good()
-            self.dist2_position = DIST2_BAD
-            self.dist2_state = "READY"
-            self.dist2_target = CATEGORY_BAD
-            self.last_distributor_action = "DIAGNOSTIC DIST2 -> BAD"
-        elif command == "DIST2_CLEANUP":
-            self._set_dist1_good()
-            self.dist2_position = DIST2_CLEANUP
-            self.dist2_state = "READY"
-            self.dist2_target = CATEGORY_CLEANUP
-            self.last_distributor_action = "DIAGNOSTIC DIST2 -> CLEANUP"
-        else:
-            raise ValueError(f"Unknown distributor diagnostic: {command}")
-        self._set_process("DIAGNOSTIC_DONE", f"Положение распределителя подтверждено: {command}")
-        self._set_diagnostics_passed("DISTRIBUTOR", f"Распределитель: {command}")
-        self._refresh()
-        return True
-
-    def diagnostic_check_cameras(self):
-        if not self._prestart_diagnostic_allowed():
-            return False
-        self._set_process("CAMERA_DIAGNOSTIC", "Проверка семи камер")
-        rows = []
-        for role in CAMERA_ORDER:
-            rows.append({
-                "role": role, "ok": True,
-                "width": 1280, "height": 720,
-            })
-        self._diagnostics = {
-            "status": "PASSED", "kind": "CAMERAS",
-            "message": f"Камеры: {len(rows)}/{len(rows)} OK",
-            "cameras": rows, "models": [], "rules": [],
-            "updated_at": time.time(),
-        }
-        self._set_process("DIAGNOSTIC_DONE", "Семь камер проверены")
-        self._generate_frames()
-        self._refresh()
-        return True
-
-    def diagnostic_check_vision_rules(self):
-        if not self._prestart_diagnostic_allowed():
-            return False
-        self._set_process("VISION_RULE_DIAGNOSTIC",
-                          "Запуск всех моделей и правил дефектов без движения линии")
-        models = []
-        for role in CAMERA_ORDER:
-            models.append({
-                "role": role, "ok": True, "model": "yolo",
-                "runs": 1, "elapsed_ms": 18, "detections": 6,
-                "detections_by_run": [6],
-            })
-        camera_rows = []
-        for role in CAMERA_ORDER:
-            camera_rows.append({
-                "role": role, "ok": True, "width": 1280, "height": 720,
-                "detections": 6,
-            })
-        rules = [
-            _rule_row("part_presence", "INPUT_LEFT", None,
-                      present=True, defects=[]),
-            _rule_row("window_geometry", "INPUT_LEFT", None,
-                      present=True, defects=["window_geometry"]),
-        ]
-        self._diagnostics = {
-            "status": "PASSED", "kind": "VISION_RULES",
-            "message": f"Модели: {len(models)} исправны; правил: {len(rules)}",
-            "cameras": camera_rows, "models": models, "rules": rules,
-            "updated_at": time.time(),
-        }
-        self._set_process("DIAGNOSTIC_DONE", "Модели и правила дефектов выполнены")
-        self._generate_frames()
-        self._refresh()
-        return True
-
-    def _set_diagnostics_passed(self, kind, message):
-        self._diagnostics = {
-            "status": "PASSED", "kind": kind, "message": message,
-            "cameras": [], "models": [], "rules": [],
-            "updated_at": time.time(),
-        }
-
-    def diagnostic_analyze_selected_camera(self, role):
-        if not self._prestart_diagnostic_allowed():
-            return False
-        if role not in self.server.frames:
-            raise ValueError(f"Неизвестная роль камеры: {role}")
-        self.selected_analysis_active = True
-        self.selected_analysis_role = role
-        self._set_process("SELECTED_MODEL_ANALYSIS", f"Анализ кадра {role}")
-        # Стоящий анализ: деталь присутствует, часть правил роли срабатывает
-        # случайно (как в реальной инспекции по свежему кадру).
-        role_defects = [
-            r for r in ROLE_RULES.get(role, [])
-            if random.random() < 0.3
-        ]
-        rules = [_rule_row("part_presence", role, None,
-                           present=True, defects=[])]
-        rules.extend(
-            _rule_row(r, role, None, present=True, defects=role_defects)
-            for r in ROLE_RULES.get(role, [])
+        self.cycle = ProductionCycle(
+            conveyor=self.conveyor,
+            cameras=self.cameras,
+            inspector=self.inspector,
+            distributor=self.distributor,
+            monitor=self.monitor,
+            archive=self.archive,
+            jog=self.jog,
+            settle_seconds=0.03 * self.time_scale,
+            stage_trace_seconds=0.0,
+            review_seconds=float(review_seconds),
+            journal=self.journal,
+            initial_frame_max_age=5.0,
+            manifest={"mode": "SIMULATION"},
         )
-        self._diagnostics = {
-            "status": "PASSED", "kind": "SELECTED_MODEL",
-            "message": f"{role}: свежий кадр; правил {len(rules)}; объекты 5",
-            "selected_role": role,
-            "cameras": [{
-                "role": role, "selected": True, "ok": True,
-                "width": 1280, "height": 720, "runs": 1, "detections": 5,
-                "detections_by_run": [5],
-            }],
-            "models": [{
-                "role": role, "ok": True, "model": "yolo",
-                "runs": 1, "elapsed_ms": 18, "detections": 5,
-                "detections_by_run": [5],
-            }],
-            "rules": rules,
-            "updated_at": time.time(),
-        }
-        self._set_process("SELECTED_MODEL_READY",
-                          f"Анализ кадра {role} завершён; поток приостановлен")
-        self._refresh()
-        return True
+        self.cycle.simulation = True
+        self.runtime = ControlRuntime(self.cycle)
+        self.runtime.register_handler("DIST_DIAG", self.cycle.distributor_diagnostic)
+        self.runtime.register_handler("CAM_DIAG", lambda: True)
+        self.runtime.register_handler("VISION_DIAG", lambda: True)
+        self.runtime.register_handler("SELECTED", lambda _role: True)
+        self.runtime.register_handler("SELECTED_RELEASE", lambda: True)
+        self.server.command_dispatcher = self.runtime.dispatch
+        self.monitor.distributor_diagnostic_callback = lambda command: self.runtime.dispatch(
+            uuid.uuid4().hex, "DIST_DIAG", command
+        ).accepted
+        self.monitor.camera_diagnostic_callback = lambda: self.runtime.dispatch(
+            uuid.uuid4().hex, "CAM_DIAG"
+        ).accepted
+        self.monitor.vision_rule_diagnostic_callback = lambda: self.runtime.dispatch(
+            uuid.uuid4().hex, "VISION_DIAG"
+        ).accepted
+        self.monitor.selected_model_analysis_callback = lambda role: self.runtime.dispatch(
+            uuid.uuid4().hex, "SELECTED", role
+        ).accepted
+        self.monitor.selected_model_release_callback = lambda: self.runtime.dispatch(
+            uuid.uuid4().hex, "SELECTED_RELEASE"
+        ).accepted
+        self._cycle_thread = None
 
-    def diagnostic_release_selected_camera(self):
-        if not self.selected_analysis_active:
-            return False
-        role = self.selected_analysis_role
-        self.selected_analysis_active = False
-        self.selected_analysis_role = None
-        self._diagnostics = {
-            "status": "NOT_RUN", "kind": None,
-            "message": "Анализ кадра не выполнялся",
-            "cameras": [], "models": [], "rules": [], "updated_at": None,
-        }
-        self._set_process("LIVE_SELECTED_CAMERA", f"Поток восстановлен: {role}")
-        self._refresh()
-        return True
+    @property
+    def sm(self):
+        return self.cycle.sm
 
-    # ── JOG ────────────────────────────────────────────────────
+    @property
+    def parts(self):
+        return self.cycle.parts
 
-    def can_enter_jog(self):
-        return (
-            self.sm.state in (State.IDLE, State.STOPPED, State.PAUSED)
-            and not self.sm.exit_requested
-            and not self.jog_error
+    @property
+    def current_step(self):
+        return self.cycle.current_step
+
+    def _frame(self, role):
+        frame = np.full((720, 1280, 3), 28, dtype=np.uint8)
+        cv2.putText(
+            frame,
+            f"SIMULATION  {role}  STEP {self.current_step if self.cycle else 0}",
+            (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (180, 180, 180), 2,
         )
-
-    def enter_jog(self):
-        with self._jog_lock:
-            if self.jog_active:
-                return True
-            if not self.can_enter_jog():
-                return False
-            self.jog_active = True
-        self._refresh()
-        return True
-
-    def exit_jog(self):
-        with self._jog_lock:
-            if not self.jog_active:
-                return True
-            self.jog_active = False
-            self.jog_busy = False
-            self.jog_hold_steps = 0
-            self.jog_direction = None
-            self.jog_last_action = "-"
-        self._refresh()
-        return True
-
-    def jog_hold_start(self, direction):
-        if not self.jog_active or self.sm.state not in (
-            State.IDLE, State.STOPPED, State.PAUSED,
-        ):
-            return False
-        with self._jog_lock:
-            self.jog_busy = True
-            self.jog_direction = direction
-            self.jog_hold_steps = 0
-            self.jog_last_action = "ДВИЖЕНИЕ " + ("ВПЕРЕД" if direction == "+" else "НАЗАД")
-        self._set_process("JOG_HOLD",
-                          "Ручное движение ленты вправо" if direction == "+"
-                          else "Ручное движение ленты влево")
-        return True
-
-    def jog_hold_heartbeat(self, direction):
-        with self._jog_lock:
-            self.jog_direction = direction
-            self.jog_hold_steps += 1
-        return True
-
-    def jog_hold_release(self, reason="button released"):
-        with self._jog_lock:
-            if not self.jog_active:
-                return False
-            self.jog_busy = False
-            self.jog_hold_steps = 0
-            self.jog_direction = None
-            self.jog_last_action = f"ОСТАНОВЛЕНО: {reason}"
-        self._set_process("JOG_STOPPED", f"Ручное движение остановлено: {reason}")
-        return True
-
-    # ── Распределитель (маршруты по DISTRIBUTOR_LOGIC.md) ──────
-
-    def _set_dist1_good(self):
-        self.dist1_position = 0
-        self.dist1_state = "GOOD"
-
-    def _set_route_good(self):
-        self._set_dist1_good()
-        self.last_distributor_action = "-> GOOD"
-
-    def _set_route_bad(self, animate=False):
-        # DIST2=0 сначала, затем DIST1=340.
-        self.dist2_position = DIST2_BAD
-        self.dist2_state = "READY"
-        self.dist2_target = CATEGORY_BAD
-        if animate:
-            self.dist1_state = "MOVING_TO_DIST2"
-        self.dist1_position = DIST1_OPEN
-        self.dist1_state = "TO_DIST2"
-        self.last_distributor_action = "-> BAD"
-
-    def _set_route_cleanup(self, animate=False):
-        # DIST2=340 сначала, затем DIST1=340.
-        self.dist2_position = DIST2_CLEANUP
-        self.dist2_state = "READY"
-        self.dist2_target = CATEGORY_CLEANUP
-        if animate:
-            self.dist1_state = "MOVING_TO_DIST2"
-        self.dist1_position = DIST1_OPEN
-        self.dist1_state = "TO_DIST2"
-        self.last_distributor_action = "-> CLEANUP"
-
-    def _prepare_route(self, category):
-        if category == CATEGORY_GOOD:
-            self._set_route_good()
-        elif category == CATEGORY_BAD:
-            self._set_route_bad(animate=True)
-        elif category == CATEGORY_CLEANUP:
-            self._set_route_cleanup(animate=True)
-
-    def _park_distributor_home(self):
-        """Вернуть обе заслонки на концевик (позиция 0) после остановки.
-
-        После полной остановки линии распределитель не остаётся в последнем
-        положении маршрута, а уходит к домашнему концевику: DIST1 -> GOOD (0),
-        DIST2 -> канал BAD (0).
-        """
-        self.dist1_position = 0
-        self.dist1_state = "GOOD"
-        self.dist2_position = DIST2_BAD
-        self.dist2_state = "IDLE"
-        self.dist2_target = CATEGORY_BAD
-        self.last_distributor_action = "HOMED"
-
-    # ── Процесс / статус ───────────────────────────────────────
-
-    def _empty_process(self):
-        return {
-            "phase": "IDLE", "label": "Система готова к пуску",
-            "step": 0, "part_id": None, "positions": [],
-            "conveyor": {}, "revision": 0, "updated_at": time.time(),
-        }
-
-    def _set_process(self, phase, label, part_id=None, positions=None):
-        self._process = {
-            "phase": phase, "label": label,
-            "step": self.current_step, "part_id": part_id,
-            "positions": list(positions or []),
-            "conveyor": {"speed": 20000, "normal_steps": 19048},
-            "revision": self._process.get("revision", 0) + 1,
-            "updated_at": time.time(),
-        }
-
-    def _positions(self):
-        """Словарь position -> список корпусов на этой позиции."""
-        positions = {}
-        for part in self.parts:
-            pos = min(max(self.current_step - part["step_created"], 0), OFFSET_REJECT)
-            positions.setdefault(pos, []).append(part)
-        return positions
-
-    # Фазы, в которых лента неподвижна и камеры под деталью держат стоп-кадр
-    # (как в реальном цикле: CAPTURE/ANALYSIS/REVIEW/PUBLISH). В этих фазах
-    # живые камеры не перезаписывают уже снятые инспекционные кадры.
-    STOP_FRAME_PHASES = {
-        "CAMERA_CAPTURE", "INPUT_ANALYSIS", "SPIDER_CHECK",
-        "SPIDER_ANALYSIS", "ANALYSIS_REVIEW", "STEP_COMPLETE",
-        "INITIAL_INSPECTION",
-    }
-
-    def _inspection_roles(self):
-        """Роли камер, под которыми сейчас есть деталь (нужны для стоп-кадра).
-
-        INPUT_LEFT/INPUT_RIGHT — если корпус под входом (+0); пять
-        SPIDER/TOP — если корпус под контролем (+4). Согласовано с тем,
-        как эмулятор рисует деталь в кадре каждой камеры.
-        """
-        positions = self._positions()
-        roles = []
-        if positions.get(OFFSET_INPUT):
-            roles += ["INPUT_LEFT", "INPUT_RIGHT"]
-        if positions.get(OFFSET_SPIDER):
-            roles += [
-                "SPIDER_LEFT", "SPIDER_RIGHT",
-                "SPIDER_IN", "SPIDER_OUT", "TOP",
-            ]
-        return roles
-
-    def _part_at(self, position):
-        parts = self._positions().get(position)
-        return parts[0] if parts else None
-
-    def _pending_drop(self):
-        """Корпус на +7, ожидающий сброса на следующем шаге ленты."""
-        for part in self.parts:
-            if self.current_step - part["step_created"] == OFFSET_REJECT:
-                return part
-        return None
-
-    def _build_frame_analysis(self, state_name):
-        role = self._current_camera_role
-        if state_name not in ("RUNNING", "STOPPING"):
-            if self.selected_analysis_active:
-                return self._selected_frame_analysis()
-            return {
-                "available": False, "kind": None, "active": False,
-                "title": None, "role": None, "part_id": None,
-                "message": None, "models": [], "rules": [],
-                "picture_run": None, "picture_reason": None, "updated_at": None,
-            }
-
-        # Активный корпус, чей анализ показать (чаще всего на +0 или +4).
-        # Для INPUT-ролей — корпус под входом, для SPIDER/TOP — под контролем.
-        is_input_role = role in ("INPUT_LEFT", "INPUT_RIGHT")
-        part = self._part_at(OFFSET_INPUT if is_input_role else OFFSET_SPIDER)
-        if part is None:
-            stage = "ВХОД" if is_input_role else "КОНТРОЛЬ +4"
-            return {
-                "available": True, "kind": "CYCLE", "active": True,
-                "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА", "role": role,
-                "group": "INPUT" if is_input_role else "SPIDER",
-                "stage": stage, "part_id": None,
-                "message": f"{stage} · {role}: результатов анализа пока нет",
-                "models": [], "rules": [],
-                "picture_run": None, "picture_reason": None, "updated_at": time.time(),
-            }
-
-        # Правила, сработавшие на текущей стадии корпуса (вход/контроль).
-        if is_input_role:
-            stage_defects = part.get("input_defects") or []
-        else:
-            stage_defects = part.get("spider_defects") or []
-        # part_presence подтверждён (деталь на линии есть) — пустой лоток
-        # показываем только когда под входом ничего нет (part is None выше).
-        rules = [_rule_row("part_presence", role, part["id"],
-                           present=True, defects=[])]
-        rules.extend(
-            _rule_row(r, role, part["id"], present=True, defects=stage_defects)
-            for r in ROLE_RULES.get(role, [])
-        )
-        stage = "ВХОД" if is_input_role else "КОНТРОЛЬ +4"
-        group = "INPUT" if is_input_role else "SPIDER"
-        return {
-            "available": True, "kind": "CYCLE", "active": True,
-            "title": "АНАЛИЗ ТЕКУЩЕГО КАДРА", "role": role, "group": group,
-            "stage": stage, "part_id": part["id"],
-            "message": f"{stage} · {role}: итог по свежему кадру",
-            "models": [], "rules": rules,
-            "picture_run": 1, "picture_reason": "замер ближе всего к порогу",
-            "updated_at": time.time(),
-        }
-
-    def _selected_frame_analysis(self):
-        report = self._diagnostics
-        role = report.get("selected_role")
-        return {
-            "available": True, "kind": "SELECTED",
-            "active": self.selected_analysis_active,
-            "title": "АНАЛИЗ КАДРА", "role": role,
-            "part_id": None, "message": report.get("message"),
-            "status": report.get("status"),
-            "cameras": report.get("cameras", []),
-            "models": report.get("models", []),
-            "rules": report.get("rules", []),
-            "picture_run": None, "picture_reason": None,
-            "updated_at": report.get("updated_at"),
-        }
-
-    def _build_status(self):
-        state_name = self.sm.state.value
-        parts_snapshot = list(self.parts)
-        in_line = len(parts_snapshot)
-
-        line_parts = []
-        # Пока идёт шаг сброса, корпус на +7 остаётся помеченным dropping,
-        # чтобы фронтенд увёз маркер в лоток +8, а не держал его на +7.
-        pending = self._pending_drop_ref
-        for part in parts_snapshot:
-            position = min(max(self.current_step - part["step_created"], 0), OFFSET_REJECT)
-            dropping = pending is not None and pending is part
-            line_parts.append({
-                "id": part["id"],
-                "position": position,
-                "category": part["category"],
-                "held": False,
-                "dropping": dropping,
-            })
-
-        # Модель живого/стоп-кадра: в неподвижных фазах камеры под деталью
-        # держат стоп-кадр (static_roles), остальные камеры — живой поток.
-        phase = str(self._process.get("phase") or "").upper()
-        running = state_name in ("RUNNING", "STOPPING") or self.jog_active
-        inspection_roles = self._inspection_roles()
-        static_phase = phase in self.STOP_FRAME_PHASES
-        if static_phase and inspection_roles:
-            static_roles = inspection_roles
-            all_roles_static = False
-        elif static_phase and not inspection_roles:
-            # Линия стоит, но под камерами деталей нет — весь кадр статичен.
-            static_roles = []
-            all_roles_static = True
-        else:
-            static_roles = []
-            all_roles_static = False
-        active_static = (
-            state_name in ("RUNNING", "STOPPING")
-            and (all_roles_static
-                 or self._current_camera_role in static_roles)
-        )
-        live_running = running and not self.selected_analysis_active
-
-        # inspection_roles в процессе: фронтенд по ним тоже переключает
-        # стоп-кадр в фазах CAMERA/ANALYSIS/PUBLISH.
-        process_status = dict(self._process)
-        process_status["inspection_roles"] = list(inspection_roles)
-
-        diagnostic_allowed = (
-            state_name in ("IDLE", "STOPPED")
-            and not parts_snapshot
-            and not self.jog_busy
-            and not self.jog_error
-            and not self.selected_analysis_active
-            and not self.sm.exit_requested
-        )
-        controls = {
-            "start": (
-                state_name in ("IDLE", "STOPPED")
-                and not parts_snapshot and not self.jog_busy
-                and not self.selected_analysis_active
-                and not self.sm.exit_requested
-            ),
-            "stop": state_name in ("RUNNING", "PAUSED"),
-            "pause": state_name == "RUNNING" and not self.sm.exit_requested,
-            "resume": (
-                state_name == "PAUSED"
-                and not self.jog_busy and not self.sm.exit_requested
-            ),
-            "exit": not self.sm.exit_requested and not self.jog_busy,
-            "jog_hold": (
-                state_name in ("IDLE", "STOPPED", "PAUSED")
-                and self.jog_active and not self.jog_busy
-                and not self.selected_analysis_active
-            ),
-            "selected_model_analysis": diagnostic_allowed,
-            "selected_model_release": (
-                self.selected_analysis_active
-                and state_name in ("IDLE", "STOPPED")
-            ),
-            "distributor_diagnostic": diagnostic_allowed,
-            "camera_diagnostic": diagnostic_allowed,
-            "vision_rule_diagnostic": diagnostic_allowed,
-        }
-
-        return {
-            "state": state_name,
-            "simulation": True,
-            "exit_requested": self.sm.exit_requested,
-            "fault_reason": None,
-            "step": self.current_step,
-            "in_line": in_line,
-            "line_parts": line_parts,
-            "total": self.part_counter,
-            "good": self.good,
-            "rejected": self.rejected,
-            "cleanup": self.cleanup,
-            "empty": self.empty,
-            "dist1_position": self.dist1_position,
-            "dist1_max": DIST1_OPEN,
-            "dist1_state": self.dist1_state,
-            "dist2_position": self.dist2_position,
-            "dist2_max": max(DIST2_BAD, DIST2_CLEANUP, 1),
-            "dist2_state": self.dist2_state,
-            "dist2_target": self.dist2_target,
-            "last_distributor_action": self.last_distributor_action,
-            "axis_position": self.dist1_position,
-            "axis_max": DIST1_OPEN,
-            "distributor_state": self.dist1_state,
-            "process": process_status,
-            "diagnostic_allowed": diagnostic_allowed,
-            "diagnostic_busy": False,
-            "controls": controls,
-            "selected_analysis": {
-                "active": self.selected_analysis_active,
-                "role": self.selected_analysis_role,
-            },
-            "live": {
-                "running": live_running,
-                "streaming": live_running and not active_static,
-                "static": active_static,
-                "static_roles": static_roles,
-                "all_roles_static": all_roles_static,
-                "fps": 0.0,
-                "error": None,
-            },
-            "frame_analysis": self._build_frame_analysis(state_name),
-            "diagnostics": {
-                **self._diagnostics,
-                "cameras": [dict(r) for r in self._diagnostics["cameras"]],
-                "models": [dict(r) for r in self._diagnostics["models"]],
-                "rules": [dict(r) for r in self._diagnostics["rules"]],
-            },
-            "jog": {
-                "active": bool(self.jog_active and state_name in
-                               ("IDLE", "STOPPED", "PAUSED")),
-                "can_enter": self.can_enter_jog(),
-                "hold_steps": self.jog_hold_steps,
-                "last_action": self.jog_last_action,
-                "busy": self.jog_busy,
-                "direction": self.jog_direction,
-                "error": self.jog_error,
-                "live_fps": 0.0,
-            },
-        }
-
-    def _refresh(self, frames=None, run_frames=None, run_rule_results=None):
-        self.monitor.update(
-            frames=frames,
-            vision_results={},
-            rule_results=[],
-            line_status=self._build_status(),
-            recent_parts=list(self.recent_parts),
-            run_frames=run_frames,
-            run_rule_results=run_rule_results,
-        )
-
-    # ── Синтетические кадры ────────────────────────────────────
-
-    def _render_role_frame(self, role, part_under):
-        """Синтетическое изображение линии для одной камеры."""
-        frame = np.full((720, 1280, 3), 26, dtype=np.uint8)
-        # фон-транспортёр
-        frame[40:680, 40:1240] = (38, 38, 38)
-        # направляющие линии ленты
-        cv2.line(frame, (80, 640), (1200, 640), (52, 52, 52), 2)
-        cv2.line(frame, (80, 80), (1200, 80), (52, 52, 52), 2)
-
-        if part_under:
-            # корпус: тёмная платформа
-            cx, cy = 640, 360
-            cv2.rectangle(frame, (cx - 300, cy - 180), (cx + 300, cy + 180),
-                          (70, 70, 74), -1)
-            cv2.rectangle(frame, (cx - 300, cy - 180), (cx + 300, cy + 180),
-                          (110, 110, 116), 2)
-            # окна
-            for i, wx in enumerate(range(cx - 220, cx + 221, 110)):
-                top = cy - 120 + random.randint(-6, 6)
-                bottom = cy + 100 + random.randint(-4, 4)
-                cv2.rectangle(frame, (wx - 28, top), (wx + 28, bottom),
-                              (150, 150, 155), 1)
-            # контакты
-            for i, kx in enumerate(range(cx - 220, cx + 221, 88)):
-                cv2.rectangle(frame, (kx - 8, cy - 30), (kx + 8, cy + 40),
-                              (200, 200, 205), 1)
-            # номер корпуса
-            cv2.putText(frame, f"#{part_under['id']}", (cx - 40, cy - 210),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.4, (150, 150, 155), 2)
-        else:
-            cv2.putText(frame, "ЛОТОК ПУСТ", (560, 360),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (90, 90, 95), 2)
-
-        # надписи роли и шага
-        cv2.putText(frame, role, (60, 690),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (120, 120, 125), 1)
-        cv2.putText(frame, f"ШАГ {self.current_step}", (1060, 690),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (120, 120, 125), 1)
-        # лёгкий шум, чтобы кадр «жил»
-        noise = np.random.randint(-3, 4, frame.shape, dtype=np.int16)
-        frame = np.clip(frame.astype(np.int16) + noise, 0, 255).astype(np.uint8)
         return frame
 
-    def _generate_frames(self):
-        positions = self._positions()
-        frames = {}
-        for role in CAMERA_ORDER:
-            pos = OFFSET_INPUT if role in ("INPUT_LEFT", "INPUT_RIGHT") else OFFSET_SPIDER
-            part_under = (positions.get(pos) or [None])[0]
-            frames[role] = self._render_role_frame(role, part_under)
-        return frames
-
-    # ── Производственный цикл (имитация) ───────────────────────
-
-    def _run_once(self):
-        """Один шаг линии по реальной фазовой последовательности:
-        маршрут -> движение -> подтверждение -> передача -> оседание ->
-        съёмка -> анализ -> просмотр.
-        """
-        self._check_cancelled()
-
-        # Первый шаг после пуска: контроль уже стоящего под камерами корпуса
-        # без движения ленты (как INITIAL_INSPECTION в ProductionCycle).
-        if self._await_initial_inspection:
-            self._await_initial_inspection = False
-            self._set_process(
-                "INITIAL_INSPECTION",
-                "Контроль корпуса на входе: лента не движется",
-                positions=[OFFSET_INPUT, OFFSET_SPIDER],
-            )
-            frames = self._generate_frames()
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_settle)
-            new_part = self._spawn_input_part()
-            self._set_process(
-                "STEP_COMPLETE", "Начальная инспекция завершена",
-                part_id=(new_part["id"] if new_part else None),
-                positions=[OFFSET_INPUT],
-            )
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_capture)
-            return
-
-        # 1. Маршрут корпуса на +7 до движения (перемещение заслонок).
-        # Запоминаем корпус-кандидат на сброс на весь шаг (как ProductionCycle
-        # хранит self._pending_drop): flag dropping держится до _execute_drop.
-        pending = self._pending_drop()
-        self._pending_drop_ref = pending
-        if pending:
-            self._prepare_route(pending["category"])
-            self._set_process(
-                "ROUTE_PREPARE", "Подготовка маршрута распределителя",
-                part_id=pending["id"], positions=[OFFSET_REJECT],
-            )
-            self._refresh()
-            self._sleep_cancellable(self.time_route_prepare)
-
-        # 2. Движение ленты.
-        self._set_process(
-            "CONVEYOR_MOVING", "Лента перемещает корпуса на следующую позицию",
-            part_id=(pending["id"] if pending else None),
-            positions=range(OFFSET_REJECT + 1),
-        )
-        frames = self._generate_frames()
-        self._refresh(frames=frames)
-        self._sleep_cancellable(self.time_belt_move)
-        self._check_cancelled()
-
-        # 3. Подтверждение позиций: логический шаг выполнен.
-        self.current_step += 1
-        self._set_process(
-            "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
-            part_id=(pending["id"] if pending else None),
-            positions=range(OFFSET_REJECT + 1),
-        )
-        self._refresh(frames=frames)
-        self._sleep_cancellable(self.time_conveyor_confirm)
-
-        # 4. Передача корпуса, достигшего +8.
-        if pending:
-            self._set_process(
-                "PART_TRANSFER", "Корпус прошёл распределитель",
-                part_id=pending["id"], positions=[OFFSET_REJECT],
-            )
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_part_transfer)
-            self._execute_drop(pending)
-
-        # 5. Оседание вибрации перед съёмкой.
-        self._set_process(
-            "SETTLE", "Ожидание затухания вибрации перед съёмкой",
-            positions=[OFFSET_INPUT, OFFSET_SPIDER],
-        )
-        self._refresh(frames=frames)
-        self._sleep_cancellable(self.time_settle)
-
-        # 6. Съёмка камер под входом (+0) и контролем (+4).
-        self._set_process(
-            "CAMERA_CAPTURE", "Синхронный захват камер",
-            positions=[OFFSET_INPUT, OFFSET_SPIDER],
-        )
-        self._refresh(frames=frames)
-        self._sleep_cancellable(self.time_capture)
-
-        # 7. Анализ входа (+0) и контроля (+4).
-        new_part = self._spawn_input_part()
-        has_spider = self._run_spider_inspection()
-        frames = self._generate_frames()
-
-        if new_part is not None:
-            self._set_process(
-                "INPUT_ANALYSIS", f"Вход: анализ кандидата #{new_part['id']}",
-                part_id=new_part["id"], positions=[OFFSET_INPUT],
-            )
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_input_analysis)
-        else:
-            self._set_process("INPUT_ANALYSIS", "Вход: лоток пуст",
-                              positions=[OFFSET_INPUT])
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_capture)
-
-        if has_spider:
-            self._set_process(
-                "SPIDER_ANALYSIS", "Контроль +4: модели и правила",
-                positions=[OFFSET_SPIDER],
-            )
-            self._refresh(frames=frames)
-            self._sleep_cancellable(self.time_spider_analysis)
-
-        # 8. Просмотр результатов (REVIEW).
-        self._set_process(
-            "ANALYSIS_REVIEW", "Просмотр результатов анализа",
-            positions=[OFFSET_INPUT, OFFSET_SPIDER],
-        )
-        self._refresh(frames=frames)
-        deadline = time.monotonic() + self.review_seconds
-        while time.monotonic() < deadline:
-            if self._cancel.is_set() or self.sm.exit_requested \
-                    or self.sm.state != State.RUNNING:
-                break
-            time.sleep(0.1)
-
-        if self.sm.state == State.RUNNING and not self.sm.exit_requested:
-            self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
-            self._refresh(frames=frames)
-
-    def _input_presence(self):
-        """Присутствие детали под входными камерами (как part_presence).
-
-        Деталь засчитывается только если её видят ОБЕ камеры (INPUT_LEFT и
-        INPUT_RIGHT). Каждая камера «видит» деталь случайно с вероятностью
-        INPUT_CAMERA_PRESENT_PROB — это случайное появление ячеек под первыми
-        двумя камерами. Возвращает (present: bool, left: bool, right: bool).
-        """
-        left = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
-        right = self.rng.random() < INPUT_CAMERA_PRESENT_PROB
-        # Both negatives are empty; one-sided positive is a real part with
-        # an INPUT mismatch defect.
-        return bool(left or right), left, right
-
-    def _run_defect_rules(self, rule_names):
-        """Сработавшие defect-правила: правило сработало -> его имя в списке."""
-        return [
-            rule for rule in rule_names
-            if self.rng.random() < RULE_TRIGGER_PROB.get(rule, 0.0)
-        ]
-
-    def _recompute_route(self, part):
-        """Категория корпуса строго как в Part._recompute().
-
-        - нет дефектов: GOOD только после полной инспекции, иначе IN_PROGRESS;
-        - только glass/glass -> CLEANUP;
-        - любой другой дефект -> BAD.
-        """
-        defects = part["input_defects"] + part["spider_defects"]
-        fully = part["input_inspected"] and part["spider_inspected"]
-        if not defects:
-            part["category"] = CATEGORY_GOOD if fully else CATEGORY_IN_PROGRESS
-            return
-        if all(d in CLEANUP_DEFECTS for d in defects):
-            part["category"] = CATEGORY_CLEANUP
-        else:
-            part["category"] = CATEGORY_BAD
-
-    def _spawn_input_part(self):
-        """Обработать вход +0: присутствие -> входные правила -> корпус.
-
-        Если деталь не подтверждена ни одной камерой — пустой лоток (Part и
-        архив не создаются). Иначе создаётся корпус; одиночное подтверждение
-        получает input_presence_mismatch, затем проходят INPUT
-        defect-правила (window_geometry, window_sinks) и предварительно
-        пересчитывается маршрут (полная инспекция завершится на +4).
-        """
-        if not self.sm.accepts_new_parts:
-            return None
-        present, left, right = self._input_presence()
-        if not present:
-            self.empty += 1
-            print(f"[EMU] Step {self.current_step}: пустой лоток "
-                  f"(LEFT={left}, RIGHT={right}; empty={self.empty})")
-            return None
-        self.part_counter += 1
-        input_defects = self._run_defect_rules(INPUT_RULES)
-        if left != right:
-            input_defects.insert(0, "input_presence_mismatch")
-        part = {
-            "id": self.part_counter,
-            "step_created": self.current_step,
-            "category": CATEGORY_IN_PROGRESS,
-            "input_defects": input_defects,
-            "spider_defects": [],
-            "input_inspected": True,
-            "spider_inspected": False,
-        }
-        self._recompute_route(part)
-        self.parts.append(part)
-        print(f"[EMU] Step {self.current_step}: корпус #{part['id']} "
-              f"вход-дефекты={input_defects or ['нет']} "
-              f"маршрут(предв.)={part['category']}")
-        return part
-
-    def _run_spider_inspection(self):
-        """Контроль +4: SPIDER/TOP defect-правила корпусов на этой позиции.
-
-        После этой стадии корпус полностью инспектирован, маршрут
-        финализируется по Part._recompute(). Возвращает True, если в этом
-        шаге на +4 действительно был корпус (и проходил анализ).
-        """
-        inspected = False
-        for part in self.parts:
-            if self.current_step - part["step_created"] != OFFSET_SPIDER:
-                continue
-            inspected = True
-            if part["spider_inspected"]:
-                continue
-            part["spider_inspected"] = True
-            part["spider_defects"] = self._run_defect_rules(SPIDER_RULES)
-            self._recompute_route(part)
-            print(f"[EMU] Контроль +4: корпус #{part['id']} "
-                  f"дефекты={part['spider_defects'] or ['нет']} "
-                  f"маршрут={part['category']}")
-        return inspected
-
-    def _execute_drop(self, part):
-        category = part["category"]
-        self.last_distributor_action = f"PART #{part['id']} -> {category} DONE"
-        if category == CATEGORY_GOOD:
-            self.good += 1
-        elif category == CATEGORY_BAD:
-            self.rejected += 1
-        elif category == CATEGORY_CLEANUP:
-            self.cleanup += 1
-        self._archive_part(part)
-        self._register_finished(part)
-        self.parts.remove(part)
-        if self._pending_drop_ref is part:
-            self._pending_drop_ref = None
-        print(f"[EMU] Корпус #{part['id']} передан: {category}")
-
-    def _archive_part(self, part):
-        if not self.archive:
-            return
-        try:
-            frames = self._generate_frames()
-            # В реальной системе каждый корпус проходит обе стадии инспекции
-            # (вход +0: 2 камеры, контроль +4: 5 камер) — итого все 7 ролей.
-            # Эмулятор сохраняет все семь камер, чтобы галерея «Последних
-            # корпусов» у любой детали показывала полный набор изображений.
-            roles = CAMERA_ORDER
-            stage_frames = {r: frames[r] for r in roles if r in frames}
-            self.archive.store_frames(
-                part_id=part["id"], stage="input",
-                raw_frames=stage_frames, annotated_frames=stage_frames,
-                raw_overlay_frames=stage_frames,
-            )
-            self.archive.finalize(
-                part_id=part["id"], category=part["category"],
-                decision=part["category"], defects=[], step=part["step_created"],
-            )
-        except Exception as exc:
-            print(f"[EMU] Архив корпуса #{part['id']} не записан: {exc}")
-
-    def _register_finished(self, part):
-        record = {
-            "id": part["id"], "decision": part["category"],
-            "category": part["category"], "time": time.time(),
-        }
-        if self.archive:
-            try:
-                info = self.archive.get_part_info(part["id"])
-                if info:
-                    record["batch_id"] = self.archive.batch_id
-                    record["archive_folder"] = info.get("relative_folder")
-                    record["annotation_files"] = list(info.get("annotation_files") or [])
-                    record["sample_count"] = int(info.get("sample_count") or 0)
-            except Exception:
-                pass
-        self.recent_parts.append(record)
-
-    def _check_cancelled(self):
-        if self._cancel.is_set() or self.sm.force_exit:
-            raise RuntimeError("physical operation cancelled")
-
-    def _cycle_loop(self):
-        try:
-            while True:
-                if self.sm.force_exit:
-                    break
-                if self.sm.is_active:
-                    if self.sm.state == State.STOPPING and not self.parts:
-                        self.sm.notify_line_empty()
-                        self._refresh()
-                        if self.sm.exit_requested:
-                            break
-                        continue
-                    try:
-                        self._run_once()
-                    except RuntimeError:
-                        pass
-                    if self.sm.state == State.STOPPING and not self.parts:
-                        self.sm.notify_line_empty()
-                        self._refresh()
-                        if self.sm.exit_requested:
-                            break
-                else:
-                    if self.sm.exit_requested:
-                        break
-                    self._refresh()
-                    time.sleep(0.15 * self.time_scale)
-        finally:
-            print("[EMU] Цикл имитации завершён")
-
-    # ── Live-поток камер (обновление картинки при простое) ─────
-
-    def _live_loop(self):
-        """Живой поток камер при простое/движении.
-
-        В фазах стоп-кадра (CAPTURE/ANALYSIS/REVIEW) живые камеры НЕ
-        перезаписывают уже снятые инспекционные кадры — иначе главная камера
-        «проскакивала» бы, показывая живой поток вместо статичного кадра.
-        """
-        while not self._cancel.is_set():
-            if not self.selected_analysis_active:
-                state_name = self.sm.state.value
-                phase = str(self._process.get("phase") or "").upper()
-                frozen = (
-                    state_name in ("RUNNING", "STOPPING")
-                    and phase in self.STOP_FRAME_PHASES
-                )
-                frames = self._generate_frames()
-                if frozen:
-                    # В стоп-кадре не трогаем роли под инспекцией: их кадр
-                    # остаётся замороженным (то, что сняла камера), а камеры
-                    # без детали продолжают живой поток.
-                    inspection = set(self._inspection_roles())
-                    frames = {
-                        role: frame for role, frame in frames.items()
-                        if role not in inspection
-                    }
-                self.server.update(frames=frames)
-            time.sleep(max(0.05, 0.4 * self.time_scale))
-
-    # ── Запуск / остановка ─────────────────────────────────────
-
     def _boot(self):
-        for key, _ in self.server.BOOT_STEPS:
+        for key, _label in self.server.BOOT_STEPS:
             self.server.boot_step_start(key)
-        import time as _t
-        for key, _ in self.server.BOOT_STEPS:
-            _t.sleep(0.12 * self.time_scale)
             self.server.boot_step_done(key)
         self.server.boot_complete()
 
     def begin_simulation(self, start=True):
-        """Опубликовать начальные кадры и запустить фоновые потоки.
-
-        Вызывается после ``server.start_server``. ``start=True`` включает
-        автозапуск производственного цикла.
-        """
-        self._refresh(frames=self._generate_frames())
-        # Активная камера по умолчанию — входная, чтобы главное окно и
-        # панель «Анализ кадра» сразу показывали картинку.
-        if self.server.active_camera_role != self._current_camera_role:
-            self.server.set_active_camera_role(self._current_camera_role)
-        if self.auto_start and start:
-            print("[EMU] Автозапуск цикла...")
-            self.request_start()
-
+        self.monitor.update(
+            frames=self.cameras.capture_all(),
+            line_status=self.cycle._build_status(),
+            recent_parts=[],
+        )
+        self.cycle.live.start()
         self._cycle_thread = threading.Thread(
-            target=self._cycle_loop, daemon=True, name="emu-cycle",
+            target=self.runtime.start,
+            daemon=True,
+            name="formal-simulation-control-core",
         )
         self._cycle_thread.start()
+        if self.auto_start and start:
+            self.runtime.dispatch(uuid.uuid4().hex, "START")
 
-        self._live_thread = threading.Thread(
-            target=self._live_loop, daemon=True, name="emu-live",
-        )
-        self._live_thread.start()
+    def request_start(self):
+        return self.runtime.dispatch(uuid.uuid4().hex, "START").accepted
+
+    def request_stop(self):
+        return self.runtime.dispatch(uuid.uuid4().hex, "STOP").accepted
+
+    def request_pause(self):
+        return self.runtime.dispatch(uuid.uuid4().hex, "PAUSE").accepted
+
+    def request_resume(self):
+        return self.runtime.dispatch(uuid.uuid4().hex, "RESUME").accepted
+
+    def request_exit(self):
+        return self.runtime.dispatch(uuid.uuid4().hex, "EXIT").accepted
+
+    def request_force_exit(self):
+        result = self.runtime.dispatch(uuid.uuid4().hex, "FORCE_EXIT")
+        return result.accepted
 
     def run(self, host="0.0.0.0", port=8000, auto_start=None):
         self._boot()
         self.server.start_server(host=host, port=port)
-        print(f"EMULATOR UI: http://localhost:{port}  (Ctrl+C для выхода)")
-        self.begin_simulation(start=auto_start if auto_start is not None else self.auto_start)
-
+        self.begin_simulation(
+            start=self.auto_start if auto_start is None else bool(auto_start)
+        )
+        print(f"FORMAL SIMULATION UI: http://localhost:{port}")
         try:
             while True:
                 time.sleep(3600)
         except KeyboardInterrupt:
-            print("\n[EMU] Выход по Ctrl+C")
+            pass
         finally:
             self.request_force_exit()
             self.server.stop_server()
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description="Полноценный эмулятор UI")
-    p.add_argument("--host", default="0.0.0.0")
-    p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--review", type=float, default=4.0,
-                   help="пауза просмотра анализа, сек (0 = минимум)")
-    p.add_argument("--auto-start", action="store_true",
-                   help="запустить цикл автоматически (по умолчанию линия "
-                        "стоит в IDLE с пустой лентой, как в реальной программе)")
-    p.add_argument("--no-archive", action="store_true",
-                   help="отключить запись архива партий")
-    p.add_argument("--time-scale", type=float, default=1.0,
-                   help="масштаб таймингов (1.0 = реалистично, <1 быстрее)")
-    return p.parse_args()
+    parser = argparse.ArgumentParser(description="Formal conveyor simulator")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--review", type=float, default=5.0)
+    parser.add_argument("--auto-start", action="store_true")
+    parser.add_argument("--no-archive", action="store_true")
+    parser.add_argument("--time-scale", type=float, default=1.0)
+    return parser.parse_args()
 
 
 def main():
     args = _parse_args()
-    emu = Emulator(
+    Emulator(
         seed=args.seed,
         review_seconds=args.review,
         auto_start=args.auto_start,
         archive_enabled=not args.no_archive,
         time_scale=args.time_scale,
-    )
-    emu.run(host=args.host, port=args.port)
+    ).run(args.host, args.port)
 
 
 if __name__ == "__main__":
