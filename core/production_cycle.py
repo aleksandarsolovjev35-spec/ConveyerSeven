@@ -282,19 +282,15 @@ class ProductionCycle:
         return self.sm.request_exit()
 
     def request_pause(self) -> bool:
-        """Запросить паузу после остановки шага и до работы нейронок."""
+        """Запросить паузу перед началом нового цикла анализа."""
         if self.state != "RUNNING" or self.exit_requested:
             return False
         if self._pause_requested.is_set():
             return True
-        # Фоновая проверка могла уже закончить работу на кадре до паузы.
-        # После PAUSED этот результат больше не описывает текущую позицию:
-        # при продолжении INPUT нужно проверить заново.
-        self._invalidate_background_presence()
         self._pause_requested.set()
         self._set_process(
             "PAUSE_REQUESTED",
-            "Пауза будет применена после остановки шага и до работы нейронок",
+            "Пауза будет применена перед началом нового цикла анализа",
             positions=range(self.OFFSET_REJECT + 1),
         )
         self._refresh_monitor()
@@ -1021,6 +1017,7 @@ class ProductionCycle:
         Владелец камер меняется только на границах фаз, поэтому кадры для
         defect rules физически не могут быть сняты во время движения.
         """
+        self._check_pause_barrier()
         self._check_motion_cancelled()
         print(f"\nШАГ {self.current_step + 1}")
 
@@ -1064,7 +1061,6 @@ class ProductionCycle:
             self._background_presence_thread.start()
 
         self._stage_settle(pending_id)
-        self._check_pause_barrier()
         frame_runs = self._stage_capture()
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
