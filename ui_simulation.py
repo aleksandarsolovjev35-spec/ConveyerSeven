@@ -24,6 +24,12 @@ from vision.ui.server.server import CAMERA_ORDER, UIServer
 
 
 @dataclass
+class SimRule:
+    """Small compatible rule-result object consumed by DebugOverlay."""
+    drawings: list[dict]
+
+
+@dataclass
 class SimPart:
     id: int
     position: int = 0
@@ -217,11 +223,13 @@ class LineSimulation:
 
     def _run_camera_stages(self) -> bool:
         """Run the same role-by-role inspection cadence that drives the UI."""
-        target = next((part for part in self.parts if part.position == 0), None)
-        stages = self.INPUT_STAGES
+        # Complete the control verdict first: a continuous feed can already
+        # contain a new input body while another body waits at +4.
+        target = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
+        stages = self.CONTROL_STAGES
         if target is None:
-            target = next((part for part in self.parts if part.position == 4 and not part.inspected), None)
-            stages = self.CONTROL_STAGES
+            target = next((part for part in self.parts if part.position == 0), None)
+            stages = self.INPUT_STAGES
         if target is None:
             return True
         for role in stages:
@@ -251,6 +259,25 @@ class LineSimulation:
         self.dist2_position = 340 if category == "CLEANUP" else 0
         self.dist1_state = "GOOD" if category == "GOOD" else "TO_DIST2"
         self.dist2_state = "READY"
+
+    def _virtual_overlay_data(self, roles: list[str], line_parts: list[dict]) -> tuple[dict, list[SimRule]]:
+        """Supply valid RAW detections and RULES drawings to the real renderers."""
+        category = next((item.get("category") for item in line_parts if item.get("category")), "")
+        triggered = category in ("BAD", "CLEANUP")
+        raw = {}
+        drawings = []
+        for index, role in enumerate(roles or CAMERA_ORDER):
+            x = 145 + (index % 4) * 18
+            bbox = [x, 230, x + 175, 350]
+            raw[role] = [{"class": "glass" if category == "CLEANUP" else "case", "bbox": bbox}]
+            drawings.append({
+                "role": role,
+                "type": "rule_bbox",
+                "bbox": bbox,
+                "triggered": triggered,
+                "color_hint": "glass" if category == "CLEANUP" else None,
+            })
+        return raw, [SimRule(drawings=drawings)]
 
     def _frame_analysis_payload(self) -> dict:
         inspection = next((part for part in self.parts if part.position == 4), None)
@@ -344,8 +371,11 @@ class LineSimulation:
         # Publish fresh virtual camera frames on every production state change.
         # The regular UI therefore exercises its real frame versioning, RAW/
         # RULES source switching and thumbnail refresh paths.
+        vision_results, rule_results = self._virtual_overlay_data(active_roles, line_parts)
         self.server.update(
             frames=demo_frames(self.step, phase, line_parts),
+            vision_results=vision_results,
+            rule_results=rule_results,
             line_status=status,
             recent_parts=recent,
         )
