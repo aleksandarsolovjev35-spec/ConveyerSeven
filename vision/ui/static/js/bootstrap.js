@@ -153,66 +153,7 @@ function init() {
     setInterval(updateUptime, UPTIME_INTERVAL);
 }
 
-function setupForTest() {
-    els.cameraContainer = document.querySelector('.camera-container');
-    setupButtons();
-    setupHotkeys();
-    setupGallery();
-    if (typeof setupArchiveSettings === 'function') setupArchiveSettings();
-    setupCameraHover();
-    setupViewModeControls();
-    setupJogControls();
-    setupDistributorDiagnostics();
-    setupSelectedFrameAnalysis();
-    setupThresholdsControls();
-    state.bootDone = true;
-    state.bootDoneAt = Date.now();
-    state.statusReceived = true;
-    state.jogReceived = true;
-    state.uiReady = true;
-    state.uiRevealed = true;
-    state.splashActive = false;
-    els.splash.classList.add('is-hidden');
-    els.main.classList.remove('is-hidden');
-}
-
-if (window.__TRANSPORTER_UI_TEST__ === true) {
-    window.__TRANSPORTER_UI_TEST_API__ = {
-        state,
-        els,
-        setupForTest,
-        updateLineStatus,
-        updateJogState,
-        updateLineCells,
-        flushPendingAnalysis,
-        armPendingFlushFallback,
-        updateRecentParts,
-        updateStateOverlay,
-        updateMode,
-        updateDistributorDiagnosticControls,
-        updateSelectedAnalysisStatus,
-        showSelectedAnalysisFrame,
-        returnSelectedCameraToLive,
-        applyButtonsForState,
-        markUiOffline,
-        beginJogHold,
-        releaseJogHold,
-        clearJogHoldLocalState,
-        fetchStatus,
-        fetchCameras,
-        selectCamera,
-        toggleMode,
-        setViewMode,
-        updateViewModeControls,
-        setFrameAnalysisRulesFilter,
-        openGallery,
-        closeGallery,
-        renderGalleryImages,
-        showControlError,
-        clearControlError,
-        getMainBufferSource: () => mainBuffer.src,
-    };
-} else if (document.readyState === 'loading') {
+if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
     init();
