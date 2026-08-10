@@ -28,9 +28,9 @@ class BaseRule:
 
     def __init__(self, thresholds: dict):
         self.thresholds = thresholds
-        # Production rule membership is code-owned.  It is deliberately not
-        # derived from operator threshold data.
-        self._enabled = True
+        self._enabled = self.name not in thresholds.get(
+            "disabled_rules", []
+        )
 
     @property
     def enabled(self) -> bool:

@@ -9,9 +9,6 @@ def setup_archive_routes(app, server):
     async def get_archive_part(part_id: int):
         if not server.archive:
             raise HTTPException(404, "Archive not available")
-        state = (server.line_status or {}).get("state")
-        if state not in (None, "IDLE", "STOPPED"):
-            raise HTTPException(409, "Archive viewer is available only before RUN or in STOPPED")
 
         info = server.archive.get_part_info(part_id)
         if not info:
@@ -69,9 +66,6 @@ def setup_archive_routes(app, server):
                 f"kind must be one of {valid_kinds}",
             )
 
-        info = server.archive.get_part_info(part_id)
-        if not info or not server.archive._verify_committed_part(info["folder"]):
-            raise HTTPException(404, "Committed manifest not found")
         images = server.archive.get_part_images(part_id)
         if role not in images or kind not in images[role]:
             raise HTTPException(

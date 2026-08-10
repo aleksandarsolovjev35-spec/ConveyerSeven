@@ -895,34 +895,23 @@ def build_rule_summary(rule_name: str, details: dict) -> list:
 
 
 def build_presence_summary(details: dict) -> list:
-    limits = details.get("presence_min_count_by_role") or {}
-    # Read-only compatibility for pre-production diagnostic payloads; new
-    # production payloads never emit this legacy field.
-    if not limits:
-        legacy = "false_" + "positive_max_count_by_role"
-        limits = {
-            role: float(value) + 1
-            for role, value in (details.get(legacy) or {}).items()
-        }
+    limits = details.get("false_positive_max_count_by_role") or {}
     cards = []
-    for role, raw_key in (
-        ("INPUT_LEFT", "flatness_left"),
-        ("INPUT_RIGHT", "flatness_right"),
+    for role, raw_key, effective_key in (
+        ("INPUT_LEFT", "flatness_left", "effective_flatness_left"),
+        ("INPUT_RIGHT", "flatness_right", "effective_flatness_right"),
     ):
         found = details.get(raw_key)
         if found is None:
             continue
         limit = limits.get(role)
         present = None
-        if isinstance(limit, (int, float)):
-            present = float(found) >= float(limit)
+        if isinstance(limit, int):
+            present = int(found) > limit
         metrics = [
             metric for metric in (
-                _metric(
-                    "flatness", found, limit,
-                    ok=present if present is not None else None,
-                    key="presence_min_count",
-                ),
+                _metric("flatness", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
+                _metric("Зачтено, шт", details.get(effective_key), key="effective_flatness"),
             ) if metric is not None
         ]
         cards.append({

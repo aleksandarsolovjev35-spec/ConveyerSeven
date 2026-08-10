@@ -1,13 +1,9 @@
 import time
-import hashlib
-import json
 import threading
 import traceback
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 
 from core.live_preview import LivePreview
-from core.command_arbiter import CommandArbiter
 from core.rule_report import build_rule_report_row, build_rule_report_rows
 from core.state_machine import StateMachine, State
 from core.step_stages import (
@@ -26,10 +22,6 @@ from inspection.consensus import (
     summarize_model_health,
 )
 from inspection.result import InspectionResult
-from core.identity import IdentityCounters
-from core.fault import FaultLatch
-from inspection.model_worker import terminate_all_workers
-
 from domain.part import (
     Part,
     CATEGORY_GOOD,
@@ -74,10 +66,6 @@ class ProductionCycle:
         settle_seconds=STAGE_SETTLE_SECONDS,
         stage_trace_seconds=STAGE_TRACE_SECONDS,
         review_seconds=REVIEW_SECONDS,
-        journal=None,
-        initial_frame_max_age: float | None = 5.0,
-        manifest: dict | None = None,
-        threshold_revision: str | None = None,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -86,30 +74,13 @@ class ProductionCycle:
         self.monitor      = monitor
         self.archive      = archive
         self.jog          = jog
-        self.journal = journal
         self.review_seconds = max(0.0, float(review_seconds))
-        self.initial_frame_max_age = (
-            None if initial_frame_max_age is None else max(0.0, float(initial_frame_max_age))
-        )
 
         self.distributor.on_state_changed = self._refresh_monitor
 
         self.sm = StateMachine(on_transition=self._on_state_change)
-        self.command_arbiter = CommandArbiter(
-            self._handle_command,
-            lambda: self.sm.get_snapshot(),
-        )
 
         self.parts: list = []
-        # One process owns one batch.  The archive created by main carries the
-        # same batch id; a test/offline cycle creates its own identity.
-        self.identity = IdentityCounters(
-            getattr(archive, "batch_id", None) or None
-        )
-        self.batch_id = self.identity.batch_id
-        self.run_id = None
-        self.config_revision = threshold_revision
-        self.manifest = dict(manifest or {})
         self.part_counter = 0
         self.current_step = 0
 
@@ -129,22 +100,10 @@ class ProductionCycle:
 
         self._drain_start_time: float = 0
         self._fault_reason = None
-        self._fault_latch = FaultLatch()
         self._operation_lock = threading.Lock()
         self._cancel_motion = threading.Event()
         self.distributor.cancel_check = self._cancel_motion.is_set
-        if hasattr(self.conveyor, "cancel_check"):
-            self.conveyor.cancel_check = self._cancel_motion.is_set
         self._process_revision = 0
-        self._analysis_batch_active = False
-        self._review_published = False
-        self._review_active = False
-        # Compatibility flags for old adapters; production never runs a
-        # background presence inference from these fields.
-        self._background_presence_thread = None
-        self._background_presence_result = None
-        self._background_presence_usable = False
-        self._background_presence_generation = 0
         # Снимки inspection остаются операторским стоп-кадром до следующего
         # движения, хотя физические камеры уже вернулись в live.
         self._inspection_display_roles = ()
@@ -193,32 +152,19 @@ class ProductionCycle:
         # Пауза в рабочем цикле
         self._pause_requested = threading.Event()
         self._pause_frame_active = False
-        # STOP/EXIT are pending while a movement, inference, persistence or
-        # five-second review transaction is active.  They are applied only at
-        # the safe boundary after that transaction.
-        self._pending_stop = False
-        self._pending_exit = False
 
         # Первый шаг после пуска: сначала контроль того, что уже стоит под
         # камерами, и только потом движение ленты.
         self._await_initial_inspection = False
-        self._resume_inspection_only = False
-        self._jog_moved = False
-        self._snapshot_after = None
-        self._snapshot_generation = None
-        self._pause_before_settle = False
 
-    def _journal_append(self, event: str, **fields):
-        journal = getattr(self, "journal", None)
-        if journal is None:
-            return
-        journal.append(
-            event,
-            batch_id=self.batch_id,
-            run_id=self.run_id,
-            current_step=self.current_step,
-            **fields,
-        )
+        # Фоновая проверка наличия детали (InputPartPresence). Результат
+        # действителен только до первой паузы: после паузы положение детали
+        # может быть скорректировано, поэтому старый live-кадр нельзя
+        # использовать для решения о том, что сейчас находится под INPUT-камерами.
+        self._background_presence_thread = None
+        self._background_presence_result = None
+        self._background_presence_usable = False
+        self._background_presence_generation = 0
 
     # Process telemetry
 
@@ -247,8 +193,7 @@ class ProductionCycle:
             "revision": self._process_revision,
             "updated_at": time.time(),
         }
-        if not getattr(self, "_analysis_batch_active", False):
-            self._refresh_monitor()
+        self._refresh_monitor()
 
     def _on_conveyor_progress(self, status: dict):
         current = self._process
@@ -269,84 +214,27 @@ class ProductionCycle:
 
     # Public API
 
-    def dispatch_command(self, command_id: str, command: str, *args, **payload):
-        """HMI entry point; all mutating commands pass one arbiter."""
-        normalized = {
-            "ПУСК": "START", "СТОП": "STOP", "ПАУЗА": "PAUSE",
-            "ПРОДОЛЖИТЬ": "RESUME", "ВЫХОД": "EXIT",
-            "FORCE_EXIT": "FORCE_EXIT",
-        }.get(str(command).upper(), str(command).upper())
-        if args:
-            payload["args"] = args
-        return self.command_arbiter.submit(command_id, normalized, **payload)
-
-    def _handle_command(self, command: str, **payload):
-        args = tuple(payload.pop("args", ()))
-        handlers = {
-            "START": self.request_start, "STOP": self.request_stop,
-            "PAUSE": self.request_pause, "RESUME": self.request_resume,
-            "EXIT": self.request_exit, "FORCE_EXIT": self.request_force_exit,
-        }
-        if command == "JOG":
-            return self.jog_hold_start(*args)
-        handler = handlers.get(command)
-        if handler is None:
-            raise ValueError(f"unsupported command: {command}")
-        return handler()
-
-    def _current_threshold_revision(self) -> str | None:
-        thresholds = getattr(getattr(self.inspector, "decision", None), "thresholds", None)
-        if not isinstance(thresholds, dict):
-            return self.config_revision
-        encoded = json.dumps(thresholds, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-
     def request_start(self):
         if not self._operation_lock.acquire(blocking=False):
             return False
         try:
             if self._selected_analysis_active:
                 return False
-            if self.live.error or getattr(getattr(self, "cameras", None), "live_error", None):
+            if self.live.error:
                 return False
-            if self.archive is not None and getattr(self.archive, "enabled", False):
-                require_space = getattr(self.archive, "require_space", None)
-                if callable(require_space):
-                    try:
-                        require_space()
-                    except Exception as exc:
-                        self._handle_fault(f"archive storage gate failed: {exc}")
-                        return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
             if self.jog_active:
                 print("[JOG] auto-exit on START")
                 self.exit_jog()
             # The frame thread may fail while START waits for JOG shutdown.
-            if self.live.error or getattr(getattr(self, "cameras", None), "live_error", None):
+            if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
                 return False
-            require_camera_health = getattr(getattr(self, "cameras", None), "require_live_health", None)
-            if callable(require_camera_health):
-                try:
-                    require_camera_health()
-                except Exception as exc:
-                    self._handle_fault(f"camera health gate failed at START: {exc}")
-                    return False
-            if self.state not in ("IDLE", "STOPPED") or self.parts:
+            if self.state not in ("IDLE", "STOPPED"):
                 return False
             self._cancel_motion.clear()
-            self._pending_stop = False
-            self._pending_exit = False
-            # A new run always starts from logical step zero.  It is not a
-            # reset of the batch/part counter.
-            self.current_step = 0
-            self.config_revision = self._current_threshold_revision()
-            self.run_id = self.identity.new_run().run_id
-            verify_reset = getattr(self.conveyor, "verify_reset_state", None)
-            if callable(verify_reset):
-                verify_reset()
             self._set_process(
                 "START_POSITIONING",
                 "Возврат распределителя в рабочее положение",
@@ -356,23 +244,12 @@ class ProductionCycle:
             except Exception as exc:
                 self._handle_fault(f"Не удалось установить распределитель в рабочее положение: {exc}")
                 raise
-            accepted = self.sm.request_start(run_id=self.run_id)
+            accepted = self.sm.request_start()
             if accepted:
-                try:
-                    self._journal_append("run_started", threshold_revision=self.config_revision)
-                except Exception as exc:
-                    self._handle_fault(f"run start journal failed: {exc}")
-                    raise
-                register_run = getattr(self.archive, "register_run", None)
-                if callable(register_run):
-                    try:
-                        register_run(self.run_id, self.config_revision)
-                    except Exception as exc:
-                        self._handle_fault(f"batch run manifest failed: {exc}")
-                        raise
                 self._drain_start_time = 0
                 self._fault_reason = None
                 self._reset_frame_analysis()
+                self._invalidate_background_presence()
                 # Деталь могла остаться под входными камерами ещё до пуска:
                 # первый шаг выполняется без движения ленты, чтобы она
                 # попала в учёт, а не уехала дальше непроверенной.
@@ -397,39 +274,12 @@ class ProductionCycle:
 
     def request_stop(self):
         self._pause_requested.clear()
-        if self.state not in ("RUNNING", "PAUSED"):
-            return False
-        if self.state == "PAUSED":
-            if self._pause_frame_active:
-                self._stop_pause_frame_loop()
-            return self.sm.request_stop()
-        # During a step/review this is a pending command.  It never cancels
-        # inference, durable save, or REVIEW.
-        if self.stages.stage.value in {"MOTION", "SETTLE", "CAPTURE", "ANALYSIS", "REVIEW", "PUBLISH"}:
-            self._pending_stop = True
-            return True
         if self._pause_frame_active:
             self._stop_pause_frame_loop()
         return self.sm.request_stop()
 
     def request_exit(self):
         self._pause_requested.clear()
-        if self.state == "FAULT":
-            # The HMI labels the same physical button FORCE EXIT in FAULT;
-            # no graceful/production exit path exists from a latched fault.
-            return self.request_force_exit()
-        if self.state == "PAUSED":
-
-            if self._pause_frame_active:
-                self._stop_pause_frame_loop()
-            self.sm.request_exit()
-            if self.sm.state == State.PAUSED:
-                self.sm.request_stop()
-            return True
-        if self.state == "RUNNING" and self.stages.stage.value != "IDLE":
-            self._pending_exit = True
-            self._pending_stop = True
-            return True
         if self._pause_frame_active:
             self._stop_pause_frame_loop()
         return self.sm.request_exit()
@@ -440,10 +290,10 @@ class ProductionCycle:
             return False
         if self._pause_requested.is_set():
             return True
-        self._invalidate_background_presence()
-        # Presence is always recomputed from the post-motion snapshot.
+        # Фоновая проверка могла уже закончить работу на кадре до паузы.
         # После PAUSED этот результат больше не описывает текущую позицию:
         # при продолжении INPUT нужно проверить заново.
+        self._invalidate_background_presence()
         self._pause_requested.set()
         self._set_process(
             "PAUSE_REQUESTED",
@@ -467,8 +317,6 @@ class ProductionCycle:
             # возобновления, а не решён по результату до паузы.
             self._invalidate_background_presence()
             self._pause_requested.clear()
-            if not getattr(self, "_pause_before_settle", False):
-                self._resume_inspection_only = True
             accepted = self.sm.request_resume()
             if not accepted:
                 return False
@@ -532,8 +380,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
             # cap.read() может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
-            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
                 drain()
             frames = self.cameras.capture_all()
             camera_rows = []
@@ -584,8 +432,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: в IDLE/STOPPED после JOG или прогрева
             # cap.read() может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
-            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
                 drain()
             frames = self.cameras.capture_all()
             vision_results = self.inspector.vision.process_all(frames)
@@ -657,27 +505,88 @@ class ProductionCycle:
         )
 
     def _invalidate_background_presence(self):
-        """Clear legacy cache flags; no background production inference exists."""
-        self._background_presence_generation += 1
+        """Запретить быстрый live-результат для текущей позиции.
+
+        ``_run_background_presence_check`` смотрит кадры из UI-кэша, а не
+        захватывает инспекционный кадр. Это безопасно только пока положение
+        ленты не менялось. Поэтому после запроса/снятия паузы нужно
+        обязательно пройти обычный свежий захват INPUT; ограничения JOG
+        этот механизм не вводит.
+        """
+        self._background_presence_generation = (
+            getattr(self, "_background_presence_generation", 0) + 1
+        )
         self._background_presence_usable = False
         self._background_presence_result = None
 
-    def _manual_presence_result(self, vision_results):
-        checker = getattr(self.inspector, "_evaluate_part_presence")
+    def _background_presence_is_current(self, generation: int) -> bool:
+        """Проверить, что фоновый поток относится к текущей позиции."""
+        pause_requested = getattr(self, "_pause_requested", None)
+        return (
+            getattr(self, "_background_presence_usable", False)
+            and getattr(self, "_background_presence_generation", 0) == generation
+            and not (pause_requested is not None and pause_requested.is_set())
+        )
+
+    def _run_background_presence_check(self, generation: int | None = None):
+        """Проверка наличия детали по последнему лайв-изображению.
+
+        Выполняется в отдельном потоке сразу после остановки ленты, пока
+        основной цикл ждёт затухания вибраций (SETTLE). Это позволяет
+        мгновенно определить пустой лоток и пропустить полноценный захват
+        кадров для этой позиции. Если в это время запрошена пауза, результат
+        отбрасывается: после паузы позицию нужно подтвердить свежим кадром.
+        """
         try:
-            return checker(vision_results, production=False)
-        except TypeError as exc:
-            # Offline/test adapters may predate the explicit manual-mode flag;
-            # their single-role check is already diagnostic-only.
-            if "production" not in str(exc):
-                raise
-            # Legacy inspector wrappers may call the rule with its production
-            # default.  Manual diagnostic mode must still be explicitly
-            # single-camera and must not be allowed to fake production data.
-            thresholds = getattr(getattr(self.inspector, "decision", None), "thresholds", {})
-            return InputPartPresenceRule(thresholds).check(
-                vision_results, production=False
-            )
+            if generation is None:
+                generation = self._background_presence_generation
+
+            # Даем лайв-просмотру время обновить хотя бы один кадр после
+            # физической остановки ленты. 150мс — это 2-3 такта FPS_AUX.
+            time.sleep(0.15)
+
+            if not self._background_presence_is_current(generation):
+                return
+            if not self.monitor or not self.monitor.server:
+                return
+
+            with self.monitor.server.lock:
+                # Берем последние кадры из монитора (лайв-поток).
+                # Нас интересует только входная группа.
+                frames = {
+                    role: self.monitor.server.frames[role].copy()
+                    for role in self.inspector.INPUT_ROLES
+                    if role in self.monitor.server.frames
+                }
+
+            if len(frames) < len(self.inspector.INPUT_ROLES):
+                return
+            if not self._background_presence_is_current(generation):
+                return
+
+            # Выполняем быстрый прогон моделей и правила наличия
+            vision_results = self.inspector.vision.process_all(frames)
+            presence_result = self.inspector._evaluate_part_presence(vision_results)
+
+            # Пауза могла быть нажата во время работы моделей. Не публикуем
+            # результат, рассчитанный до изменения физической позиции.
+            if not self._background_presence_is_current(generation):
+                return
+
+            # Сохраняем результат для основного цикла
+            health_with_run = [
+                {**h, "run": 1}
+                for h in (getattr(self.inspector.vision, "last_health", None) or [])
+            ]
+            self._background_presence_result = {
+                "is_empty": bool(presence_result.details.get("empty_tray")),
+                "frames": frames,
+                "vision_results": vision_results,
+                "presence_result": presence_result,
+                "model_health": summarize_model_health(health_with_run),
+            }
+        except Exception as exc:
+            print(f"[BG-PRESENCE] Ошибка фоновой проверки наличия: {exc}")
 
     def _set_diagnostic_running(self, kind: str, message: str):
         self._diagnostics = {
@@ -717,7 +626,7 @@ class ProductionCycle:
         try:
             if not self._prestart_diagnostic_allowed():
                 return False
-            available_roles = set(getattr(getattr(self, "cameras", None), "mapping", {}))
+            available_roles = set(getattr(self.cameras, "mapping", {}))
             if not available_roles:
                 available_roles = set(
                     self.inspector.INPUT_ROLES + self.inspector.SPIDER_ROLES
@@ -732,8 +641,8 @@ class ProductionCycle:
             # Сброс буфера драйвера: после паузы live cap.read()
             # может вернуть устаревший кадр. См. комментарий
             # в _stage_capture().
-            drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
-            if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
+            drain = getattr(self.cameras, "drain_buffers", None)
+            if callable(drain):
                 drain((role,))
 
             self._selected_analysis_active = True
@@ -782,7 +691,7 @@ class ProductionCycle:
 
                 if is_input:
                     presence_runs.append(
-                        self._manual_presence_result(vision_results)
+                        self.inspector._evaluate_part_presence(vision_results)
                     )
 
                 health_rows = getattr(
@@ -997,7 +906,6 @@ class ProductionCycle:
     def request_force_exit(self):
         self._cancel_motion.set()
         self._pause_requested.clear()
-        terminate_all_workers()
         if self._pause_frame_active:
             self._stop_pause_frame_loop()
         self.stages.reset()
@@ -1067,9 +975,9 @@ class ProductionCycle:
                         print("[EXIT] Not active -> exit.")
                         break
 
-                    if (self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)) and self.sm.state != State.FAULT:
+                    if self.live.error and self.sm.state != State.FAULT:
                         self._handle_fault(
-                            f"Ошибка камеры в режиме ручного управления: {self.live.error or getattr(getattr(self, 'cameras', None), 'live_error', None)}"
+                            f"Ошибка камеры в режиме ручного управления: {self.live.error}"
                         )
                         continue
                     if self.jog is not None:
@@ -1118,45 +1026,14 @@ class ProductionCycle:
     def _handle_fault(self, reason: str):
         self._cancel_motion.set()
         self._pause_requested.clear()
-        terminate_all_workers()
         self._stop_pause_frame_loop()
         self._selected_analysis_active = False
         self._selected_analysis_role = None
-        self._analysis_batch_active = False
         self.stages.reset()
         self.live.reset_pause()
-        # Physical CameraManager live readers remain active until application
-        # close, including FAULT.  HMI may continue showing healthy roles.
-        latch = getattr(self, "_fault_latch", None)
-        if latch is None:
-            latch = FaultLatch()
-            self._fault_latch = latch
-        if latch.root is None:
-            lower_reason = str(reason).lower()
-            code = "PRODUCTION_FAULT"
-            for marker, candidate in (
-                ("camera", "CAMERA_HEALTH"),
-                ("model", "MODEL_WORKER"),
-                ("rule", "RULE_EXECUTION"),
-                ("archive", "ARCHIVE_TRACEABILITY"),
-                ("journal", "OPERATIONAL_LOG"),
-                ("conveyor", "CONVEYOR_TELEMETRY"),
-                ("distributor", "DISTRIBUTOR_TELEMETRY"),
-                ("storage", "DISK_RESERVE"),
-            ):
-                if marker in lower_reason:
-                    code = candidate
-                    break
-            root = latch.latch(
-                code,
-                reason,
-                phase=self._process.get("phase") if hasattr(self, "_process") else None,
-                details={"traceback": traceback.format_exc()},
-            )
-            self._fault_reason = root.message
-        else:
-            latch.add_secondary("SECONDARY_FAULT", reason, phase=self._process.get("phase"))
-        print(f"[FAULT] {self._fault_reason}")
+        self.live.stop()
+        self._fault_reason = reason
+        print(f"[FAULT] {reason}")
         print(
             f"[FAULT] В очереди осталось "
             f"{len(self.parts)} деталей"
@@ -1167,7 +1044,7 @@ class ProductionCycle:
                 self.exit_jog()
             except Exception as exc:
                 print(f"[JOG] release during fault failed: {exc}")
-        self._set_process("FAULT", self._fault_reason)
+        self._set_process("FAULT", reason)
         self._safe_emergency_stop()
         self._refresh_monitor()
 
@@ -1185,17 +1062,6 @@ class ProductionCycle:
                 return
 
         try:
-            if self.archive is not None and getattr(self.archive, "enabled", False):
-                require_space = getattr(self.archive, "require_space", None)
-                if callable(require_space):
-                    require_space()
-            camera_health = getattr(getattr(self, "cameras", None), "require_live_health", None)
-            if callable(camera_health):
-                camera_health()
-            if getattr(getattr(self, "cameras", None), "live_error", None):
-                raise RuntimeError(
-                    f"camera health failed: {getattr(getattr(self, 'cameras', None), 'live_error', None)}"
-                )
             self._run_once()
         except Exception as e:
             # Повтор неудачного физического шага теряет соответствие
@@ -1234,10 +1100,6 @@ class ProductionCycle:
         defect rules физически не могут быть сняты во время движения.
         """
         self._check_motion_cancelled()
-        # A watchdog/UI pause that arrives between steps must be applied
-        # before the next physical command, not after it.
-        if self._pause_requested.is_set() and self.sm.state == State.RUNNING:
-            self._check_pause_barrier()
         print(f"\nШАГ {self.current_step + 1}")
 
         # Право принять INPUT фиксируется до движения: если STOP придёт уже
@@ -1248,65 +1110,50 @@ class ProductionCycle:
         self._last_vision_results = {}
         self._last_rule_results = []
 
-        # A resume after PAUSED is a stationary re-inspection of the same
-        # logical step.  It must not issue another production G3.
-        stationary_resume = bool(getattr(self, "_resume_inspection_only", False))
-        self._resume_inspection_only = False
-        if stationary_resume:
-            self.stages.reset()
-            self.stages.enter_motion()
-            self._pending_drop = None
-            self._initial_inspection_active = False
-            pending_id = None
-        else:
-            initial_inspection = self._await_initial_inspection
-            self._initial_inspection_active = bool(initial_inspection)
-            pending_id = self._stage_motion()
+        # Запоминаем особый первый шаг до _stage_motion(): внутри него флаг
+        # _await_initial_inspection сбрасывается, иначе фоновая проверка могла
+        # ошибочно заменить обязательный свежий захват детали, уже стоящей
+        # под INPUT при пуске.
+        initial_inspection = self._await_initial_inspection
+        pending_id = self._stage_motion()
 
-        # Presence is evaluated from the immutable post-motion snapshot.
-        # A pre-settle/live optimisation is forbidden: it could create an
-        # empty decision from a different frame than the other INPUT rules.
-        # A PAUSE requested during movement is applied before SETTLE and
-        # snapshots.  STOP remains pending and the already issued movement is
-        # still completed/confirmed.
-        self._pause_before_settle = True
-        self._check_pause_barrier()
-        self._pause_before_settle = False
-        self._stage_settle(
-            pending_id,
-            settle=(not stationary_resume or bool(getattr(self, "_jog_moved", False))),
+        # Фоновая проверка наличия: запускается сразу после wait_stop()
+        # внутри _stage_motion, чтобы работать параллельно с _stage_settle.
+        # Её результат — лишь оптимизация пустого лотка. При паузе он
+        # инвалидируется и _stage_capture всегда получает свежие INPUT-кадры.
+        self._background_presence_generation = (
+            getattr(self, "_background_presence_generation", 0) + 1
         )
-        self._jog_moved = False
+        background_generation = self._background_presence_generation
+        self._background_presence_result = None
+        self._background_presence_thread = None
+        self._background_presence_usable = (
+            accept_input_for_this_step
+            and not initial_inspection
+            and not self._pause_requested.is_set()
+        )
+        if self._background_presence_usable:
+            self._background_presence_thread = threading.Thread(
+                target=self._run_background_presence_check,
+                args=(background_generation,),
+                daemon=True,
+                name="background-presence-check",
+            )
+            self._background_presence_thread.start()
+
+        self._stage_settle(pending_id)
+        self._check_pause_barrier()
         frame_runs = self._stage_capture()
         display_frames = self._stage_analysis(
             frame_runs, accept_input_for_this_step,
         )
         self._stage_review(display_frames)
         self._stage_publish(display_frames)
-        self._apply_pending_at_boundary()
-
-    def _apply_pending_at_boundary(self):
-        """Apply STOP/PAUSE only after analysis, persistence and REVIEW."""
-        if self._pending_stop or self._pending_exit:
-            self._pending_stop = False
-            if self._pending_exit:
-                self._pending_exit = False
-                self.sm.request_exit()
-            else:
-                self.sm.request_stop()
-            self._pause_requested.clear()
-            return
-        if self._pause_requested.is_set() and self.sm.state == State.RUNNING:
-            if self.sm.request_pause():
-                self._enter_pause_frame()
-            else:
-                self._pause_requested.clear()
 
     def _stage_motion(self):
         """MOTION: подготовить маршрут и переместить ленту на шаг."""
         self.stages.enter_motion()
         self._inspection_display_roles = ()
-        self._review_published = False
         # Разметка прошлого шага построена по статичному кадру и на
         # движущемся изображении указывала бы мимо детали.
         self.live.clear_overlays()
@@ -1324,9 +1171,6 @@ class ProductionCycle:
             self._check_motion_cancelled()
             return None
 
-        verify_reset = getattr(self.conveyor, "verify_reset_state", None)
-        if callable(verify_reset):
-            verify_reset()
         self._pending_drop = self._find_pending_drop()
         pending_id = self._pending_drop.id if self._pending_drop else None
         self._set_process(
@@ -1344,29 +1188,16 @@ class ProductionCycle:
             part_id=pending_id,
             positions=range(self.OFFSET_REJECT + 1),
         )
-        # The journal boundary is before the physical command.  If it fails,
-        # no G3 is allowed to leave the process.
-        self._journal_append(
-            "motion_intent",
-            part_id=pending_id,
-            route=(self._pending_drop.route_category if self._pending_drop else None),
-            target=getattr(self.conveyor, "production_target", 38096),
-        )
         self.conveyor.move_step()
         self.conveyor.wait_stop(progress_callback=self._on_conveyor_progress)
         self._check_motion_cancelled()
-        self._journal_append(
-            "motion_confirmed",
-            part_id=pending_id,
-            target=getattr(self.conveyor, "production_target", 38096),
-        )
-        # Логическая позиция фиксируется только после полного telemetry
-        # confirmation, exactly once.
+        # Логическая позиция фиксируется только после подтверждения
+        # физического завершения движения.
         self.current_step += 1
         return pending_id
 
-    def _stage_settle(self, pending_id, settle: bool = True):
-        """SETTLE: confirm transfer and optionally wait for vibration."""
+    def _stage_settle(self, pending_id):
+        """SETTLE: подтвердить передачу корпуса и погасить вибрацию."""
         self._set_process(
             "CONVEYOR_CONFIRMED", "Позиции корпусов подтверждены контроллером",
             part_id=pending_id, positions=range(self.OFFSET_REJECT + 1),
@@ -1383,18 +1214,7 @@ class ProductionCycle:
         if any(p.step_created + self.OFFSET_SPIDER == self.current_step for p in self.parts):
             active_cam_positions.append(self.OFFSET_SPIDER)
         self._set_process("SETTLE", "Ожидание затухания вибрации перед съёмкой", positions=active_cam_positions)
-        self.stages.enter_settle(wait=settle)
-        # Freshness starts only after confirmed stop and complete SETTLE.  The
-        # initial START inspection may use the last live frame within its age
-        # limit, while every later snapshot must cross this boundary.
-        if getattr(self, "_initial_inspection_active", False):
-            # A pre-START JOG may have invalidated the previous live frame;
-            # otherwise the last frame is allowed within initial_frame_max_age.
-            if getattr(self, "_snapshot_after", None) is None:
-                self._snapshot_after = None
-        else:
-            boundary = getattr(getattr(self, "cameras", None), "freshness_boundary", None)
-            self._snapshot_after = boundary() if callable(boundary) else None
+        self.stages.enter_settle()
         self._check_motion_cancelled()
 
     def _capture_roles_for_current_step(self) -> tuple[str, ...]:
@@ -1407,7 +1227,24 @@ class ProductionCycle:
         """
         roles = []
 
+        # Ожидаем завершения фоновой проверки, если она была запущена.
+        # После паузы фоновый результат намеренно игнорируется: это кадр,
+        # снятый до паузы, а не подтверждение текущего состояния под INPUT.
+        background_thread = getattr(self, "_background_presence_thread", None)
+        if background_thread:
+            background_thread.join(timeout=1.5)
+
         input_needed = self.sm.accepts_new_parts
+        background_result = getattr(self, "_background_presence_result", None)
+        background_usable = getattr(self, "_background_presence_usable", False)
+        if input_needed and background_usable and background_result:
+            if background_result["is_empty"]:
+                input_needed = False
+                print(
+                    f"[BG-PRESENCE] Step {self.current_step}: лоток пуст "
+                    "по live-кадру, захват INPUT пропущен"
+                )
+
         if input_needed:
             roles.extend(self.inspector.INPUT_ROLES)
         if any(
@@ -1443,28 +1280,12 @@ class ProductionCycle:
         # Драйвер может отдать старый кадр из буфера после движения. Дренируем
         # только нужные роли, затем получаем один свежий набор именно для
         # соответствующей стадии Part.
-        drain = getattr(getattr(self, "cameras", None), "drain_buffers", None)
-        if callable(drain) and not getattr(getattr(self, "cameras", None), "live_running", False):
-            # Legacy/offline adapters without a continuous buffer need a
-            # driver drain.  Production CameraManager never steals a frame
-            # from the live reader.
+        drain = getattr(self.cameras, "drain_buffers", None)
+        if callable(drain):
             drain(roles=roles)
-        capture_roles = getattr(getattr(self, "cameras", None), "capture_roles", None)
+        capture_roles = getattr(self.cameras, "capture_roles", None)
         if callable(capture_roles):
-            try:
-                after = getattr(self, "_snapshot_after", None)
-                max_age = (
-                    getattr(self, "initial_frame_max_age", None)
-                    if getattr(self, "_initial_inspection_active", False) else None
-                )
-                if after is None and max_age is None:
-                    frames = capture_roles(roles)
-                else:
-                    frames = capture_roles(roles, after=after, max_age=max_age)
-            except TypeError:
-                # Test doubles/legacy adapters expose the old positional API;
-                # they still receive the one immutable capture set.
-                frames = capture_roles(roles)
+            frames = capture_roles(roles)
         else:
             # Совместимость со старыми test doubles; production CameraManager
             # всегда предоставляет capture_roles().
@@ -1475,116 +1296,85 @@ class ProductionCycle:
                 f"Неполный набор кадров для инспекции: ожидались {sorted(roles)}, "
                 f"получены {sorted(frames)}"
             )
-        self._snapshot_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
         self._check_motion_cancelled()
-        # Нейросети используют только frames в памяти.  Physical CameraManager
-        # continues reading in the background; the UI gate remains held until
-        # REVIEW/PUBLISH has finished so the inspected roles stay frozen.
-        # Do not publish a stop-frame here.  During capture and inference HMI
-        # remains live; the immutable snapshot becomes visible only in the
-        # atomic analysis publication below.
+        # Нейросети используют только frames в памяти. Освобождаем камеры
+        # немедленно: INPUT/SPIDER, не участвующие в следующем чтении,
+        # уже продолжают live во время part_presence и defect rules.
+        release_capture = getattr(self.stages, "release_capture_roles", None)
+        if callable(release_capture):
+            release_capture()
+        # Публикуем frozen snapshot отдельным inspection-слоем. Live может
+        # сразу обновлять физические камеры, но UI выбранной inspection-роли
+        # видит именно кадр, по которому сейчас считается решение.
+        self._refresh_monitor(run_frames=[frames], run_rule_results=[[]])
         return [frames]
 
     def _stage_analysis(self, frame_runs, accept_input_for_this_step):
-        """Run independent INPUT and CONTROL transactions in parallel.
-
-        The frame set is copied once after the freshness boundary.  Both
-        workers receive that immutable-by-convention set; neither worker may
-        capture another frame or retry inference.  CONTROL is submitted even
-        when INPUT later reports defects.
-        """
+        """ANALYSIS: модели и defect rules по уже снятым кадрам."""
         self.stages.enter_analysis()
-        self._review_active = False
-        display_frames = dict(frame_runs[-1]) if frame_runs else {}
+
+        # Единственный набор кадров стадии: он же уходит в UI и архив.
+        display_frames = dict(frame_runs[-1])
+        run_frames = []
+        run_rule_results = []
+
+        # Определяем активные позиции для подсветки в UI
+        active_positions = []
+        if accept_input_for_this_step:
+            active_positions.append(self.OFFSET_INPUT)
+        if any((p.step_created + self.OFFSET_SPIDER == self.current_step) for p in self.parts):
+            active_positions.append(self.OFFSET_SPIDER)
+
+        if accept_input_for_this_step:
+            self._set_process(
+                "INPUT_ANALYSIS",
+                "Вход: модели и правила по свежему кадру",
+                positions=active_positions,
+            )
+            input_result = self._process_input_stage(frame_runs)
+            if input_result is not None:
+                display_frames.update(input_result.raw_frames)
+                run_frames = self._merge_run_frames(
+                    run_frames,
+                    getattr(input_result, "run_frames", None) or [],
+                )
+                run_rules = getattr(input_result, "run_rule_results", None) or []
+                if run_rules:
+                    run_rule_results.extend(run_rules)
+                # Если деталь на входе не обнаружена, убираем подсветку
+                if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
+                    active_positions.remove(self.OFFSET_INPUT)
+            self._check_motion_cancelled()
+
         spider_parts = [
             part for part in self.parts
             if part.step_created + self.OFFSET_SPIDER == self.current_step
         ]
-        active_positions = []
-        if accept_input_for_this_step:
-            active_positions.append(self.OFFSET_INPUT)
         if spider_parts:
-            active_positions.append(self.OFFSET_SPIDER)
-        self._set_process(
-            "ANALYSIS",
-            "Параллельная проверка INPUT и CONTROL по одному snapshot",
-            positions=active_positions,
-        )
-
-        input_future = None
-        spider_future = None
-        self._analysis_batch_active = True
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="inspection") as pool:
-            if accept_input_for_this_step:
-                input_future = pool.submit(self._process_input_stage, frame_runs)
-            if spider_parts:
-                spider_future = pool.submit(self._run_spider_inspection, frame_runs)
-
-            input_result = None
-            spider_result = None
-            input_error = spider_error = None
-            if input_future is not None:
-                try:
-                    input_result = input_future.result()
-                except Exception as exc:
-                    input_error = exc
-            if spider_future is not None:
-                try:
-                    spider_result = spider_future.result()
-                except Exception as exc:
-                    spider_error = exc
-            if input_error is not None:
-                raise input_error
-            if spider_error is not None:
-                raise spider_error
-
-        current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
-        if (
-            getattr(self, "_snapshot_generation", None) is not None
-            and current_generation is not None
-            and current_generation != getattr(self, "_snapshot_generation", None)
-        ):
-            raise RuntimeError(
-                "camera stream recovered during inspection; snapshot is no longer current"
+            self._set_process(
+                "SPIDER_CHECK",
+                "Проверка корпуса на +4: свежий кадр",
+                positions=active_positions,
             )
-        self._analysis_batch_active = False
-        run_frames = []
-        run_rule_results = []
-        input_is_empty = bool(input_result is not None and input_result.is_empty_tray)
-        if input_result is not None and not input_is_empty:
-            display_frames.update(input_result.raw_frames)
-            run_frames = self._merge_run_frames(
-                run_frames, getattr(input_result, "run_frames", None) or []
-            )
-            run_rules = getattr(input_result, "run_rule_results", None) or []
-            if run_rules:
-                run_rule_results = self._merge_run_rule_rows(run_rule_results, run_rules)
-        elif input_is_empty:
-            release_roles = getattr(self.stages, "release_roles", None)
-            if callable(release_roles):
-                release_roles(self.inspector.INPUT_ROLES)
-            for role in self.inspector.INPUT_ROLES:
-                display_frames.pop(role, None)
-            self._inspection_display_roles = tuple(
-                role for role in self._inspection_display_roles
-                if role not in self.inspector.INPUT_ROLES
-            )
+            spider_result = self._run_spider_inspection(frame_runs)
+            if spider_result is not None:
+                display_frames.update(spider_result.raw_frames)
+                run_frames = self._merge_run_frames(
+                    run_frames,
+                    getattr(spider_result, "run_frames", None) or [],
+                )
+                run_rules = getattr(spider_result, "run_rule_results", None) or []
+                if run_rules:
+                    run_rule_results = self._merge_run_rule_rows(
+                        run_rule_results, run_rules,
+                    )
+            self._check_motion_cancelled()
 
-        if spider_result is not None:
-            display_frames.update(spider_result.raw_frames)
-            run_frames = self._merge_run_frames(
-                run_frames, getattr(spider_result, "run_frames", None) or []
-            )
-            run_rules = getattr(spider_result, "run_rule_results", None) or []
-            if run_rules:
-                run_rule_results = self._merge_run_rule_rows(run_rule_results, run_rules)
-
-        # Atomic publication of all stage results and lightweight line state.
+        # Набор кадров стадии уходит в UI. Кадры, разметка, правила,
+        # статус линии и цвет корпусов публикуются ОДНИМ вызовом: фронтенд
+        # видит единый снимок и может показать обрисовку правил и цвет
+        # корпуса на линии синхронно.
         if run_frames:
-            self._review_active = True
-            # This is the single publication boundary at which the UI may
-            # replace live pixels with immutable inspection evidence.
-            self._review_published = True
             self._refresh_monitor(
                 display_frames,
                 run_frames=run_frames,
@@ -1626,18 +1416,6 @@ class ProductionCycle:
         до начала следующего шага. Паузу можно прервать остановкой или
         выходом из программы.
         """
-        if not getattr(self, "_review_active", False):
-            return
-        current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
-        if (
-            getattr(self, "_snapshot_generation", None) is not None
-            and current_generation is not None
-            and current_generation != getattr(self, "_snapshot_generation", None)
-        ):
-            raise RuntimeError("camera stream recovered before REVIEW; evidence must be recaptured")
-        enter_review = getattr(self.stages, "enter_review", None)
-        if callable(enter_review):
-            enter_review()
         if self.review_seconds <= 0:
             return
         self._refresh_monitor(display_frames)
@@ -1654,13 +1432,6 @@ class ProductionCycle:
                 or self.sm.state != State.RUNNING
             ):
                 break
-            current_generation = getattr(getattr(self, "cameras", None), "live_generation", None)
-            if (
-                getattr(self, "_snapshot_generation", None) is not None
-                and current_generation is not None
-                and current_generation != getattr(self, "_snapshot_generation", None)
-            ):
-                raise RuntimeError("camera stream recovered during REVIEW")
             whole = int(remaining + 0.999)
             if whole != shown_seconds:
                 shown_seconds = whole
@@ -1676,19 +1447,11 @@ class ProductionCycle:
         self._check_motion_cancelled()
 
     def _stage_publish(self, display_frames):
-        """PUBLISH: clear REVIEW and return inspected roles to clean live."""
+        """PUBLISH: маршрут годных деталей и вывод результата на экран."""
         self.stages.enter_publish()
-        release_capture = getattr(self.stages, "release_capture_roles", None)
-        if callable(release_capture):
-            release_capture()
-        self._review_published = False
-        self._review_active = False
-        self._inspection_display_roles = ()
-        # Snapshot evidence remains in Part/archive; the UI overlay does not.
-        self.live.clear_overlays()
-        self._reset_frame_analysis()
+
         self._set_process("STEP_COMPLETE", "Шаг полностью завершён")
-        self._refresh_monitor()
+        self._refresh_monitor(display_frames)
 
     # Пауза в рабочем цикле
 
@@ -1702,6 +1465,10 @@ class ProductionCycle:
             and self._pause_requested.is_set()
             and not self.sm.exit_requested
         ):
+            # Барьер может быть достигнут уже после завершения фоновой
+            # проверки. С этого момента её live-кадр больше не является
+            # основанием пропускать INPUT-захват.
+            self._invalidate_background_presence()
             if self.sm.request_pause():
                 self._enter_pause_frame()
             else:
@@ -1713,11 +1480,10 @@ class ProductionCycle:
                 self._stop_pause_frame_loop()
                 self.sm.request_stop()
                 break
-            camera_error = self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)
-            if camera_error:
+            if self.live.error:
                 self._handle_fault(
                     "Ошибка камеры во время паузы: "
-                    f"{camera_error}"
+                    f"{self.live.error}"
                 )
                 break
             jog_error = (
@@ -1758,6 +1524,47 @@ class ProductionCycle:
 
         candidate_id = self.part_counter + 1
 
+        # Если фоновая проверка уже обнаружила пустой лоток, мы пропустили
+        # захват кадров (frame_runs их не содержит) и сразу возвращаем итог.
+        # После паузы этот кэш недействителен, поэтому INPUT проходит обычный
+        # свежий захват и анализ даже при старом is_empty=True.
+        background_result = getattr(self, "_background_presence_result", None)
+        background_usable = getattr(self, "_background_presence_usable", False)
+        if background_usable and background_result and background_result["is_empty"]:
+            res = background_result
+            result = InspectionResult(
+                stage="input",
+                defects=[],
+                vision_results=res["vision_results"],
+                rule_results=[res["presence_result"]],
+                annotated={},
+                raw_frames=res["frames"],
+                raw_overlay_frames={},
+                is_empty_tray=True,
+                consensus={
+                    "runs": 1,
+                    "required_votes": 1,
+                    "evidence_run": 1,
+                    "part_presence": 1.0,
+                    "rules": {},
+                    "picture_run": 1,
+                    "picture_reason": "background_live_check",
+                },
+                model_health=res["model_health"],
+                run_frames=[res["frames"]],
+                run_rule_results=[[]],
+            )
+            self._record_frame_analysis("INPUT", None, result)
+            self.empty_count += 1
+            for role in self.inspector.INPUT_ROLES:
+                self._last_vision_results[role] = []
+            self._last_rule_results.extend(result.rule_results)
+            print(
+                f"[EMPTY] Step {self.current_step}: пустой лоток подтвержден "
+                "фоновым анализом (live)"
+            )
+            return result
+
         self._set_process(
             "INPUT_ANALYSIS",
             f"Вход: анализ кандидата #{candidate_id}",
@@ -1774,59 +1581,15 @@ class ProductionCycle:
             raise RuntimeError(
                 "Inspector не поддерживает обязательную INPUT инспекцию"
             )
-        part_holder = {}
-
-        def on_presence(presence_result):
-            self.part_counter += 1
-            part = Part(
-                self.part_counter,
-                self.current_step,
-                batch_id=self.batch_id,
-            )
-            self._journal_append(
-                "part_created",
-                part_id=part.id,
-                birth_step=part.birth_step,
-                presence=dict(presence_result.details),
-            )
-            part.threshold_revision = self.config_revision
-            part.part_manifest = dict(self.manifest)
-            part.inspection_consensus["input_presence"] = {
-                "presence_by_role": dict(
-                    presence_result.details.get("presence_by_role", {})
-                ),
-                "count_by_role": dict(
-                    presence_result.details.get("count_by_role", {})
-                ),
-            }
-            self.parts.append(part)
-            part_holder["part"] = part
-
-        try:
-            result = inspect_consensus(
-                part_id=candidate_id,
-                step=self.current_step,
-                frame_runs=frame_runs,
-                force_bad=self.force_all_bad,
-                on_presence=on_presence,
-            )
-        except TypeError as exc:
-            if "on_presence" not in str(exc):
-                raise
-            # Legacy/offline Inspector adapters have no identity callback;
-            # retain the old post-result creation path for them only.
-            result = inspect_consensus(
-                part_id=candidate_id,
-                step=self.current_step,
-                frame_runs=frame_runs,
-                force_bad=self.force_all_bad,
-            )
+        result = inspect_consensus(
+            part_id=candidate_id,
+            step=self.current_step,
+            frame_runs=frame_runs,
+            force_bad=self.force_all_bad,
+        )
         if result.is_empty_tray:
+            self._record_frame_analysis("INPUT", None, result)
             self.empty_count += 1
-            # Empty cells have no Part/evidence/history/archive entry.  The
-            # transient "empty" label is published by the current process
-            # status only.
-            self._frame_analysis_groups["INPUT"] = self._empty_frame_analysis_entry()
             # Очищаем детекции для входных камер, чтобы не рисовать прямоугольники
             # на пустом лотке.
             for role in self.inspector.INPUT_ROLES:
@@ -1839,24 +1602,16 @@ class ProductionCycle:
             # Пустой лоток остаётся нейтральным: Part и архив не создаются.
             return result
 
-        part = part_holder.get("part")
-        if part is None:
-            # Fallback for old Inspector doubles; production Inspector calls
-            # on_presence before ordinary INPUT rules.
-            on_presence(
-                type("Presence", (), {"details": {}})()
-            )
-            part = part_holder["part"]
-        part.threshold_revision = self.config_revision
-        part.part_manifest = dict(self.manifest)
+        self.part_counter += 1
+        part = Part(self.part_counter, self.current_step)
         part.inspection_consensus["input"] = dict(result.consensus)
+        self.parts.append(part)
         self._record_frame_analysis("INPUT", part.id, result)
         print(f"[INPUT] Деталь #{part.id}")
 
         for defect in result.defects:
             part.add_input_defect(defect)
         part.mark_input_done()
-        self._journal_append("input_completed", part_id=part.id, defects=list(result.defects))
 
         self._last_vision_results.update(result.vision_results)
         self._last_rule_results.extend(result.rule_results)
@@ -1915,7 +1670,6 @@ class ProductionCycle:
                 part.add_spider_defect(defect)
 
             part.mark_spider_done()
-            self._journal_append("control_completed", part_id=part.id, defects=list(result.defects))
 
             self._last_vision_results.update(result.vision_results)
             self._last_rule_results.extend(result.rule_results)
@@ -1958,22 +1712,10 @@ class ProductionCycle:
             self.distributor.reset_target()
             return
         category = part.route_category
-        if category in (CATEGORY_UNKNOWN, "IN_PROGRESS") or (
-            not part.fully_inspected and not category
-        ):
-            missing = []
-            if not part.input_inspected:
-                missing.append("INPUT")
-            if not part.spider_inspected:
-                missing.append("CONTROL")
-            part.mark_incomplete_inspection("/".join(missing) or "evidence")
-            category = CATEGORY_BAD
-            print(
-                f"[FAIL-SAFE] Деталь #{part.id} достигла +7 без полного "
-                f"контроля: {missing or ['data']} -> BAD"
-            )
+        if category == CATEGORY_UNKNOWN:
+            print(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
+            part.route_category, part.final_decision, category = CATEGORY_BAD, "incomplete_inspection", CATEGORY_BAD
         # GOOD: DIST1=0. BAD/CLEANUP: сначала DIST2, затем DIST1=340.
-        self._journal_append("route_selected", part_id=part.id, category=category)
         self.distributor.prepare_route(category, part.id)
 
     def _execute_drop(self):
@@ -1982,9 +1724,6 @@ class ProductionCycle:
             return
         category = part.route_category
         self.distributor.confirm_transfer(part.id, category)
-        # The physical transfer has completed.  Update physical counters and
-        # tracking before any diagnostic journal/archive write can fail; a
-        # failure below is a traceability FAULT, never a transfer retry.
         if category == CATEGORY_GOOD:
             self.good_count += 1
             print(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
@@ -1994,20 +1733,10 @@ class ProductionCycle:
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
             print(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
+        self._archive_part(part)
+        self._register_finished(part)
         self._remove_part(part)
         self._pending_drop = None
-        try:
-            self._journal_append("transfer_confirmed", part_id=part.id, category=category)
-            # Physical truth is committed before optional persistence.  If
-            # archive finalization fails, this part is not put back on the
-            # line and the caller enters FAULT without retrying a route/motion.
-            self._archive_part(part)
-            self._journal_append("archive_finalized", part_id=part.id, category=category)
-        finally:
-            # Even a traceability failure must leave a lightweight recent-part
-            # record for the physically confirmed item.
-            if not any(item.get("id") == part.id for item in self.recent_parts):
-                self._register_finished(part)
 
     # Archive
 
@@ -2021,17 +1750,7 @@ class ProductionCycle:
             "defects": part.get_all_defects(),
             "step": part.step_created,
         }
-        archive_extra = {
-            "run_id": self.run_id,
-            "birth_step": getattr(part, "birth_step", part.step_created),
-            "confirmed_current_step": self.current_step,
-            "identity": {
-                "batch_id": self.batch_id,
-                "run_id": self.run_id,
-                "manifest": dict(self.manifest),
-                "threshold_revision": self.config_revision,
-            },
-        }
+        archive_extra = {}
         consensus = getattr(part, "inspection_consensus", None)
         if consensus:
             archive_extra["inspection_consensus"] = consensus
@@ -2065,9 +1784,6 @@ class ProductionCycle:
     def _register_finished(self, part):
         record = {
             "id":       part.id,
-            "part_id":  part.id,
-            "batch_id": getattr(self, "batch_id", getattr(self.archive, "batch_id", None)),
-            "birth_step": getattr(part, "birth_step", part.step_created),
             "decision": part.final_decision,
             "category": part.route_category,
             "time":      time.time(),
@@ -2080,7 +1796,6 @@ class ProductionCycle:
             if archive_info:
                 record["batch_id"] = self.archive.batch_id
                 record["archive_folder"] = archive_info.get("relative_folder")
-                record["manifest"] = archive_info.get("manifest")
                 record["annotation_files"] = list(
                     archive_info.get("annotation_files") or []
                 )
@@ -2185,33 +1900,13 @@ class ProductionCycle:
         )
 
     def _on_state_change(self, old, new, action: str):
-        try:
-            self._journal_append(
-                "state_transition",
-                old_state=old.value,
-                new_state=new.value,
-                action=action,
-            )
-        except Exception as exc:
-            # A journal failure is itself a fault; avoid recursively calling
-            # the transition callback while the state lock is in use.
-            self._fault_reason = f"operational journal failure: {exc}"
-            print(f"[FAULT] {self._fault_reason}")
         if new == State.STOPPING:
             self._set_process("DRAINING", "Завершение корпусов на линии")
         elif new == State.STOPPED:
-            # After a normal drain both distributor axes are returned home
-            # and confirmed before STOPPED is published.
-            return_home = getattr(self.distributor, "return_home", None)
-            if callable(return_home):
-                try:
-                    return_home()
-                except Exception as exc:
-                    self._handle_fault(f"distributor home after drain failed: {exc}")
-                    return
             # Линия пуста: последние кадры с разметкой остаются на экране,
             # пока оператор не войдёт в JOG или не запустит цикл заново.
             self.stages.reset()
+            self.live.stop()
             self._set_process("STOPPED", "Линия остановлена и пуста")
         elif new == State.FAULT:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
@@ -2227,7 +1922,7 @@ class ProductionCycle:
             self.state in self.JOG_ALLOWED_STATES
             and not self.exit_requested
             and not self._operation_lock.locked()
-            and not (self.live.error or getattr(getattr(self, "cameras", None), "live_error", None))
+            and not self.live.error
             and not self.jog.status.get("error")
         )
 
@@ -2262,8 +1957,8 @@ class ProductionCycle:
                 release_error = exc
             finally:
                 self.jog_active = False
-                # CameraManager/LivePreview remain live in IDLE, PAUSED and
-                # STOPPED; only application shutdown stops the readers.
+                if not self.sm.is_active:
+                    self.live.stop()
                 print("[JOG] exited")
 
         self._refresh_monitor()
@@ -2285,10 +1980,6 @@ class ProductionCycle:
                 return False
             accepted = self.jog.start_hold(direction)
             if accepted:
-                # Conservative boundary: even a short accepted hold may have
-                # moved the belt, so old snapshots are never reused.
-                self._jog_moved = True
-                self._snapshot_after = time.monotonic()
                 label = "Ручное движение ленты вправо" if direction == "+" else "Ручное движение ленты влево"
                 self._set_process(
                     "JOG_HOLD",
@@ -2468,8 +2159,7 @@ class ProductionCycle:
         operation_busy = self._operation_lock.locked()
         jog_snapshot = self.jog.status if self.jog is not None else {}
         jog_busy = bool(jog_snapshot.get("busy", False))
-        camera_error = self.live.error or getattr(getattr(self, "cameras", None), "live_error", None)
-        jog_error = jog_snapshot.get("error") or camera_error
+        jog_error = jog_snapshot.get("error") or self.live.error
         diagnostic_allowed = (
             state_name in ("IDLE", "STOPPED")
             and not parts_snapshot
@@ -2531,7 +2221,6 @@ class ProductionCycle:
             "state": state_name,
             "exit_requested": sm_snap["exit_requested"],
             "fault_reason": self._fault_reason,
-            "fault": getattr(self, "_fault_latch", FaultLatch()).report(),
             "step": step_snapshot,
             "in_line": len(parts_snapshot),
             "line_parts": line_parts,
@@ -2555,19 +2244,14 @@ class ProductionCycle:
             # Inspection блокирует live только у захватываемых ролей.
             # Остальные камеры продолжают поток даже на статической фазе.
             "live": {
-                "running": bool(getattr(getattr(self, "cameras", None), "live_running", False) or self.live.running),
-                "streaming": bool(getattr(getattr(self, "cameras", None), "live_running", False) or self.live.running),
-                # Capture/analysis remain live; only the atomic result
-                # publication creates UI-frozen roles for REVIEW.
-                "static": bool(getattr(self, "_review_published", False)),
-                "static_roles": list(
-                    self._inspection_display_roles
-                    if getattr(self, "_review_published", False) else ()
-                ),
-                "all_roles_static": False,
+                "running": self.live.running,
+                "streaming": self.live.running,
+                "static": self.stages.static,
+                "static_roles": list(self.stages.static_roles or ()),
+                "all_roles_static": self.stages.static and self.stages.static_roles is None,
                 "stage": self.stages.stage.value,
                 "fps": self._current_live_fps(),
-                "error": camera_error,
+                "error": self.live.error,
             },
             "frame_analysis": self._build_frame_analysis(state_name),
             "diagnostics": {
