@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from domain.threshold_loader import ThresholdLoader
+from inspection.part_archive import PartArchive
 from vision.ui.server.server import CAMERA_ORDER, UIServer
 
 
@@ -47,6 +48,8 @@ class LineSimulation:
         self.state = "IDLE"
         self.jog_active = False
         self.jog_busy = False
+        self.selected_role: str | None = None
+        self.last_diagnostic = "SIMULATION READY"
         self.step = 0
         self.next_id = 1
         self.parts: list[SimPart] = []
@@ -91,6 +94,42 @@ class LineSimulation:
         with self._lock:
             self.jog_busy = False
         self._publish("IDLE")
+        return True
+
+    def selected_analysis(self, role: str) -> bool:
+        with self._lock:
+            if self.state not in ("IDLE", "STOPPED") or role not in CAMERA_ORDER:
+                return False
+            self.selected_role = role
+            self.last_diagnostic = f"ANALYSIS {role}"
+        self._publish("SELECTED_ANALYSIS")
+        return True
+
+    def release_selected_analysis(self) -> bool:
+        with self._lock:
+            self.selected_role = None
+            self.last_diagnostic = "LIVE STREAM RESTORED"
+        self._publish("IDLE")
+        return True
+
+    def distributor_diagnostic(self, command: str) -> bool:
+        with self._lock:
+            if self.state not in ("IDLE", "STOPPED"):
+                return False
+            self.last_diagnostic = command
+        self._publish("DISTRIBUTOR_DIAGNOSTIC")
+        return True
+
+    def camera_diagnostic(self) -> bool:
+        with self._lock:
+            self.last_diagnostic = "CAMERAS OK · 7 / 7"
+        self._publish("CAMERA_DIAGNOSTIC")
+        return True
+
+    def vision_rule_diagnostic(self) -> bool:
+        with self._lock:
+            self.last_diagnostic = "MODELS AND RULES OK"
+        self._publish("VISION_DIAGNOSTIC")
         return True
 
     def stop(self) -> bool:
@@ -139,6 +178,24 @@ class LineSimulation:
                            "held": False, "dropping": True})
         return result
 
+    def _frame_analysis_payload(self) -> dict:
+        if not self.selected_role:
+            return {"available": False}
+        return {
+            "available": True,
+            "kind": "selected",
+            "active": True,
+            "title": "СИМУЛИРОВАННЫЙ АНАЛИЗ КАДРА",
+            "role": self.selected_role,
+            "part_id": None,
+            "stage": "DIAGNOSTIC",
+            "verdict": "GOOD",
+            "rules": [{
+                "name": "part_presence", "title": "Наличие корпуса", "triggered": False,
+                "run_cards": [[{"type": "metric", "metrics": [{"key": "simulated_confidence", "label": "Уверенность модели", "value": "0.99", "limit": "0.40", "ok": True}]}]],
+            }],
+        }
+
     def _publish(self, phase: str) -> None:
         with self._lock:
             state = self.state
@@ -165,17 +222,32 @@ class LineSimulation:
                 "last_distributor_action": "SIMULATION",
                 # Production start is available while JOG is open: issuing
                 # start closes JOG and transfers control to the cycle.
-                "controls": {"start": state in ("IDLE", "STOPPED"), "stop": state in ("RUNNING", "PAUSED"),
-                             "pause": state == "RUNNING", "resume": state == "PAUSED", "exit": True,
-                             "jog_hold": self.jog_active and state in ("IDLE", "STOPPED"), "selected_model_analysis": False,
-                             "selected_model_release": False, "distributor_diagnostic": False,
-                             "camera_diagnostic": False, "vision_rule_diagnostic": False},
+                "controls": {"start": state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "stop": state in ("RUNNING", "PAUSED"), "pause": state == "RUNNING",
+                             "resume": state == "PAUSED", "exit": True,
+                             "jog_hold": self.jog_active and state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "selected_model_analysis": state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "selected_model_release": self.selected_role is not None,
+                             "distributor_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "camera_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "vision_rule_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None},
                 "process": {"phase": phase, "positions": [position] if position is not None else [],
                             "part_id": self.egress.id if self.egress else None,
                             "conveyor": {"speed": 18000}},
-                "live": {"static": False, "streaming": True, "static_roles": [], "all_roles_static": False},
+                "selected_analysis": {"active": self.selected_role is not None, "role": self.selected_role},
+                "diagnostic_allowed": state in ("IDLE", "STOPPED") and self.selected_role is None,
+                "diagnostic_busy": False,
+                "diagnostics": {
+                    "cameras": [{"name": role, "ok": True, "message": "SIMULATED"} for role in CAMERA_ORDER],
+                    "models": [{"name": "VISION", "ok": True, "message": "SIMULATED"}],
+                    "rules": [{"name": "RULES", "ok": True, "message": self.last_diagnostic}],
+                },
+                "frame_analysis": self._frame_analysis_payload(),
+                "live": {"running": True, "static": self.selected_role is not None, "streaming": self.selected_role is None,
+                         "static_roles": [self.selected_role] if self.selected_role else [],
+                         "all_roles_static": False, "fps": 25, "error": None},
                 "jog": {"active": self.jog_active, "busy": self.jog_busy, "can_enter": state in ("IDLE", "STOPPED"),
-                        "last_action": "SIMULATION", "error": None},
+                        "hold_steps": 0, "direction": None, "last_action": "SIMULATION", "live_fps": 25, "error": None},
             }
             recent = list(self.recent)
         self.server.update(line_status=status, recent_parts=recent)
@@ -276,6 +348,9 @@ def main() -> None:
     args = parser.parse_args()
 
     server = UIServer()
+    # The real archive implementation writes only into ignored sandbox data.
+    # Its settings dialog and validation therefore behave exactly as in the app.
+    server.archive = PartArchive(root_folder="archive/ui_simulation", enabled=True)
     simulation = LineSimulation(server)
     server.on_start = simulation.start
     server.on_stop = simulation.stop
@@ -287,6 +362,11 @@ def main() -> None:
     server.on_jog_hold_start = simulation.jog_hold_start
     server.on_jog_hold_heartbeat = simulation.jog_hold_start
     server.on_jog_hold_release = simulation.jog_hold_release
+    server.on_distributor_diagnostic = simulation.distributor_diagnostic
+    server.on_camera_diagnostic = simulation.camera_diagnostic
+    server.on_vision_rule_diagnostic = simulation.vision_rule_diagnostic
+    server.on_selected_model_analysis = simulation.selected_analysis
+    server.on_selected_model_release = simulation.release_selected_analysis
     configure_simulated_thresholds(server)
     server.update(frames=demo_frames())
     server.set_active_camera_role(CAMERA_ORDER[0])
