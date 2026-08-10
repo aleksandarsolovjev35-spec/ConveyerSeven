@@ -287,18 +287,6 @@ class UIServer:
         на линии.
         """
         with self.lock:
-            incoming_state_version = None
-            if isinstance(line_status, dict):
-                candidate = line_status.get("state_version")
-                if type(candidate) is int:
-                    incoming_state_version = candidate
-            if (
-                incoming_state_version is not None
-                and incoming_state_version < self._state_version
-            ):
-                # Logical ordering dominates the whole response; do not let an
-                # old result overwrite newer frames/rules either.
-                return
             should_invalidate = False
             stream_overlay_changed = False
             if run_frames is not None:
@@ -374,12 +362,7 @@ class UIServer:
             if recent_parts is not None:
                 self.recent_parts = copy.deepcopy(list(recent_parts))
             if line_status is not None or recent_parts is not None:
-                if incoming_state_version is None:
-                    # Compatibility for diagnostics/tests not yet carrying a
-                    # formal LineSnapshot version.
-                    self._state_version += 1
-                else:
-                    self._state_version = incoming_state_version
+                self._state_version += 1
                 self._state_snapshot = {
                     "state_version": self._state_version,
                     "line_status": copy.deepcopy(self.line_status),

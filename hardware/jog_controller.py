@@ -44,7 +44,6 @@ class JogController:
         self._last_heartbeat = 0.0
         self._armed_at = 0.0
         self._worker_error = None
-        self._motion_issued = False
 
     @property
     def busy(self) -> bool:
@@ -63,13 +62,6 @@ class JogController:
                 "error": self._worker_error,
             }
 
-    def consume_motion_happened(self) -> bool:
-        """Return and clear evidence that a JOG G3 actually left the adapter."""
-        with self._state_lock:
-            happened = self._motion_issued
-            self._motion_issued = False
-            return happened
-
     def start_hold(self, direction: str) -> bool:
         if direction not in ("+", "-"):
             raise ValueError("direction должен быть '+' или '-'")
@@ -85,7 +77,6 @@ class JogController:
             self._last_heartbeat = 0.0
             self._armed_at = time.monotonic()
             self._worker_error = None
-            self._motion_issued = False
             self.last_action = "HOLD RIGHT" if direction == "+" else "HOLD LEFT"
             self._thread = threading.Thread(
                 target=self._hold_worker,
@@ -159,8 +150,6 @@ class JogController:
                     self.transport.send(f"G7 S{signed_steps}")
                     self.transport.send("G6 S1")
                     self.transport.send("G3")
-                    with self._state_lock:
-                        self._motion_issued = True
                 self._wait_segment_or_release()
         except Exception as exc:
             error = exc

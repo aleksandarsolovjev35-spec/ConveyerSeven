@@ -22,9 +22,7 @@ def setup_archive_routes(app, server):
         images = server.archive.get_part_images(part_id)
 
         meta = {}
-        meta_path = os.path.join(info["folder"], "part.json")
-        if not os.path.exists(meta_path):
-            meta_path = os.path.join(info["folder"], "meta.json")
+        meta_path = os.path.join(info["folder"], "meta.json")
         if os.path.exists(meta_path):
             import json
             with open(meta_path, encoding="utf-8") as f:

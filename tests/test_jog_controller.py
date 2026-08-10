@@ -64,11 +64,6 @@ class JogControllerTest(unittest.TestCase):
         self.assertEqual(jog.status["last_action"], "HOLD RIGHT")
 
         self.assertTrue(jog.heartbeat("+"))
-        deadline = time.monotonic() + 1.0
-        while "G3" not in jog.transport.sent and time.monotonic() < deadline:
-            time.sleep(0.01)
-        self.assertTrue(jog.consume_motion_happened())
-        self.assertFalse(jog.consume_motion_happened())
         # Неправильное направление — heartbeat отклоняется
         self.assertFalse(jog.heartbeat("-"))
 
