@@ -35,6 +35,7 @@ class SimPart:
 class LineSimulation:
     """Small deterministic conveyor model intended for UI development."""
 
+    ROUTE_PREPARE_SECONDS = 0.24
     STEP_SECONDS = 0.72
     SETTLE_SECONDS = 0.28
     # Time with a stopped belt: the vertical input/output animation must
@@ -48,6 +49,12 @@ class LineSimulation:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self.state = "IDLE"
+        self.stop_requested = False
+        self.dist1_position = 0
+        self.dist2_position = 0
+        self.dist1_state = "GOOD"
+        self.dist2_state = "READY"
+        self.last_distributor_action = "SIMULATION READY"
         self.jog_active = False
         self.jog_busy = False
         self.selected_role: str | None = None
@@ -67,6 +74,7 @@ class LineSimulation:
             if self.state in ("RUNNING", "PAUSED"):
                 return False
             self.jog_active = False
+            self.stop_requested = False
             self.state = "RUNNING"
             self._wake.set()
         return True
@@ -137,10 +145,14 @@ class LineSimulation:
         return True
 
     def stop(self) -> bool:
+        """Production-like stop: stop feeding, then drain bodies on line."""
         with self._lock:
-            self.state = "IDLE"
+            if self.state not in ("RUNNING", "PAUSED", "STOPPING"):
+                return False
+            self.stop_requested = True
+            self.state = "STOPPING"
             self._wake.set()
-        self._publish("IDLE")
+        self._publish("STOPPING")
         return True
 
     def pause(self) -> bool:
@@ -187,6 +199,21 @@ class LineSimulation:
                            "held": False, "dropping": True})
         return result
 
+    def _prepare_distributor(self) -> None:
+        part = next((item for item in self.parts if item.position == 7), None)
+        category = (part.category if part else "GOOD") or "GOOD"
+        self.last_distributor_action = f"ROUTE {category}"
+        self.dist1_state = "MOVING_TO_GOOD" if category == "GOOD" else "MOVING_TO_DIST2"
+        self.dist2_state = "MOVING" if category in ("BAD", "CLEANUP") else "READY"
+        self._planned_route = category
+
+    def _settle_distributor(self) -> None:
+        category = getattr(self, "_planned_route", "GOOD")
+        self.dist1_position = 0 if category == "GOOD" else 340
+        self.dist2_position = 340 if category == "CLEANUP" else 0
+        self.dist1_state = "GOOD" if category == "GOOD" else "TO_DIST2"
+        self.dist2_state = "READY"
+
     def _frame_analysis_payload(self) -> dict:
         inspection = next((part for part in self.parts if part.position == 4), None)
         role = self.selected_role or ("TOP" if inspection else None)
@@ -221,9 +248,6 @@ class LineSimulation:
             state = self.state
             line_parts = self._line_parts()
             position = 7 if self.egress else None
-            category = self.egress.category if self.egress else ""
-            d1 = 0 if category == "GOOD" else 340
-            d2 = 340 if category == "CLEANUP" else 0
             active_roles = []
             if any(part.position == 0 for part in self.parts): active_roles = ["INPUT_LEFT", "INPUT_RIGHT"]
             elif any(part.position == 4 for part in self.parts): active_roles = ["SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP"]
@@ -238,11 +262,11 @@ class LineSimulation:
                 "rejected": self.counts["bad"],
                 "cleanup": self.counts["cleanup"],
                 "empty": self.empty_count,
-                "dist1_state": "GOOD" if d1 == 0 else "TO_DIST2",
-                "dist1_position": d1, "dist1_max": 340,
-                "dist2_state": "READY", "dist2_position": d2, "dist2_max": 340,
-                "dist2_target": "CLEANUP" if d2 else "BAD",
-                "last_distributor_action": "SIMULATION",
+                "dist1_state": self.dist1_state,
+                "dist1_position": self.dist1_position, "dist1_max": 340,
+                "dist2_state": self.dist2_state, "dist2_position": self.dist2_position, "dist2_max": 340,
+                "dist2_target": "CLEANUP" if self.dist2_position else "BAD",
+                "last_distributor_action": self.last_distributor_action,
                 # Production start is available while JOG is open: issuing
                 # start closes JOG and transfers control to the cycle.
                 "controls": {"start": state in ("IDLE", "STOPPED") and self.selected_role is None,
@@ -321,17 +345,32 @@ class LineSimulation:
         while not self._stop.is_set():
             with self._lock:
                 current = self.state
-            if current != "RUNNING":
+            if current not in ("RUNNING", "STOPPING"):
                 self._wake.wait(0.2)
                 self._wake.clear()
                 continue
+            if current == "STOPPING" and not self.parts and self.egress is None:
+                with self._lock:
+                    self.state = "STOPPED"
+                    self.stop_requested = False
+                self._publish("STOPPED")
+                continue
 
+            # Set the distributor first, then perform one synchronous step.
+            # This mirrors the physical route preparation before the belt moves.
+            with self._lock:
+                self._prepare_distributor()
+            self._publish("ROUTE_PREPARE")
+            if self._stop.wait(self.ROUTE_PREPARE_SECONDS):
+                break
+            with self._lock:
+                self._settle_distributor()
             # Horizontal step: every currently visible part advances together.
             self._publish("CONVEYOR_MOVING")
             if self._stop.wait(self.STEP_SECONDS):
                 break
             with self._lock:
-                if self.state != "RUNNING":
+                if self.state not in ("RUNNING", "STOPPING"):
                     continue
                 self.egress = next((p for p in self.parts if p.position == 7), None)
                 self.parts = [p for p in self.parts if p is not self.egress]
@@ -342,10 +381,12 @@ class LineSimulation:
             if self._stop.wait(self.SETTLE_SECONDS):
                 break
             with self._lock:
-                if self.state != "RUNNING":
+                if self.state not in ("RUNNING", "STOPPING"):
                     continue
                 self._finish_egress()          # falling from +8 starts now
-                arriving = self._new_part()    # falling into +0 starts now
+                # A requested stop drains the existing queue without adding
+                # another body at +0.
+                arriving = self._new_part() if self.state == "RUNNING" else None
                 if arriving is not None:
                     self.parts.insert(0, arriving)
                 for part in self.parts:
