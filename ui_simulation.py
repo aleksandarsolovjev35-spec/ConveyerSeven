@@ -42,6 +42,8 @@ class LineSimulation:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self.state = "IDLE"
+        self.jog_active = False
+        self.jog_busy = False
         self.step = 0
         self.next_id = 1
         self.parts: list[SimPart] = []
@@ -54,8 +56,38 @@ class LineSimulation:
         with self._lock:
             if self.state in ("RUNNING", "PAUSED"):
                 return False
+            self.jog_active = False
             self.state = "RUNNING"
             self._wake.set()
+        return True
+
+    def enter_jog(self) -> bool:
+        with self._lock:
+            if self.state not in ("IDLE", "STOPPED"):
+                return False
+            self.jog_active = True
+        self._publish("IDLE")
+        return True
+
+    def exit_jog(self) -> bool:
+        with self._lock:
+            self.jog_active = False
+            self.jog_busy = False
+        self._publish("IDLE")
+        return True
+
+    def jog_hold_start(self, _direction: str) -> bool:
+        with self._lock:
+            if not self.jog_active or self.state not in ("IDLE", "STOPPED"):
+                return False
+            self.jog_busy = True
+        self._publish("JOG")
+        return True
+
+    def jog_hold_release(self, _reason: str = "") -> bool:
+        with self._lock:
+            self.jog_busy = False
+        self._publish("IDLE")
         return True
 
     def stop(self) -> bool:
@@ -128,16 +160,17 @@ class LineSimulation:
                 "dist2_state": "READY", "dist2_position": d2, "dist2_max": 340,
                 "dist2_target": "CLEANUP" if d2 else "BAD",
                 "last_distributor_action": "SIMULATION",
-                "controls": {"start": state in ("IDLE", "STOPPED"), "stop": state in ("RUNNING", "PAUSED"),
+                "controls": {"start": state in ("IDLE", "STOPPED") and not self.jog_active, "stop": state in ("RUNNING", "PAUSED"),
                              "pause": state == "RUNNING", "resume": state == "PAUSED", "exit": True,
-                             "jog_hold": False, "selected_model_analysis": False,
+                             "jog_hold": self.jog_active and state in ("IDLE", "STOPPED"), "selected_model_analysis": False,
                              "selected_model_release": False, "distributor_diagnostic": False,
                              "camera_diagnostic": False, "vision_rule_diagnostic": False},
                 "process": {"phase": phase, "positions": [position] if position is not None else [],
                             "part_id": self.egress.id if self.egress else None,
                             "conveyor": {"speed": 18000}},
                 "live": {"static": False, "streaming": True, "static_roles": [], "all_roles_static": False},
-                "jog": {"active": False, "busy": False, "error": None},
+                "jog": {"active": self.jog_active, "busy": self.jog_busy, "can_enter": state in ("IDLE", "STOPPED"),
+                        "last_action": "SIMULATION", "error": None},
             }
             recent = list(self.recent)
         self.server.update(line_status=status, recent_parts=recent)
@@ -240,6 +273,11 @@ def main() -> None:
     server.on_pause = simulation.pause
     server.on_resume = simulation.resume
     server.on_exit = simulation.close
+    server.on_jog_enter = simulation.enter_jog
+    server.on_jog_exit = simulation.exit_jog
+    server.on_jog_hold_start = simulation.jog_hold_start
+    server.on_jog_hold_heartbeat = simulation.jog_hold_start
+    server.on_jog_hold_release = simulation.jog_hold_release
     configure_simulated_thresholds(server)
     server.update(frames=demo_frames())
     server.set_active_camera_role(CAMERA_ORDER[0])
