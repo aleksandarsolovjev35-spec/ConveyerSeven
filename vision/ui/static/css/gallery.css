@@ -291,4 +291,9 @@
     color: var(--bad);
 }
 
+/* ─── State dot for FAULT ─────────────────────────────────────────── */
 
+.state-dot.state-fault {
+    background: var(--bad);
+    box-shadow: none;
+}

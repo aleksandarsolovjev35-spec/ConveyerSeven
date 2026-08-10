@@ -5,7 +5,8 @@
 // годный при DIST1 на концевике падает в статику — в той же зоне +8, что
 // и реджект, только без цвета канала. Поэтому маркер:
 //  - на статичных фазах паркуется на +7 (не скользит и не гаснет);
-//  - с ближайшей транспортной фазой падает в +8 и гаснет там («нырок»);
+//  - с ближайшей транспортной фазой падает в +8 и гаснет там, символ ▼
+//    лотка скрыт на время затухания;
 //  - если движения долго нет (линия остановилась) — гаснет на месте по
 //    запасному таймеру.
 // Блок «СОСТОЯНИЕ ЛЕНТЫ» показывает состояние автомата, а не внутреннюю
@@ -33,9 +34,24 @@ lineCells.querySelectorAll = (selector) =>
     selector === '.line-cell[data-pos]' ? cellsCache : [];
 sandbox._belt = belt;
 
+const gates = {};
+sandbox.document.querySelector = (selector) => {
+    if (selector === '.line-gate-in' || selector === '.line-gate-out') {
+        if (!gates[selector]) {
+            const gate = makeEl('div');
+            gate.textContent = selector === '.line-gate-in' ? '▸ ВХОД' : 'ВЫХОД ▸';
+            gates[selector] = gate;
+        }
+        return gates[selector];
+    }
+    return null;
+};
+sandbox._gates = gates;
+
 const body = `
     const assert = (cond, msg) => { if (!cond) throw new Error('ASSERT: ' + msg); };
     const lineCells = __els['line-cells'];
+    const gates = _gates;
     const findCell = (pos) => lineCells.querySelectorAll('.line-cell[data-pos]')
         .find(c => c.dataset.pos === String(pos));
     const findToken = (id) => lineCells.children.find(c => c.dataset.partId === String(id));
@@ -104,6 +120,9 @@ const body = `
     assert(findCell(7).classList._set.has('cell-hold'), 'series part at +7 gets the hold cell');
     assert(findToken(8).classList._set.has('token-hold'), 'series token marked held');
     assert(findCell(8).classList._set.has('chute-cleanup'), 'chute keeps the CLEANUP channel');
+    assert(gates['.line-gate-out'].textContent === '▼ ОЧИСТКА',
+        'exit gate shows the route during analysis, not a neutral ВЫХОД: '
+        + gates['.line-gate-out'].textContent);
 
     // ── 6. Парк без движения: запасной таймер гасит маркер на месте ──
     updateLineCells([], proc('SETTLE'));

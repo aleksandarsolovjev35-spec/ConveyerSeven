@@ -21,6 +21,50 @@
     font-weight: 700;
     letter-spacing: 0.9px;
 }
+.line-gates {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 0;
+    margin-left: auto;
+}
+.line-gate {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    max-width: 120px;
+    min-height: 18px;
+    padding: 2px 5px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    font: 700 8px var(--font-mono);
+    letter-spacing: 0.25px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: color var(--t-fast) var(--ease),
+                background-color var(--t-fast) var(--ease),
+                border-color var(--t-fast) var(--ease);
+}
+.line-gate.gate-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}
+.line-gate.gate-rejecting {
+    color: var(--bad);
+    border-color: var(--bad);
+    background: var(--bad-bg);
+}
+.line-gate.gate-cleanup {
+    color: var(--warn);
+    border-color: var(--warn);
+    background: var(--warn-bg);
+}
 .production-line-wrapper {
     position: relative;
     margin-top: 6px;
@@ -64,6 +108,16 @@
     position: relative;
     box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
+.production-line-cells .line-cell::before {
+    content: attr(data-cell-no);
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font: 700 8.5px var(--font-mono);
+    color: var(--text-muted);
+    opacity: 0.65;
+    pointer-events: none;
+}
 .line-position-labels {
     display: grid;
     grid-template-columns: repeat(9, minmax(0, 1fr));
@@ -95,24 +149,37 @@
    заранее подготовленный маршрут BAD/CLEANUP. */
 .production-line-cells .line-cell.line-cell-chute {
     background: var(--bg-2);
+    border-style: dashed;
     border-color: var(--border-strong);
     box-shadow: none;
+}
+.production-line-cells .line-cell.line-cell-chute::before {
+    color: var(--text-muted);
+    opacity: 0.5;
+}
+.production-line-cells .line-cell.line-cell-chute .chute-symbol {
+    font: 700 13px var(--font-mono);
+    color: var(--text-muted);
+    pointer-events: none;
+    transition: opacity var(--t-fast) var(--ease);
+}
+.production-line-cells .line-cell.line-cell-chute.chute-occupied .chute-symbol {
+    opacity: 0;
 }
 .production-line-cells .line-cell.line-cell-chute.chute-bad {
     border-color: var(--bad);
     color: var(--bad);
-    /* Непрозрачный тёмный фон канала: сквозь него не просвечивает
-       горизонтальная линия ленты за сеткой (полупрозрачный --bad-bg
-       давал «линию» в ячейке). */
-    background: var(--bad-gate);
+    background: var(--bad-bg);
     box-shadow: inset 0 0 0 1px var(--bad);
 }
+.production-line-cells .line-cell.line-cell-chute.chute-bad .chute-symbol { color: var(--bad); }
 .production-line-cells .line-cell.line-cell-chute.chute-cleanup {
     border-color: var(--warn);
     color: var(--warn);
-    background: var(--warn-gate);
+    background: var(--warn-bg);
     box-shadow: inset 0 0 0 1px var(--warn);
 }
+.production-line-cells .line-cell.line-cell-chute.chute-cleanup .chute-symbol { color: var(--warn); }
 
 /* ─── Ожидание передачи на +7 ─────────────────────────────────
    Корпус на сортировке ожидает следующего движения ленты; заслонки
@@ -308,6 +375,8 @@
     font: 700 10px var(--font-mono);
 }
 
+.main.ui-offline .state-dot { background: var(--bad); box-shadow: none; }
+.main.ui-offline .state-label { color: var(--bad); }
 .jog-panel.jog-inactive { opacity: 0.55; }
 
 .splash-exit-btn {
@@ -418,22 +487,6 @@
     will-change: left, opacity;
 }
 
-/* Номер корпуса — отдельный слой внутри маркера: остаётся читаемым, даже
-   когда плашка уходит в лоток при сбросе. Занимает всю плашку и центрирован,
-   поэтому номер всегда находится в границах ячейки, а не «торчит» наружу. */
-.line-token-num {
-    position: relative;
-    z-index: 1;
-    display: block;
-    width: 100%;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: center;
-    line-height: 1;
-}
-
 .line-token.cell-good {
     background: var(--ok-bg);
     border-color: var(--ok);
@@ -464,8 +517,9 @@
 }
 
 /* Маркер падающего корпуса: в шаге сброса лента несёт корпус от +7 к
-   лотку +8. Рамка подсвечивается цветом канала, а сам маркер затем «ныряет»
-   в лоток (см. .token-in-chute). Стрелки ▼ на маркере нет. */
+   лотку +8 — маркер уезжает в зону сброса и «тонет» в ней. Маркер рисуется
+   полностью непрозрачным, чтобы он не «просвечивал» залитый лоток и не
+   сливался с ним на +7/+8. */
 .line-token.token-dropping {
     opacity: 1;
     box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--bad);
@@ -473,35 +527,20 @@
 .line-token.token-dropping.cell-cleanup {
     box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 0 0 1px var(--warn);
 }
+.line-token.token-dropping::after { content: "▼"; color: inherit; opacity: 0.85; }
 
-/* Появление корпуса на линии (+0): маркер плавно опускается сверху в свою
-   ячейку (деталь «подаётся» на ленту) с коротким бликом. */
-@keyframes token-enter {
-    0%   { opacity: 0; transform: translateY(-18px) scale(0.85); }
-    60%  { opacity: 1; transform: translateY(2px) scale(1.03); }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
-}
-.line-token.token-enter {
-    animation: token-enter 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-/* Уход корпуса в лоток +8: плашка уходит вниз (сброс вниз) и растворяется,
-   но номер корпуса (внутренний .line-token-num) остаётся читаемым всё время
-   сброса — он не гаснет вместе с фоном плашки. */
-@keyframes token-sink {
-    0%   { transform: translateY(0) scale(1); opacity: 1; }
-    100% { transform: translateY(20px) scale(0.55); opacity: 0.4; }
-}
+/* В лотке маркер находится над символом ячейки. Символ скрывается классом
+   chute-occupied, а сам маркер получает непрозрачную тёмную заливку: он
+   читается как отдельный бокс поверх залитого канала лотка, а не сливается
+   с ним. Так на +7/+8 не получается «двойной заливки» одного цвета. */
 .line-token.token-in-chute {
     z-index: 6;
-    /* Плашка уходит вниз, фон и рамка растворяются, номер остаётся. */
-    animation: token-sink 420ms ease-in forwards;
-    background: transparent !important;
-    border-color: transparent !important;
-    box-shadow: none !important;
-}
-.line-token.token-in-chute .line-token-num {
-    color: var(--text);
+    opacity: 1;
+    /* Непрозрачная тёмная заливка: маркер в лотке читается как отдельный
+       бокс, а не просвечивает цвет канала лотка насквозь. Категория
+       остаётся видимой через border-color (cell-bad/cell-cleanup/cell-good)
+       и стрелку падения. */
+    background: var(--bg-2);
 }
 
 /* === Human-readable defect cause (simple & bold) === */
