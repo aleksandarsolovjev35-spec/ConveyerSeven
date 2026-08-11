@@ -1,6 +1,5 @@
 import threading
 import time
-import traceback
 from collections import deque
 
 from core.app_logging import get_logger
@@ -900,8 +899,7 @@ class ProductionCycle:
                     time.sleep(0.1)
 
         except Exception as e:
-            log.error(f"[CYCLE] Critical error: {e}")
-            traceback.print_exc()
+            log.error("Critical error: %s", e, exc_info=True)
             self._handle_fault(f"Критическая ошибка цикла: {e}")
         finally:
             self._shutdown = True
@@ -967,8 +965,7 @@ class ProductionCycle:
         except Exception as e:
             # Повтор неудачного физического шага теряет соответствие
             # деталь/ячейка, поэтому падаем в FAULT на первой же ошибке.
-            log.error(f"[CYCLE] Error in _run_once: {e}")
-            traceback.print_exc()
+            log.error("Error in _run_once: %s", e, exc_info=True)
             self._handle_fault(f"Ошибка производственного шага: {e}")
 
     def _safe_emergency_stop(self):

@@ -15,7 +15,7 @@
 # Для локальной разработки используйте requirements-dev.txt — там полный набор.
 
 numpy>=1.26,<2.1
-opencv-python-headless>=4.10,<4.12
+opencv-python-headless>=4.10
 pyserial>=3.5,<4
 fastapi>=0.115,<1
 uvicorn>=0.34,<1

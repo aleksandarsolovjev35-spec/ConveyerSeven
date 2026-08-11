@@ -11,7 +11,10 @@ import json
 import os
 from pathlib import Path
 
+from core.app_logging import get_logger
 from domain.atomic_io import atomic_write_json
+
+log = get_logger("config.archive")
 
 ARCHIVE_CONFIG_FILE = "archive_config.json"
 
@@ -66,10 +69,10 @@ def load_archive_config(path: str = ARCHIVE_CONFIG_FILE) -> dict:
         try:
             save_archive_config(path, result)
         except OSError as exc:
-            print(f"[ARCHIVE] Не удалось создать {path}: {exc}")
+            log.warning("Не удалось создать %s: %s", path, exc)
         return result
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"[ARCHIVE] Ошибка чтения {path}: {exc}; используются defaults")
+        log.warning("Ошибка чтения %s: %s; используются defaults", path, exc)
         return normalise_archive_config(None)
 
     result = normalise_archive_config(data)
@@ -77,7 +80,7 @@ def load_archive_config(path: str = ARCHIVE_CONFIG_FILE) -> dict:
         try:
             save_archive_config(path, result)
         except OSError as exc:
-            print(f"[ARCHIVE] Не удалось обновить {path}: {exc}")
+            log.warning("Не удалось обновить %s: %s", path, exc)
     return result
 
 

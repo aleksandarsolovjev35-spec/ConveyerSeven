@@ -909,7 +909,7 @@ def _make_idle_status(distributor) -> dict:
         "dist1_max":      distributor.dist1_open_position,
         "dist1_state":    "IDLE",
         "dist2_position": 0,
-        "dist2_max":      distributor.dist2_cleanup_position,
+        "dist2_max":      max(distributor.dist2_bad_position, distributor.dist2_cleanup_position, 1),
         "dist2_state":    "IDLE",
         "dist2_target":   "BAD",
         "last_distributor_action": "-",
