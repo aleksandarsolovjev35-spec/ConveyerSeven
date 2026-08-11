@@ -3,7 +3,6 @@ import asyncio
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
-
 STREAM_BOUNDARY = "frame"
 STREAM_POLL_INTERVAL = 0.01   # 10ms между проверками новой версии
 STREAM_INITIAL_WAIT  = 5.0    # ждать до 5с появления первого кадра

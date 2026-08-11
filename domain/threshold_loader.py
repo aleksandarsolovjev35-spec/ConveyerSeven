@@ -2,6 +2,8 @@ import json
 import math
 import os
 
+from domain.atomic_io import atomic_write_text
+
 ROLE_SECTIONS = (
     "INPUT_LEFT", "INPUT_RIGHT",
     "SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT",
@@ -121,7 +123,10 @@ class ThresholdLoader:
         for role in ROLE_SECTIONS
         for name in PARAM_LABELS
         if (role.startswith("INPUT_") and name.startswith("input_"))
-        or (role in ("SPIDER_LEFT", "SPIDER_RIGHT") and name.startswith(("spider_contacts_long", "spider_long_omission")))
+        or (
+            role in ("SPIDER_LEFT", "SPIDER_RIGHT")
+            and name.startswith(("spider_contacts_long", "spider_long_omission"))
+        )
         or (role in ("SPIDER_IN", "SPIDER_OUT") and name.startswith(("spider_contacts_short", "spider_short_omission")))
         or (role == "TOP" and name.startswith("top_"))
     )
@@ -175,7 +180,10 @@ class ThresholdLoader:
                     raise ValueError(f"{key} должен быть равен 2")
                 if name == "top_contacts_expected_count" and value != 14:
                     raise ValueError(f"{key} должен быть равен 14")
-            if name.endswith(("false_positive_max_count", "excess_component_min_px", "overlap_min_px", "area_absolute_min")):
+            if name.endswith((
+                "false_positive_max_count", "excess_component_min_px",
+                "overlap_min_px", "area_absolute_min",
+            )):
                 if type(value) is not int or value < 0:
                     raise ValueError(f"{key} должен быть неотрицательным целым")
             if name.endswith(("excess_component_min_px", "overlap_min_px")) and value < 1:
@@ -211,7 +219,10 @@ class ThresholdLoader:
         if "part_presence" in disabled:
             raise ValueError("part_presence нельзя отключать")
         if labels is not None:
-            if not isinstance(labels, dict) or any(not isinstance(k, str) or not str(v).strip() for k, v in labels.items()):
+            if not isinstance(labels, dict) or any(
+                not isinstance(k, str) or not str(v).strip()
+                for k, v in labels.items()
+            ):
                 raise ValueError("Названия порогов должны быть непустыми строками")
 
     @staticmethod
@@ -264,25 +275,37 @@ class ThresholdLoader:
                 for j, (is_label, p) in enumerate(entries):
                     c = "," if j < len(entries)-1 else ""
                     if is_label:
-                        lines.append(f'        "_label.{p}": {json.dumps((labels or {})[role+"."+p], ensure_ascii=False)}{c}')
+                        label_value = json.dumps(
+                            (labels or {})[role + "." + p], ensure_ascii=False,
+                        )
+                        lines.append(f'        "_label.{p}": {label_value}{c}')
                     else:
                         lines.append(f'        "{p}": {json.dumps(params[p], ensure_ascii=False)}{c}')
                 lines.append("    }" + comma)
             else:
-                lines.append(f'    {json.dumps(role, ensure_ascii=False)}: {json.dumps(params, ensure_ascii=False)}{comma}')
+                role_key = json.dumps(role, ensure_ascii=False)
+                role_value = json.dumps(params, ensure_ascii=False)
+                lines.append(f'    {role_key}: {role_value}{comma}')
         if has_disabled:
             lines.append("")
             lines.append(f'    "disabled_rules": {json.dumps(data["disabled_rules"], ensure_ascii=False)}')
         lines.append("}")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
+        # Пороги — центральный конфиг контроля качества: пишем атомарно,
+        # чтобы сбой в момент сохранения не оставил обрезанный JSON.
+        atomic_write_text(path, "\n".join(lines) + "\n")
 
     def get_all(self):
         return self.thresholds
 
 
 def _param_meta(key, value):
-    label = PARAM_LABELS.get(key) or next((v for s, v in sorted(SUFFIX_LABELS.items(), key=lambda x: -len(x[0])) if key.endswith(s)), key)
+    label = PARAM_LABELS.get(key) or next(
+        (
+            v for s, v in sorted(SUFFIX_LABELS.items(), key=lambda x: -len(x[0]))
+            if key.endswith(s)
+        ),
+        key,
+    )
     meta = {"key": key, "label": label, "description": "", "value": value}
     if key in FIXED_VALUES:
         meta.update({"step": 1, "min": FIXED_VALUES[key], "max": FIXED_VALUES[key], "readonly": True})

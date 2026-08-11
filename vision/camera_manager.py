@@ -16,8 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
-from core.app_logging import get_logger
 
+from core.app_logging import get_logger
 
 log = get_logger("vision.cameras")
 
@@ -565,6 +565,19 @@ class CameraManager:
             except TypeError:
                 # cancel_futures появилось в Python 3.9, fallback для старых рантаймов
                 pool.shutdown(wait=True)
+
+    @property
+    def failure_reason(self):
+        """Причина «залипшего» отказа камер либо ``None``.
+
+        Позволяет вызывающему коду отличить потерю оборудования (требует
+        остановки линии) от прикладной ошибки, после которой камеры
+        остаются исправны.
+        """
+        with self._state_lock:
+            if self._closed:
+                return "CameraManager закрыт"
+            return self._failed_reason
 
     def _latch_failure(self, reason: str):
         with self._state_lock:

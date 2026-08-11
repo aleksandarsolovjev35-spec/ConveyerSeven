@@ -1,7 +1,7 @@
 import re
 import time
-from core.app_logging import get_logger
 
+from core.app_logging import get_logger
 
 log = get_logger("hardware.axis")
 

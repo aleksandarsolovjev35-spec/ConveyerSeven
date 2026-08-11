@@ -863,7 +863,9 @@ def _reason_text(reason) -> str:
 
 def _role_verdict(role_details: dict) -> tuple:
     if role_details.get("skipped"):
-        return None, "нет измерения" + (f" · {_reason_text(role_details.get('reason'))}" if role_details.get("reason") else "")
+        reason = role_details.get("reason")
+        suffix = f" · {_reason_text(reason)}" if reason else ""
+        return None, "нет измерения" + suffix
     if role_details.get("triggered"):
         reason = _reason_text(role_details.get("reason"))
         return False, f"отклонение{f' · {reason}' if reason else ''}"
@@ -910,7 +912,11 @@ def build_presence_summary(details: dict) -> list:
             present = int(found) > limit
         metrics = [
             metric for metric in (
-                _metric("flatness", found, limit, ok=present if present is not None else None, key="false_positive_max_count"),
+                _metric(
+                    "flatness", found, limit,
+                    ok=present if present is not None else None,
+                    key="false_positive_max_count",
+                ),
                 _metric("Зачтено, шт", details.get(effective_key), key="effective_flatness"),
             ) if metric is not None
         ]

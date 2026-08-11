@@ -7,7 +7,6 @@ from vision.overlay.renderers.primitives import (
     LINE_THIN,
 )
 
-
 COLOR_MASK = (180, 180, 180)
 COLOR_TOP = (255, 255, 0)
 COLOR_LIMIT = (0, 200, 0)

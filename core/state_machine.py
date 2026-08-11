@@ -1,8 +1,8 @@
 import threading
-from enum import Enum
 from collections.abc import Callable
-from core.app_logging import get_logger
+from enum import Enum
 
+from core.app_logging import get_logger
 
 log = get_logger("state")
 

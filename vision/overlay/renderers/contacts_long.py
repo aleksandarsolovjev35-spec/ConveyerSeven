@@ -5,9 +5,9 @@ from vision.overlay.renderers.primitives import (
     COLOR_FAIL,
     COLOR_PASS,
     COLOR_SKIP,
-    DrawPrimitives,
     LINE_FAIL,
     LINE_THIN,
+    DrawPrimitives,
 )
 
 COLOR_TOP_LINE = (255, 210, 80)

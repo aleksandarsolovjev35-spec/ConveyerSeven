@@ -23,7 +23,6 @@ from domain.threshold_loader import ThresholdLoader
 from inspection.part_archive import PartArchive
 from vision.ui.server.server import CAMERA_ORDER, UIServer
 
-
 PROCESS_LABELS = {
     "IDLE": "Система готова к пуску",
     "START_POSITIONING": "Возврат распределителя в рабочее положение",
@@ -68,6 +67,7 @@ PROCESS_LABELS = {
     "CAMERA_DIAGNOSTIC": "Проверка семи камер",
     "VISION_RULE_DIAGNOSTIC": "Проверка моделей и правил",
     "DIAGNOSTIC_DONE": "Диагностика завершена",
+    "DIAGNOSTIC_ERROR": "Ошибка диагностики, линия не остановлена",
 }
 
 
@@ -417,13 +417,22 @@ class LineSimulation:
             "verdict": category,
             "rules": [{
                 "name": "part_presence", "title": "Наличие корпуса", "triggered": False,
-                "run_cards": [[{"type": "metric", "metrics": [{"key": "simulated_confidence", "label": "Уверенность модели", "value": "0.99", "limit": "0.40", "ok": True}]}]],
+                "run_cards": [[{"type": "metric", "metrics": [{
+                    "key": "simulated_confidence",
+                    "label": "Уверенность модели",
+                    "value": "0.99", "limit": "0.40", "ok": True,
+                }]}]],
             }, {
                 "name": "sinks" if triggered else "window_geometry",
                 "title": "Симулированная проверка",
                 "triggered": triggered,
                 "human_cause": ", ".join(defects) if defects else "Норма",
-                "run_cards": [[{"type": "metric", "metrics": [{"key": "simulated_result", "label": "Результат правила", "value": "СРАБОТАЛО" if triggered else "НОРМА", "limit": "—", "ok": not triggered}]}]],
+                "run_cards": [[{"type": "metric", "metrics": [{
+                    "key": "simulated_result",
+                    "label": "Результат правила",
+                    "value": "СРАБОТАЛО" if triggered else "НОРМА",
+                    "limit": "—", "ok": not triggered,
+                }]}]],
             }],
         }
 
@@ -471,7 +480,11 @@ class LineSimulation:
                 "controls": {"start": state in ("IDLE", "STOPPED") and self.selected_role is None,
                              "stop": state in ("RUNNING", "PAUSED"), "pause": state == "RUNNING",
                              "resume": state == "PAUSED", "exit": True,
-                             "jog_hold": self.jog_active and state in ("IDLE", "STOPPED") and self.selected_role is None,
+                             "jog_hold": (
+                                 self.jog_active
+                                 and state in ("IDLE", "STOPPED")
+                                 and self.selected_role is None
+                             ),
                              "selected_model_analysis": state in ("IDLE", "STOPPED") and self.selected_role is None,
                              "selected_model_release": self.selected_role is not None,
                              "distributor_diagnostic": state in ("IDLE", "STOPPED") and self.selected_role is None,
@@ -499,7 +512,10 @@ class LineSimulation:
                 "live": {"running": True,
                          "static": self.selected_role is not None or inspection_static,
                          "streaming": self.selected_role is None and not inspection_static,
-                         "static_roles": [self.selected_role] if self.selected_role else (active_roles if inspection_static else []),
+                         "static_roles": (
+                             [self.selected_role] if self.selected_role
+                             else (active_roles if inspection_static else [])
+                         ),
                          "all_roles_static": False, "fps": 25, "error": None},
                 "jog": {"active": self.jog_active, "busy": self.jog_busy, "can_enter": state in ("IDLE", "STOPPED"),
                         "hold_steps": self.jog_hold_steps, "direction": self.jog_direction,
@@ -659,7 +675,10 @@ def demo_frames(step: int = 0, phase: str = "IDLE", line_parts: list[dict] | Non
     for index, role in enumerate(CAMERA_ORDER):
         frame = np.zeros((480, 800, 3), dtype=np.uint8)
         frame[:] = (20 + index * 3, 27 + index * 2, 33 + index * 2)
-        cv2.putText(frame, "UI SIMULATION · VIRTUAL CAMERA", (42, 54), cv2.FONT_HERSHEY_SIMPLEX, .65, (105, 205, 170), 2)
+        cv2.putText(
+            frame, "UI SIMULATION · VIRTUAL CAMERA", (42, 54),
+            cv2.FONT_HERSHEY_SIMPLEX, .65, (105, 205, 170), 2,
+        )
         cv2.putText(frame, role, (42, 90), cv2.FONT_HERSHEY_SIMPLEX, .68, (205, 214, 224), 2)
         cv2.putText(frame, f"STEP {step:04d} · {phase}", (42, 122), cv2.FONT_HERSHEY_SIMPLEX, .48, (142, 165, 185), 1)
         cv2.rectangle(frame, (42, 155), (758, 420), (72, 94, 110), 2)

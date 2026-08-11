@@ -1,8 +1,9 @@
-import serial
-import time
 import threading
-from core.app_logging import get_logger
+import time
 
+import serial
+
+from core.app_logging import get_logger
 
 log = get_logger("hardware.serial")
 

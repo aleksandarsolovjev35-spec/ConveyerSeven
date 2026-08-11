@@ -8,10 +8,9 @@
 """
 
 import pytest
+from fakes import FakeAxis, FakeTransport
 
 from hardware.distributor import Distributor
-
-from fakes import FakeTransport, FakeAxis
 
 
 def make_distributor(dist1_pos=0, dist2_pos=0):

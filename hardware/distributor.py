@@ -1,8 +1,7 @@
 import time
 
-from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
 from core.app_logging import get_logger
-
+from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
 
 log = get_logger("hardware.distributor")
 

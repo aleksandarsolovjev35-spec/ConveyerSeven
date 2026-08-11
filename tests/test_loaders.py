@@ -9,16 +9,15 @@ import json
 import shutil
 
 import pytest
+from conftest import REPO_ROOT
 
-from config.calibration_loader import load_calibration, DEFAULTS
+from config.calibration_loader import DEFAULTS, load_calibration
 from config.camera_mapping import (
+    REQUIRED_ROLES,
     load_camera_mapping,
     validate_camera_mapping,
-    REQUIRED_ROLES,
 )
 from domain.threshold_loader import ThresholdLoader
-
-from conftest import REPO_ROOT
 
 CALIBRATION_FILE = REPO_ROOT / "calibration.json"
 THRESHOLDS_FILE = REPO_ROOT / "thresholds.json"

@@ -5,12 +5,12 @@
 """
 
 from domain.part import (
-    Part,
-    CATEGORY_GOOD,
     CATEGORY_BAD,
     CATEGORY_CLEANUP,
+    CATEGORY_GOOD,
     CATEGORY_UNKNOWN,
     CLEANUP_DEFECTS,
+    Part,
 )
 
 

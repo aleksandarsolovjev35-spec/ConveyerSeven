@@ -35,7 +35,6 @@ from enum import Enum
 
 from core.app_logging import get_logger
 
-
 log = get_logger("core.stages")
 
 # Пауза между подтверждённой остановкой ленты и первым кадром инспекции.

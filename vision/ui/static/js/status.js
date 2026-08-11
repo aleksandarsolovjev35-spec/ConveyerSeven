@@ -212,6 +212,7 @@ const PROCESS_PHASE_LABELS = {
     VISION_RULE_DIAGNOSTIC: 'ДИАГНОСТИКА · МОДЕЛИ И ПРАВИЛА',
     DISTRIBUTOR_DIAGNOSTIC: 'ДИАГНОСТИКА · РАСПРЕДЕЛИТЕЛЬ',
     DIAGNOSTIC_DONE: 'ДИАГНОСТИКА · ПРОВЕРКА ЗАВЕРШЕНА',
+    DIAGNOSTIC_ERROR: 'ДИАГНОСТИКА · ОШИБКА ПРОВЕРКИ',
     FAULT: 'АВАРИЯ · ЦИКЛ ОСТАНОВЛЕН',
     OFFLINE: 'НЕТ СВЯЗИ',
 };

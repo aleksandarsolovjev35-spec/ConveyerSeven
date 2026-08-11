@@ -4,7 +4,7 @@
 тихо менять состояние, а callback обязан получать (old, new, action).
 """
 
-from core.state_machine import StateMachine, State
+from core.state_machine import State, StateMachine
 
 
 def make():

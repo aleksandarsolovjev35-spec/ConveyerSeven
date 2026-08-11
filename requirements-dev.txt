@@ -6,3 +6,7 @@
 -r requirements.txt
 
 pytest>=8,<9
+
+# Линтер: та же версия, что и в CI (.github/workflows/ci.yml), чтобы локальный
+# `ruff check .` и проверка в PR давали одинаковый результат.
+ruff==0.16.2

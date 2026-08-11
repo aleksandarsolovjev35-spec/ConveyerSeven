@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+
 from domain.defect_rules.base import BaseRule, RuleResult
 from domain.defect_rules.omission_reference import (
     fit_omission_top_line,

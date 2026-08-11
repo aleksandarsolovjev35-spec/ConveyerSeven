@@ -3,9 +3,9 @@ import numpy as np
 
 from vision.overlay.renderers.primitives import (
     COLOR_FAIL,
-    DrawPrimitives,
     LINE_FAIL,
     LINE_THIN,
+    DrawPrimitives,
 )
 
 COLOR_PLATFORM_CONTOUR = (180, 180, 180)

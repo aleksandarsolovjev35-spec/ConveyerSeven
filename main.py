@@ -5,34 +5,29 @@ import time
 
 import webview
 
-from config import load_calibration, load_archive_config
-
-from hardware.serial_transport import SerialTransport
-from hardware.port_discovery   import find_controller
-from hardware.axis             import Axis
-from hardware.conveyor         import Conveyor
-from hardware.distributor      import Distributor
-from hardware.jog_controller   import JogController
-
-from vision.camera_manager             import CameraManager
-from vision.camera_calibration_console import launch_camera_calibrator
-from vision.vision_cluster             import VisionCluster
-from vision.ui                         import LiveMonitor
-
-from domain.threshold_loader  import ThresholdLoader
+from config import load_archive_config, load_calibration
 from core.app_logging import (
     capture_prints,
     get_logger,
     install_excepthooks,
     setup_logging,
 )
-from core.decision_engine     import DecisionEngine
-from core.production_cycle    import ProductionCycle
-
+from core.decision_engine import DecisionEngine
+from core.production_cycle import ProductionCycle
+from domain.threshold_loader import ThresholdLoader
+from hardware.axis import Axis
+from hardware.conveyor import Conveyor
+from hardware.distributor import Distributor
+from hardware.jog_controller import JogController
+from hardware.port_discovery import find_controller
+from hardware.serial_transport import SerialTransport
 from inspection.debug_recorder import DebugRecorder
-from inspection.inspector      import Inspector
-from inspection.part_archive   import PartArchive
-
+from inspection.inspector import Inspector
+from inspection.part_archive import PartArchive
+from vision.camera_calibration_console import launch_camera_calibrator
+from vision.camera_manager import CameraManager
+from vision.ui import LiveMonitor
+from vision.vision_cluster import VisionCluster
 
 log = get_logger("main")
 

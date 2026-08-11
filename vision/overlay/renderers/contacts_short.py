@@ -8,9 +8,9 @@ from vision.overlay.renderers.contacts_long import (
 from vision.overlay.renderers.primitives import (
     COLOR_FAIL,
     COLOR_SKIP,
-    DrawPrimitives,
     LINE_FAIL,
     LINE_THIN,
+    DrawPrimitives,
 )
 
 COLOR_HEIGHT_MEASURE = (180, 100, 255)

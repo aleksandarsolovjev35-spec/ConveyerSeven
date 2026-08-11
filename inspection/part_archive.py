@@ -23,14 +23,15 @@ import json
 import os
 import shutil
 import time
-from core.app_logging import get_logger
-
-
-log = get_logger("inspection.archive")
 import zipfile
 from datetime import datetime
 
 import cv2
+
+from core.app_logging import get_logger
+from domain.atomic_io import atomic_write_bytes, atomic_write_json
+
+log = get_logger("inspection.archive")
 
 
 class PartArchive:
@@ -432,27 +433,11 @@ class PartArchive:
 
     @staticmethod
     def _save_image(content: bytes, path: str):
-        temp_path = path + ".tmp"
-        try:
-            with open(temp_path, "xb") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp_path, path)
-        except Exception:
-            if os.path.exists(temp_path):
-                with contextlib.suppress(OSError):
-                    os.remove(temp_path)
-            raise
+        atomic_write_bytes(path, content)
 
     @staticmethod
     def _write_json(path: str, payload):
-        temp_path = path + ".tmp"
-        with open(temp_path, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, indent=2, ensure_ascii=False)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp_path, path)
+        atomic_write_json(path, payload)
 
     @staticmethod
     def _safe_name(name: str) -> str:
