@@ -250,7 +250,7 @@ class ProductionCycle:
             if self.jog_active:
                 print("[JOG] auto-exit on START")
                 self.exit_jog()
-            # The frame thread may fail while START waits for JOG shutdown.
+            # Поток live мог упасть, пока ждали выхода из JOG.
             if self.live.error:
                 return False
             if self.jog is not None and self.jog.status.get("error"):
@@ -1091,7 +1091,9 @@ class ProductionCycle:
             capture_roles=roles,
         )
         if not roles:
-            return [{}]
+            # Нет корпуса под инспекционными камерами — возвращаем пустой
+            # набор, а не фиктивный [{}], чтобы не создавать пустой Part.
+            return []
 
         # Драйвер может отдать старый кадр из буфера после движения. Дренируем
         # только нужные роли, затем получаем один свежий набор именно для
@@ -1135,7 +1137,11 @@ class ProductionCycle:
         self.stages.enter_analysis()
 
         # Единственный набор кадров стадии: он же уходит в UI и архив.
-        display_frames = dict(frame_runs[-1])
+        # Когда ролей нет (нет корпуса под камерами), frame_runs пуст.
+        if not frame_runs:
+            display_frames = {}
+        else:
+            display_frames = dict(frame_runs[-1])
         # Один прогон: общие кадры и общие правила для разметки стадии.
         markup_frames = {}
         markup_rules = []
@@ -1989,9 +1995,6 @@ class ProductionCycle:
             "cleanup": self.cleanup_count,
             "empty": self.empty_count,
             **dist,
-            "axis_position": dist["dist1_position"],
-            "axis_max": dist["dist1_max"],
-            "distributor_state": dist["dist1_state"],
             "process": dict(self._process),
             "diagnostic_allowed": diagnostic_allowed,
             "diagnostic_busy": operation_busy,

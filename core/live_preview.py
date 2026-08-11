@@ -345,6 +345,17 @@ class LivePreview:
                 capture_roles = getattr(self._cameras, "capture_roles", None)
                 if callable(capture_roles):
                     return capture_roles(allowed_roles)
-                return {role: frame for role, frame in self._cameras.capture_all().items()
-                        if role in allowed_roles}
+                # Fallback для старых test-double без capture_roles: читаем только
+                # разрешённые роли поштучно, чтобы не нагружать USB чтением
+                # активной камеры дважды и не держать lock на все 7 ролей.
+                frames = {}
+                for role in allowed_roles:
+                    try:
+                        frames[role] = self._cameras.capture_single(role)
+                    except Exception:
+                        # Одна роль могла упасть — остальные всё равно отдаём,
+                        # ошибка всплывёт как FAULT в основном цикле при
+                        # следующем официальном CAPTURE.
+                        continue
+                return frames
         self._run_loop(LIVE_AUX_BATCH_INTERVAL, iteration, "auxiliary loop")

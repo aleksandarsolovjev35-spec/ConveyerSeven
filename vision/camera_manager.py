@@ -456,9 +456,89 @@ class CameraManager:
     # ---------- восстановление ----------
 
     def reopen_roles(self, roles, timeout: float | None = None) -> dict:
-        """Сообщить, что переоткрытие потоков без перезапуска недоступно."""
-        requested = tuple(dict.fromkeys(roles))
-        return {role: False for role in requested}
+        """Попытаться переоткрыть указанные роли камер без перезапуска процесса.
+
+        Для каждой роли старый VideoCapture освобождается и делается попытка
+        открыть устройство заново с перебором backend-ов (той же логикой, что
+        и при старте). Возвращает dict {role: bool} — удалось ли пересоздать.
+        """
+        requested = tuple(dict.fromkeys(roles or ()))
+        if not requested:
+            return {}
+        results: dict[str, bool] = {}
+        for role in requested:
+            if role not in self.mapping:
+                results[role] = False
+                continue
+            cam_id = self.mapping[role]
+            lock = self._role_locks.get(role)
+            # Освобождаем старый cap под lock'ом роли, чтобы live-потоки не
+            # читали полузакрытый объект.
+            old_cap = None
+            if lock is not None:
+                with lock:
+                    old_cap = self.cameras.get(role)
+                    self.cameras.pop(role, None)
+            else:
+                old_cap = self.cameras.pop(role, None)
+
+            if old_cap is not None:
+                try:
+                    old_cap.release()
+                except Exception:
+                    pass
+
+            new_cap = None
+            last_errors = []
+            for _retry in range(2):
+                for backend in self._backends:
+                    try:
+                        cap = self._create_capture(cam_id, backend)
+                        if cap is None or not cap.isOpened():
+                            last_errors.append(f"{_backend_label(backend)}: не открылось")
+                            if cap is not None:
+                                try:
+                                    cap.release()
+                                except Exception:
+                                    pass
+                            continue
+                        self._configure_capture(cap)
+                        err = self._wait_for_stable_preflight(cap)
+                        if err is not None:
+                            last_errors.append(f"{_backend_label(backend)}: {err}")
+                            try:
+                                cap.release()
+                            except Exception:
+                                pass
+                            continue
+                        new_cap = cap
+                        break
+                    except Exception as exc:
+                        last_errors.append(f"{_backend_label(backend)}: {type(exc).__name__}: {exc}")
+                        if cap is not None:
+                            try:
+                                cap.release()
+                            except Exception:
+                                pass
+                if new_cap is not None:
+                    break
+                time.sleep(_OPEN_RETRY_DELAY)
+
+            if new_cap is None:
+                print(
+                    f"[CAMERA] reopen {role} (id={cam_id}) не удалось: "
+                    + "; ".join(last_errors[-5:])
+                )
+                results[role] = False
+            else:
+                if lock is not None:
+                    with lock:
+                        self.cameras[role] = new_cap
+                else:
+                    self.cameras[role] = new_cap
+                print(f"[CAMERA] reopen {role} (id={cam_id}) успешно")
+                results[role] = True
+        return results
 
     # ---------- завершение ----------
 
@@ -476,7 +556,11 @@ class CameraManager:
     def _shutdown_pool(self):
         pool, self._pool = self._pool, None
         if pool is not None:
-            pool.shutdown(wait=False)
+            try:
+                pool.shutdown(wait=True, cancel_futures=True)
+            except TypeError:
+                # cancel_futures появилось в Python 3.9, fallback для старых рантаймов
+                pool.shutdown(wait=True)
 
     def _latch_failure(self, reason: str):
         with self._state_lock:

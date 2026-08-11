@@ -121,11 +121,15 @@ class OmissionBoundaryMixin:
                 "message": "NO VALID OMISSION",
                 "triggered": True,
             })
+            # Когда нет валидной маски — все кандидаты считаются отфильтрованными,
+            # а не "все кроме одного главного".
+            invalid_cnt = int(measurement.get("ignored_invalid_masks", 0) or 0)
             return {
                 "triggered": True,
                 "class": self.TARGET_CLASS,
                 "found": len(candidates),
-                "ignored": max(0, len(candidates) - 1),
+                "ignored": len(candidates),
+                "invalid_masks": invalid_cnt,
                 "valid": False,
                 "reason": measurement["reason"],
                 "allowed_thickness_px": config["allowed_thickness_px"],
@@ -161,6 +165,7 @@ class OmissionBoundaryMixin:
             "class": self.TARGET_CLASS,
             "found": len(candidates),
             "ignored": max(0, len(candidates) - 1),
+            "invalid_masks": int(measurement.get("ignored_invalid_masks", 0) or 0),
             "valid": True,
             "reason": None,
             "mask_area_px2": round(measurement["mask_area_px2"], 3),

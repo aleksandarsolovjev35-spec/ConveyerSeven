@@ -160,12 +160,23 @@ class JogController:
                     f"{exc}; аварийная команда G1 не отправлена: {stop_exc}"
                 )
         finally:
-            try:
-                self.transport.send(f"G7 S{self._normal_steps_restore}")
-                self.transport.send("G6 S2")
-            except Exception as restore_exc:
+            restore_error = None
+            for _attempt in range(2):
+                try:
+                    self.transport.send(f"G7 S{self._normal_steps_restore}")
+                    self.transport.send(f"G6 S2")
+                    restore_error = None
+                    break
+                except Exception as exc:
+                    restore_error = exc
+                    time.sleep(0.1)
+            if restore_error is not None:
                 if error is None:
-                    error = restore_exc
+                    error = restore_error
+                else:
+                    error = RuntimeError(
+                        f"{error}; restore failed: {restore_error}"
+                    )
             with self._state_lock:
                 self._worker_error = None if error is None else str(error)
                 self._busy = False
