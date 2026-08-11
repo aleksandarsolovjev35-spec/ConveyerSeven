@@ -1,6 +1,6 @@
 {
   "micro_steps": 500,
-  "jog_hold_steps": 1000000,
+  "jog_hold_steps": 38096,
   "normal_steps": 19048,
   "conveyor_speed": 20000,
   "conveyor_accel": 6000,

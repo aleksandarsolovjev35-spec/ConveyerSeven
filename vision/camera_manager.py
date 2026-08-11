@@ -16,6 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
+from core.app_logging import get_logger
+
+
+log = get_logger("vision.cameras")
 
 
 def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -25,7 +29,7 @@ def _env_int(name: str, default: int, minimum: int = 0) -> int:
     try:
         return max(minimum, int(raw))
     except ValueError:
-        print(f"[CAMERA] {name}={raw!r} не число, используется {default}")
+        log.warning("%s=%r не число, используется %s", name, raw, default)
         return default
 
 
@@ -36,7 +40,7 @@ def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
     try:
         return max(minimum, float(raw))
     except ValueError:
-        print(f"[CAMERA] {name}={raw!r} не число, используется {default}")
+        log.warning("%s=%r не число, используется %s", name, raw, default)
         return default
 
 
@@ -205,9 +209,9 @@ class CameraManager:
             raise RuntimeError("Индексы камер должны быть уникальными")
         self.mapping = mapping
 
-        print("Конфигурация камер:")
+        log.info("Конфигурация камер:")
         for role, cam_id in self.mapping.items():
-            print(f"  {role} -> {cam_id}")
+            log.info("  %s -> %s", role, cam_id)
 
     def open_cameras(self):
         """Открыть все камеры волнами и убедиться, что каждая отдаёт кадр."""
@@ -272,7 +276,7 @@ class CameraManager:
             raise RuntimeError(f"Ошибка открытия камер: {details}")
 
         elapsed = time.monotonic() - started
-        print(f"Открыто камер: {len(self.cameras)} за {elapsed:.1f} с")
+        log.info("Открыто камер: %d за %.1f с", len(self.cameras), elapsed)
 
     # ---------- формат и предполётная проверка ----------
 
@@ -354,7 +358,7 @@ class CameraManager:
                 time.sleep(_WARMUP_READ_INTERVAL)
             with stats_lock:
                 stats[role] = {"reads": reads}
-            print(f"[CAMERA] Прогрев {role}: {reads} кадров за {actual:.1f}с")
+            log.debug("Прогрев %s: %d кадров за %.1fс", role, reads, actual)
 
         threads = [
             threading.Thread(target=_warm, args=(role,), daemon=True)
@@ -525,9 +529,9 @@ class CameraManager:
                 time.sleep(_OPEN_RETRY_DELAY)
 
             if new_cap is None:
-                print(
-                    f"[CAMERA] reopen {role} (id={cam_id}) не удалось: "
-                    + "; ".join(last_errors[-5:])
+                log.error(
+                    "reopen %s (id=%s) не удалось: %s",
+                    role, cam_id, "; ".join(last_errors[-5:]),
                 )
                 results[role] = False
             else:
@@ -536,7 +540,7 @@ class CameraManager:
                         self.cameras[role] = new_cap
                 else:
                     self.cameras[role] = new_cap
-                print(f"[CAMERA] reopen {role} (id={cam_id}) успешно")
+                log.info("reopen %s (id=%s) успешно", role, cam_id)
                 results[role] = True
         return results
 
@@ -550,7 +554,7 @@ class CameraManager:
             try:
                 cap.release()
             except Exception as exc:
-                print(f"[CAMERA] Ошибка освобождения камеры: {exc}")
+                log.warning("Ошибка освобождения камеры: %s", exc)
         self.cameras.clear()
 
     def _shutdown_pool(self):

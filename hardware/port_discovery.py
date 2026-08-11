@@ -8,6 +8,10 @@
 import time
 import serial
 import serial.tools.list_ports
+from core.app_logging import get_logger
+
+
+log = get_logger("hardware.discovery")
 
 
 # Проверяем именно формат статуса Conveyor, а не любой непустой ответ.
@@ -94,7 +98,7 @@ def try_port(
             try:
                 ser.close()
             except Exception as exc:
-                print(f"[SERIAL DISCOVERY] Ошибка закрытия порта: {exc}")
+                log.warning("Ошибка закрытия порта: %s", exc)
 
 
 def find_controller(
@@ -124,8 +128,9 @@ def find_controller(
         for p in available
     ]
 
-    print(f"[PORT] Found {len(available)} port(s): "
-          f"{', '.join(descriptions)}")
+    log.info(
+        "Найдено портов: %d: %s", len(available), ", ".join(descriptions),
+    )
 
     # Порядок проверки: preferred первым, потом остальные
     check_order = []
@@ -142,20 +147,19 @@ def find_controller(
         )
         desc = info.get("description", "")
 
-        print(f"[PORT] Trying {port} ({desc})...")
+        log.debug("Пробуем %s (%s)...", port, desc)
 
         success, response = try_port(port, baudrate)
 
         if success:
-            print(
-                f"[PORT] Controller found on {port}: "
-                f"'{response[:80]}'"
+            log.info(
+                "Контроллер найден на %s: %r", port, response[:80],
             )
             return port, (
                 f"Found on {port} ({desc})"
             )
         else:
-            print(f"[PORT]   {port}: {response}")
+            log.debug("  %s: %s", port, response)
 
     return None, (
         f"Controller not found. "

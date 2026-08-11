@@ -9,6 +9,10 @@ from inspection.consensus import (
     summarize_model_health,
 )
 from inspection.result import InspectionResult
+from core.app_logging import get_logger
+
+
+log = get_logger("inspection.inspector")
 
 
 class Inspector:
@@ -45,7 +49,7 @@ class Inspector:
                 roles=tuple(roles or ()),
             )
         except Exception as exc:
-            print(f"[INSPECTION] Ошибка отображения этапа {phase}: {exc}")
+            log.error("Ошибка отображения этапа %s: %s", phase, exc)
 
     # ProductionCycle передаёт один набор кадров как [frames]. Инспектор
     # проверяет этот контракт и обрабатывает единственный элемент.

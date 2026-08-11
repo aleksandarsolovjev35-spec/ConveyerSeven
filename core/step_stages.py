@@ -33,6 +33,11 @@ import threading
 import time
 from enum import Enum
 
+from core.app_logging import get_logger
+
+
+log = get_logger("core.stages")
+
 # Пауза между подтверждённой остановкой ленты и первым кадром инспекции.
 STAGE_SETTLE_SECONDS = 0.3
 
@@ -152,7 +157,7 @@ class StepSequencer:
             self._on_stage(previous, target, elapsed)
         except Exception as exc:
             # Наблюдение за фазами не должно ронять производственный шаг.
-            print(f"[STAGE] Ошибка обработчика фаз: {exc}")
+            log.error("Ошибка обработчика фаз: %s", exc)
 
     def enter_motion(self):
         """Начать движение: камеры возвращаются live-просмотру."""

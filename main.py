@@ -20,6 +20,12 @@ from vision.vision_cluster             import VisionCluster
 from vision.ui                         import LiveMonitor
 
 from domain.threshold_loader  import ThresholdLoader
+from core.app_logging import (
+    capture_prints,
+    get_logger,
+    install_excepthooks,
+    setup_logging,
+)
 from core.decision_engine     import DecisionEngine
 from core.production_cycle    import ProductionCycle
 
@@ -28,6 +34,8 @@ from inspection.inspector      import Inspector
 from inspection.part_archive   import PartArchive
 
 
+log = get_logger("main")
+
 CYCLE_JOIN_TIMEOUT   = 15.0
 INIT_JOIN_TIMEOUT    = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
@@ -35,6 +43,13 @@ COMPRESS_TIMEOUT     = 60.0
 
 
 def main():
+
+    # Журнал поднимается до любой инициализации: ошибки запуска тоже
+    # должны остаться на диске, а не только на закрывшемся splash-экране.
+    log_file = setup_logging()
+    install_excepthooks()
+    capture_prints()
+    log.info("=== Запуск ConveyerSeven; журнал: %s ===", log_file)
 
     if not os.path.exists("camera_mapping.json") and not launch_camera_calibrator(
         "camera_mapping.json"
@@ -377,6 +392,28 @@ def main():
                 # Start from a stopped controller before any configuration.
                 transport.send("G1")
                 transport.send("G25")
+                # Идентификация прошивки: «чужой» или перепрошитый
+                # контроллер должен быть виден до первого движения механики.
+                # Несовпадение — только предупреждение: протокол уже
+                # подтверждён форматом ответа на I2 при поиске порта.
+                fw_line, fw_known = _probe_controller_fw(transport)
+                if not fw_known:
+                    print(
+                        "[SERIAL] ВНИМАНИЕ: неизвестная прошивка контроллера: "
+                        f"{fw_line or 'нет ответа на I6'}"
+                    )
+                    monitor.set_splash_status(
+                        "ВНИМАНИЕ: прошивка контроллера не опознана"
+                    )
+                    serial_detail = (
+                        f"Контроллер: {found_port} @ {serial_baud} · "
+                        "прошивка не опознана"
+                    )
+                else:
+                    serial_detail = (
+                        f"Контроллер: {found_port} @ {serial_baud}"
+                        + (f" · {fw_line}" if fw_line else "")
+                    )
             except Exception as e:
                 monitor.boot_step_error(
                     "serial",
@@ -385,10 +422,7 @@ def main():
                 _report_startup_failure()
                 return
 
-            monitor.boot_step_done(
-                "serial",
-                f"Контроллер: {found_port} @ {serial_baud}",
-            )
+            monitor.boot_step_done("serial", serial_detail)
             _ensure_initialization_active()
 
             # Hardware
@@ -716,6 +750,30 @@ def main():
 
 
 # Helpers
+
+def _probe_controller_fw(transport) -> tuple[str, bool]:
+    """Запросить версию прошивки (I6) и распознать ожидаемую.
+
+    Возвращает (первая строка ответа, True если прошивка опознана).
+    Отсутствие ответа или ошибка запроса — не фатальны: контроллер уже
+    идентифицирован форматом I2 при поиске порта.
+    """
+    try:
+        reply = transport.query("I6", delay=0.2) or ""
+    except Exception as exc:
+        print(f"[SERIAL] Запрос версии прошивки (I6) не удался: {exc}")
+        return "", False
+    fw_line = next(
+        (line.strip() for line in reply.splitlines() if line.strip()),
+        "",
+    )
+    known = any(
+        token in reply.lower()
+        for token in ("convey", "fw")
+    )
+    print(f"[SERIAL] Прошивка контроллера: {fw_line or reply!r}")
+    return fw_line, known
+
 
 def _env_clamped_float(
     name: str, default: float, minimum: float, maximum: float,

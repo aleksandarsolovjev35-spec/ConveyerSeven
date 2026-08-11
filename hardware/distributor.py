@@ -1,6 +1,10 @@
 import time
 
 from domain.part import CATEGORY_BAD, CATEGORY_CLEANUP, CATEGORY_GOOD
+from core.app_logging import get_logger
+
+
+log = get_logger("hardware.distributor")
 
 
 class Distributor:
@@ -59,17 +63,26 @@ class Distributor:
 
     def initialize(self):
         """Установить физический ноль обеих осей."""
-        self._check_cancelled()
-        self.dist1_state, self.dist2_state = "HOMING", "WAITING"
-        self._notify()
-        self.dist1.home(); self._wait_dist1(timeout=30.0); self._check_cancelled()
-        self.dist1.verify_homed(); self._dist1_position = 0
-        self.dist1_state, self.dist2_state = "GOOD", "HOMING"
-        self._notify()
-        self.dist2.home(); self._wait_dist2(timeout=30.0); self._check_cancelled()
-        self.dist2.verify_homed(); self._dist2_position = 0
-        self.dist2_state, self.dist2_target, self.last_action = "IDLE", CATEGORY_BAD, "HOMED"
-        self._notify()
+        try:
+            self._check_cancelled()
+            self.dist1_state, self.dist2_state = "HOMING", "WAITING"
+            self._notify()
+            self.dist1.home(); self._wait_dist1(timeout=30.0); self._check_cancelled()
+            self.dist1.verify_homed(); self._dist1_position = 0
+            self.dist1_state, self.dist2_state = "GOOD", "HOMING"
+            self._notify()
+            self.dist2.home(); self._wait_dist2(timeout=30.0); self._check_cancelled()
+            self.dist2.verify_homed(); self._dist2_position = 0
+            self.dist2_state, self.dist2_target, self.last_action = "IDLE", CATEGORY_BAD, "HOMED"
+            self._notify()
+        except Exception:
+            # Прошивка ищет концевик без ограничения пробега: если хост
+            # сдаётся по таймауту, ось продолжила бы движение к механическому
+            # упору. Глушим обе оси до выброса ошибки наверх.
+            try:
+                self.emergency_stop()
+            finally:
+                raise
 
     def park_production(self):
         """Перед START выставить безопасный GOOD=0 и канал BAD=0."""
@@ -153,7 +166,7 @@ class Distributor:
         target = self._dist2_target_position(category)
         self._check_cancelled()
         if self._dist2_position == target:
-            print(f"[DIST2] {category} already at POS={target}")
+            log.debug("DIST2 %s уже в позиции %s", category, target)
             return
         self.dist2_state = "MOVING"; self._notify()
         self.dist2.move_absolute(target); self._wait_dist2(); self._check_cancelled()
@@ -161,20 +174,20 @@ class Distributor:
             raise RuntimeError(f"DIST2 target mismatch: expected {target}, got {self.dist2.position}")
         self._dist2_position = target
         self.dist2_state = "READY"
-        print(f"[DIST2] {category} POS={target}")
+        log.info("DIST2 %s POS=%s", category, target)
         self._notify()
 
     def _set_dist1_to_dist2(self):
         self._check_cancelled()
         if self._dist1_position == self.dist1_open_position:
-            print("[DIST1] already TO_DIST2")
+            log.debug("DIST1 уже TO_DIST2")
             return
         self.dist1_state = "MOVING_TO_DIST2"; self._notify()
         self.dist1.move_absolute(self.dist1_open_position); self._wait_dist1(); self._check_cancelled()
         if self.dist1.position != self.dist1_open_position:
             raise RuntimeError(f"DIST1 DIST2 mismatch: expected {self.dist1_open_position}, got {self.dist1.position}")
         self._dist1_position, self.dist1_state = self.dist1_open_position, "TO_DIST2"
-        print(f"[DIST1] TO_DIST2 POS={self._dist1_position}")
+        log.info("DIST1 TO_DIST2 POS=%s", self._dist1_position)
         self._notify()
 
     def _set_dist1_good(self):
@@ -187,7 +200,7 @@ class Distributor:
         if self.dist1.position != 0:
             raise RuntimeError(f"DIST1 GOOD mismatch: expected 0, got {self.dist1.position}")
         self._dist1_position, self.dist1_state = 0, "GOOD"
-        print("[DIST1] GOOD POS=0")
+        log.info("DIST1 GOOD POS=0")
         self._notify()
 
     def _check_cancelled(self):

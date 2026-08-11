@@ -17,6 +17,10 @@ import contextlib
 import threading
 import time
 from collections import deque
+from core.app_logging import get_logger
+
+
+log = get_logger("core.live")
 
 LIVE_TARGET_FPS = 30.0
 LIVE_FRAME_INTERVAL = 1.0 / LIVE_TARGET_FPS
@@ -221,7 +225,7 @@ class LivePreview:
             self.clear_overlays()
             for thread in threads:
                 thread.start()
-            print("[LIVE] preview started")
+            log.info("preview started")
             return True
 
     def stop(self):
@@ -241,12 +245,12 @@ class LivePreview:
             for thread in threads:
                 thread.join(max(0.0, deadline - time.monotonic()))
                 if thread.is_alive():
-                    print(
-                        f"[LIVE] поток {thread.name} не остановился за "
-                        f"{LIVE_THREAD_JOIN_TIMEOUT}s"
+                    log.warning(
+                        "поток %s не остановился за %ss",
+                        thread.name, LIVE_THREAD_JOIN_TIMEOUT,
                     )
             self._stop_event.clear()
-            print("[LIVE] preview stopped")
+            log.info("preview stopped")
 
     # Пауза на время статической инспекции
 
@@ -300,7 +304,7 @@ class LivePreview:
         with self._state_lock:
             if self._error is None:
                 self._error = message
-        print(f"[LIVE] {source} error: {message}")
+        log.error("%s error: %s", source, message)
         self._stop_event.set()
 
     def _run_loop(self, interval: float, iteration, source: str):

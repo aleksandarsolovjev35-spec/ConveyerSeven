@@ -26,6 +26,12 @@ from domain.part import (
     CATEGORY_UNKNOWN,
 )
 
+
+from core.app_logging import get_logger
+
+
+log = get_logger("cycle")
+
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
 
@@ -248,7 +254,7 @@ class ProductionCycle:
             if self.jog is not None and self.jog.status.get("error"):
                 return False
             if self.jog_active:
-                print("[JOG] auto-exit on START")
+                log.info("[JOG] auto-exit on START")
                 self.exit_jog()
             # Поток live мог упасть, пока ждали выхода из JOG.
             if self.live.error:
@@ -337,7 +343,7 @@ class ProductionCycle:
             if not accepted:
                 return False
             self._stop_pause_frame_loop()
-            print("[PAUSE] resume; работа возобновлена")
+            log.info("[PAUSE] resume; работа возобновлена")
             self._set_process(
                 "RESUMED",
                 "Работа возобновлена после паузы",
@@ -772,7 +778,7 @@ class ProductionCycle:
             try:
                 self.exit_jog()
             except Exception as exc:
-                print(f"[JOG] release during force exit failed: {exc}")
+                log.warning(f"[JOG] release during force exit failed: {exc}")
         self._safe_emergency_stop()
         return accepted
 
@@ -797,12 +803,12 @@ class ProductionCycle:
     # Main loop
 
     def start(self):
-        print("Система готова. Ожидание команды START.")
+        log.info("Система готова. Ожидание команды START.")
 
         try:
             while True:
                 if self.sm.force_exit:
-                    print("[EXIT] Force exit.")
+                    log.info("[EXIT] Force exit.")
                     break
 
                 if self.sm.is_active:
@@ -811,7 +817,7 @@ class ProductionCycle:
                         self.sm.notify_line_empty()
                         self._refresh_monitor()
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty -> exit.")
+                            log.info("[EXIT] Line empty -> exit.")
                             break
                         continue
 
@@ -825,11 +831,11 @@ class ProductionCycle:
                         self._refresh_monitor()
 
                         if self.sm.exit_requested:
-                            print("[EXIT] Line empty -> exit.")
+                            log.info("[EXIT] Line empty -> exit.")
                             break
                 else:
                     if self.sm.exit_requested:
-                        print("[EXIT] Not active -> exit.")
+                        log.info("[EXIT] Not active -> exit.")
                         break
 
                     if self.live.error and self.sm.state != State.FAULT:
@@ -856,7 +862,7 @@ class ProductionCycle:
                     time.sleep(0.1)
 
         except Exception as e:
-            print(f"[CYCLE] Critical error: {e}")
+            log.error(f"[CYCLE] Critical error: {e}")
             traceback.print_exc()
             self._handle_fault(f"Критическая ошибка цикла: {e}")
         finally:
@@ -866,17 +872,17 @@ class ProductionCycle:
             try:
                 self._stop_pause_frame_loop()
             except Exception as e:
-                print(f"[SHUTDOWN] stop pause frame loop failed: {e}")
+                log.warning(f"[SHUTDOWN] stop pause frame loop failed: {e}")
             self.stages.reset()
             self.live.reset_pause()
             self.live.stop()
             try:
                 self.exit_jog()
             except Exception as e:
-                print(f"[SHUTDOWN] exit_jog failed: {e}")
+                log.warning(f"[SHUTDOWN] exit_jog failed: {e}")
             self._safe_emergency_stop()
             self._archive_inflight("runtime_shutdown")
-            print("Цикл конвейера завершён.")
+            log.info("Цикл конвейера завершён.")
 
     # Fault
 
@@ -890,8 +896,8 @@ class ProductionCycle:
         self.live.reset_pause()
         self.live.stop()
         self._fault_reason = reason
-        print(f"[FAULT] {reason}")
-        print(
+        log.error(f"[FAULT] {reason}")
+        log.error(
             f"[FAULT] В очереди осталось "
             f"{len(self.parts)} деталей"
         )
@@ -900,7 +906,7 @@ class ProductionCycle:
             try:
                 self.exit_jog()
             except Exception as exc:
-                print(f"[JOG] release during fault failed: {exc}")
+                log.warning(f"[JOG] release during fault failed: {exc}")
         self._set_process("FAULT", reason)
         self._safe_emergency_stop()
         self._refresh_monitor()
@@ -923,7 +929,7 @@ class ProductionCycle:
         except Exception as e:
             # Повтор неудачного физического шага теряет соответствие
             # деталь/ячейка, поэтому падаем в FAULT на первой же ошибке.
-            print(f"[CYCLE] Error in _run_once: {e}")
+            log.error(f"[CYCLE] Error in _run_once: {e}")
             traceback.print_exc()
             self._handle_fault(f"Ошибка производственного шага: {e}")
 
@@ -940,7 +946,7 @@ class ProductionCycle:
         except Exception as e:
             errors.append(f"distributor: {e}")
         if errors:
-            print(f"[SHUTDOWN] Emergency stop errors: {'; '.join(errors)}")
+            log.warning(f"[SHUTDOWN] Emergency stop errors: {'; '.join(errors)}")
 
     def _check_motion_cancelled(self):
         if self._cancel_motion.is_set() or self.sm.force_exit:
@@ -957,7 +963,7 @@ class ProductionCycle:
         defect rules физически не могут быть сняты во время движения.
         """
         self._check_motion_cancelled()
-        print(f"\nШАГ {self.current_step + 1}")
+        log.info(f"ШАГ {self.current_step + 1}")
 
         # Право принять INPUT фиксируется до движения: если STOP придёт уже
         # во время проезда, вошедшая этим шагом деталь всё равно будет
@@ -1295,7 +1301,7 @@ class ProductionCycle:
         # шага построена по статичному кадру и на live-изображении из JOG
         # указывала бы мимо детали — убираем её немедленно.
         self.live.clear_overlays()
-        print("[PAUSE] линия остановлена на границе шага после полной остановки")
+        log.info("[PAUSE] линия остановлена на границе шага после полной остановки")
         self._set_process(
             "PAUSED",
             "Пауза: доступна ручная коррекция ленты с помощью JOG",
@@ -1349,7 +1355,7 @@ class ProductionCycle:
                 "INPUT: пустой лоток записан",
                 positions=[self.OFFSET_INPUT],
             )
-            print(
+            log.info(
                 f"[EMPTY] Пустой лоток на step {self.current_step} "
                 f"(total empty: {self.empty_count})"
             )
@@ -1366,7 +1372,7 @@ class ProductionCycle:
         part.mark_input_done()
         self.parts.append(part)
         self._record_frame_analysis("INPUT", part.id, result)
-        print(f"[INPUT] Деталь #{part.id}")
+        log.info(f"[INPUT] Деталь #{part.id}")
 
         self._last_vision_results.update(result.vision_results)
         self._last_rule_results.extend(result.rule_results)
@@ -1389,7 +1395,7 @@ class ProductionCycle:
             positions=[self.OFFSET_INPUT],
         )
 
-        print(
+        log.info(
             f"[INPUT] Деталь #{part.id} "
             f"дефекты: {result.defects or ['none']}"
         )
@@ -1452,7 +1458,7 @@ class ProductionCycle:
                 positions=[self.OFFSET_SPIDER],
             )
 
-            print(
+            log.info(
                 f"[SPIDER] Деталь #{part.id} "
                 f"дефекты: {result.defects or ['none']} "
                 f"категория={part.route_category}"
@@ -1479,7 +1485,7 @@ class ProductionCycle:
             return
         category = part.route_category
         if category == CATEGORY_UNKNOWN:
-            print(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
+            log.warning(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
             part.route_category, part.final_decision, category = CATEGORY_BAD, "incomplete_inspection", CATEGORY_BAD
         # GOOD: DIST1=0. BAD/CLEANUP: сначала DIST2, затем DIST1=340.
         self.distributor.prepare_route(category, part.id)
@@ -1492,13 +1498,13 @@ class ProductionCycle:
         self.distributor.confirm_transfer(part.id, category)
         if category == CATEGORY_GOOD:
             self.good_count += 1
-            print(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
+            log.info(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
         elif category == CATEGORY_BAD:
             self.bad_count += 1
-            print(f"[REJECT] #{part.id} -> BAD ({self.bad_count})")
+            log.info(f"[REJECT] #{part.id} -> BAD ({self.bad_count})")
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
-            print(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
+            log.info(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
         self._archive_part(part)
         self._set_process(
             "FINAL_DECISION_ARCHIVED",
@@ -1543,7 +1549,7 @@ class ProductionCycle:
                     extra={"aborted": True, "abort_reason": reason},
                 )
             except Exception as e:
-                print(f"[ARCHIVE] Failed to archive aborted part #{part.id}: {e}")
+                log.error(f"[ARCHIVE] Failed to archive aborted part #{part.id}: {e}")
             self._remove_part(part)
         self._pending_drop = None
 
@@ -1660,7 +1666,7 @@ class ProductionCycle:
 
     def _on_stage_change(self, previous, current, elapsed: float):
         """Печать границы фаз шага: видно, где именно проводится время."""
-        print(
+        log.debug(
             f"[STAGE] {previous.value} -> {current.value} "
             f"(предыдущая фаза {elapsed:.2f} с)"
         )
@@ -1701,12 +1707,12 @@ class ProductionCycle:
             if self.jog_active:
                 return True
             if not self.can_enter_jog():
-                print(f"[JOG] Cannot enter (state={self.state})")
+                log.info(f"[JOG] Cannot enter (state={self.state})")
                 return False
 
             self.jog_active = True
             self.live.start()
-            print("[JOG] entered")
+            log.info("[JOG] entered")
 
         self._refresh_monitor()
         return True
@@ -1725,7 +1731,7 @@ class ProductionCycle:
                 self.jog_active = False
                 if not self.sm.is_active:
                     self.live.stop()
-                print("[JOG] exited")
+                log.info("[JOG] exited")
 
         self._refresh_monitor()
         if release_error is not None:

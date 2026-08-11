@@ -1,6 +1,10 @@
 import serial
 import time
 import threading
+from core.app_logging import get_logger
+
+
+log = get_logger("hardware.serial")
 
 
 class SerialTransport:
@@ -36,7 +40,7 @@ class SerialTransport:
                 try:
                     self.ser.close()
                 except Exception as exc:
-                    print(f"[SERIAL] Ошибка закрытия порта: {exc}")
+                    log.warning("Ошибка закрытия порта: %s", exc)
 
     # Internal
 
