@@ -99,10 +99,6 @@ class LiveCaptureGate:
             self._role_pause_depth.clear()
             self._condition.notify_all()
 
-    def is_live_allowed(self, role) -> bool:
-        with self._condition:
-            return self._pause_depth == 0 and self._role_pause_depth.get(role, 0) == 0
-
     @contextlib.contextmanager
     def live_read(self, role=None):
         """Занять слот live-чтения одной роли; False означает паузу роли."""
