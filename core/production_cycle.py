@@ -902,11 +902,14 @@ class ProductionCycle:
         log.info("Система готова. Ожидание команды START.")
         self._watchdog.start()
 
-        if self.pipeline is not None and not getattr(self.pipeline, "is_running", False):
-            try:
-                self.pipeline.start()
-            except Exception as pipe_err:
-                log.warning("Could not start FramePipeline: %s", pipe_err)
+        # FramePipeline deliberately is not started by the production cycle.
+        # A continuously captured frame has no physical association with the
+        # part currently standing at INPUT / +4: it may have been read while
+        # the conveyor was moving, or for the preceding part.  Production
+        # inspection therefore owns its capture at the CAPTURE stage and runs
+        # inference only for that frozen snapshot.  FramePipeline remains a
+        # reusable component for non-production preview/diagnostic clients,
+        # but must never become a source of decisions for a moving line.
 
         try:
             while True:
@@ -1242,44 +1245,38 @@ class ProductionCycle:
             # набор, а не фиктивный [{}], чтобы не создавать пустой Part.
             return []
 
-        # Если активен Producer-Consumer pipeline или есть асинхронный результат
-        frames = None
+        # Never use a frame from the asynchronous pipeline here.  Its capture
+        # timestamp is unrelated to this physical conveyor step, so selecting
+        # its "latest" result can analyse the preceding/following part.  It
+        # also carries VisionCluster.last_health from a concurrent inference.
+        # Reset these compatibility fields explicitly so Inspector cannot
+        # accidentally reuse such a result.
         self._pipeline_latest_vision = None
         self._pipeline_latest_health = None
 
-        if self.pipeline is not None and getattr(self.pipeline, "is_running", False):
-            latest = self.pipeline.get_latest_result(timeout=2.0)
-            if latest and "frames" in latest:
-                all_frames = latest["frames"]
-                if all(r in all_frames for r in roles):
-                    frames = {role: all_frames[role] for role in roles}
-                    self._pipeline_latest_vision = latest.get("vision_results")
-                    self._pipeline_latest_health = latest.get("model_health")
-
-        if frames is None:
-            with self._async_vision_lock:
-                if self._async_vision_results and "frames" in self._async_vision_results:
-                    all_frames = self._async_vision_results["frames"]
-                    if all(r in all_frames for r in roles):
-                        frames = {role: all_frames[role] for role in roles}
-                        self._pipeline_latest_vision = self._async_vision_results.get("vision_results")
-                        self._pipeline_latest_health = self._async_vision_results.get("model_health")
-
-        if frames is None:
-            # Драйвер может отдать старый кадр из буфера после движения. Дренируем
-            # только нужные роли, затем получаем один свежий набор именно для
-            # соответствующей стадии Part.
-            drain = getattr(self.cameras, "drain_buffers", None)
-            if callable(drain):
-                drain(roles=roles)
-            capture_roles = getattr(self.cameras, "capture_roles", None)
-            if callable(capture_roles):
-                frames = capture_roles(roles)
-            else:
-                # Совместимость со старыми test doubles; production CameraManager
-                # всегда предоставляет capture_roles().
-                frames = self.cameras.capture_all()
-                frames = {role: frames[role] for role in roles}
+        # The driver may return buffered frames after motion.  Drain only the
+        # roles of this stage, then take one new snapshot for this exact part.
+        # A separately supplied FramePipeline is paused and flushed first as
+        # an additional guard for embedded users that started it themselves.
+        pipeline = self.pipeline
+        if pipeline is not None and getattr(pipeline, "is_running", False):
+            pause = getattr(pipeline, "pause", None)
+            if callable(pause):
+                pause()
+            flush = getattr(pipeline, "flush", None)
+            if callable(flush):
+                flush()
+        drain = getattr(self.cameras, "drain_buffers", None)
+        if callable(drain):
+            drain(roles=roles)
+        capture_roles = getattr(self.cameras, "capture_roles", None)
+        if callable(capture_roles):
+            frames = capture_roles(roles)
+        else:
+            # Совместимость со старыми test doubles; production CameraManager
+            # всегда предоставляет capture_roles().
+            frames = self.cameras.capture_all()
+            frames = {role: frames[role] for role in roles}
         if set(frames) != set(roles):
             raise RuntimeError(
                 f"Неполный набор кадров для инспекции: ожидались {sorted(roles)}, "

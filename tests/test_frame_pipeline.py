@@ -179,8 +179,8 @@ def test_frame_pipeline_error_resilience():
 
     pipeline.stop()
 
-def test_production_cycle_with_frame_pipeline_integration():
-    """Verify ProductionCycle can use FramePipeline results asynchronously."""
+def test_production_cycle_ignores_pipeline_frames_for_part_inspection():
+    """The CAPTURE stage must use its own fresh frame, never a pipeline frame."""
     roles = ("INPUT_LEFT", "INPUT_RIGHT", "SPIDER_LEFT", "SPIDER_RIGHT", "SPIDER_IN", "SPIDER_OUT", "TOP")
     cameras = FakeCamerasSource(roles=roles)
     vision = FakeVisionBackend()
@@ -226,10 +226,15 @@ def test_production_cycle_with_frame_pipeline_integration():
     cycle.stages.enter_motion()
     cycle.stages.enter_settle()
 
-    # Test _stage_capture uses pipeline
+    # CAPTURE must not borrow an asynchronous result: its frame belongs to an
+    # arbitrary moment/part.  It reads a new snapshot after draining instead.
+    pipeline_frame = result["frames"]["INPUT_LEFT"]
     captured_runs = cycle._stage_capture(accept_input_for_this_step=True)
     assert len(captured_runs) == 1
     assert "INPUT_LEFT" in captured_runs[0]
-    assert cycle._pipeline_latest_vision is not None
+    assert captured_runs[0]["INPUT_LEFT"] != pipeline_frame
+    assert cycle._pipeline_latest_vision is None
+    assert cycle._pipeline_latest_health is None
+    assert pipeline._pause_event.is_set()
 
     pipeline.stop()
