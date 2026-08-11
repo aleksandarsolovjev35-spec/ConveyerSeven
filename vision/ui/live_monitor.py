@@ -1,208 +1,118 @@
+"""UI facade that emits intents rather than invoking production hardware."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from core.event_bus import EventBus
 from vision.ui.server.server import UIServer
 
 
 class LiveMonitorApi:
-    """Небольшой native bridge для действий, недоступных обычному браузеру."""
+    """Native bridge for presentation-only operations unavailable to browsers."""
 
-    def __init__(self, monitor):
+    def __init__(self, monitor: "LiveMonitor") -> None:
         self.monitor = monitor
 
-    def choose_archive_folder(self):
-        """Открыть системный диалог выбора папки в pywebview."""
+    def choose_archive_folder(self) -> dict[str, Any]:
+        """Open the operating system's directory selector through pywebview."""
         window = self.monitor._webview_window
         if window is None:
             return {"ok": False, "error": "Окно интерфейса ещё не готово"}
         try:
             import webview
+
             selected = window.create_file_dialog(webview.FOLDER_DIALOG)
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+        except (ImportError, RuntimeError, OSError) as error:
+            return {"ok": False, "error": str(error)}
         if not selected:
             return {"ok": False, "cancelled": True}
         return {"ok": True, "path": str(selected[0])}
 
 
 class LiveMonitor:
-    """
-    Фасад UI: FastAPI сервер + pywebview окно.
-    """
+    """Presentation facade; it emits UI intents and never owns equipment."""
 
     def __init__(
         self,
+        event_bus: EventBus,
         window_name: str = "РОБОТЕХНИЧЕСКИЙ КОМПЛЕКС КОНВЕЙЕРНОГО ТИПА 7",
         host: str = "127.0.0.1",
         port: int = 8000,
         fullscreen: bool = True,
-        start_callback=None,
-        stop_callback=None,
-        exit_callback=None,
-    ):
+    ) -> None:
+        """Create the HMI adapter attached only to an event bus."""
         self.window_name = window_name
         self.host = host
         self.port = port
         self.fullscreen = fullscreen
-
-        self.start_callback  = start_callback
-        self.stop_callback   = stop_callback
-        self.pause_callback  = None
-        self.resume_callback = None
-        self.exit_callback   = exit_callback
-        self.distributor_diagnostic_callback = None
-        self.camera_diagnostic_callback = None
-        self.vision_rule_diagnostic_callback = None
-        self.selected_model_analysis_callback = None
-        self.selected_model_release_callback = None
-        self.active_camera_callback = None
-
-        # JOG callbacks
-        self.jog_enter_callback = None
-        self.jog_exit_callback = None
-        self.jog_hold_start_callback = None
-        self.jog_hold_heartbeat_callback = None
-        self.jog_hold_release_callback = None
-
-        # Пороги правил: callback получает (role, values) и возвращает
-        # обновлённый плоский dict порогов (или бросает исключение).
-        self.thresholds_apply_callback = None
-        # Callback автоподхвата: получает свежий dict порогов из файла,
-        # может пересоздать DecisionEngine и вернуть итоговый dict.
-        self.thresholds_reload_callback = None
-
+        self._event_bus = event_bus
         self.server = UIServer()
-        self._bind_server_callbacks()
-
-        self._webview_window = None
+        self._bind_server_events()
+        self._webview_window: Any | None = None
         self.webview_api = LiveMonitorApi(self)
         self._close_requested = False
 
-    # Public API
-
-    def set_splash_status(self, text: str):
+    def set_splash_status(self, text: str) -> None:
+        """Publish boot status text to the UI server."""
         self.server.set_splash_status(text)
 
-    def boot_step_start(self, key: str, message: str | None = None):
+    def boot_step_start(self, key: str, message: str | None = None) -> None:
+        """Mark one boot step as active."""
         self.server.boot_step_start(key, message)
 
-    def boot_step_done(self, key: str, message: str | None = None):
+    def boot_step_done(self, key: str, message: str | None = None) -> None:
+        """Mark one boot step as complete."""
         self.server.boot_step_done(key, message)
 
-    def boot_step_error(self, key: str, message: str):
+    def boot_step_error(self, key: str, message: str) -> None:
+        """Expose a boot failure to the operator."""
         self.server.boot_step_error(key, message)
 
-    def boot_complete(self):
+    def boot_complete(self) -> None:
+        """Dismiss the boot splash screen."""
         self.server.boot_complete()
 
-    def update(self, **kwargs):
+    def update(self, **kwargs: Any) -> None:
+        """Update presentation state from a validated core snapshot."""
         self.server.update(**kwargs)
 
-    def close_window(self):
-        """Закрыть webview окно. Безопасно вызывать повторно."""
-        if self._webview_window is None:
+    def close_window(self) -> None:
+        """Close the webview window once."""
+        if self._webview_window is None or self._close_requested:
             return
-        if self._close_requested:
-            return
-
         self._close_requested = True
-        try:
-            self._webview_window.destroy()
-        except Exception as e:
-            print(f"[UI] window close error: {e}")
+        self._webview_window.destroy()
 
-    def stop_server(self, timeout: float = 3.0):
-        """Остановить uvicorn сервер."""
-        try:
-            self.server.stop_server()
-        except Exception as exc:
-            print(f"[UI] Ошибка остановки сервера: {exc}")
+    def stop_server(self, timeout: float = 3.0) -> None:
+        """Stop the UI server and wait a bounded time for its thread."""
+        self.server.stop_server()
+        thread = self.server.get_server_thread()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
 
-        server_thread = self.server.get_server_thread()
-        if server_thread and server_thread.is_alive():
-            server_thread.join(timeout=timeout)
-            if server_thread.is_alive():
-                print("[UI] Server thread did not stop")
+    def _emit(self, event_name: str, *args: Any) -> Any:
+        """Emit an intent and return the last handler's result to the API."""
+        results = self._event_bus.emit(event_name, *args)
+        return results[-1] if results else False
 
-    # Internal
-
-    def _bind_server_callbacks(self):
-        self.server.on_start = (
-            lambda: self._invoke(self.start_callback)
-        )
-        self.server.on_stop = (
-            lambda: self._invoke(self.stop_callback)
-        )
-        self.server.on_pause = (
-            lambda: self._invoke(self.pause_callback)
-        )
-        self.server.on_resume = (
-            lambda: self._invoke(self.resume_callback)
-        )
-        self.server.on_exit = (
-            lambda: self._invoke(self.exit_callback)
-        )
-        self.server.on_distributor_diagnostic = (
-            lambda command: self._invoke_args(
-                self.distributor_diagnostic_callback, command,
-            )
-        )
-        self.server.on_camera_diagnostic = (
-            lambda: self._invoke(self.camera_diagnostic_callback)
-        )
-        self.server.on_vision_rule_diagnostic = (
-            lambda: self._invoke(self.vision_rule_diagnostic_callback)
-        )
-        self.server.on_selected_model_analysis = (
-            lambda role: self._invoke_args(
-                self.selected_model_analysis_callback, role,
-            )
-        )
-        self.server.on_selected_model_release = (
-            lambda: self._invoke(self.selected_model_release_callback)
-        )
-        self.server.on_active_camera_changed = (
-            lambda role: self._invoke_args(
-                self.active_camera_callback, role,
-            )
-        )
-
-        # JOG
-        self.server.on_jog_enter = (
-            lambda: self._invoke(self.jog_enter_callback)
-        )
-        self.server.on_jog_exit = (
-            lambda: self._invoke(self.jog_exit_callback)
-        )
-        self.server.on_jog_hold_start = (
-            lambda direction: self._invoke_args(
-                self.jog_hold_start_callback, direction,
-            )
-        )
-        self.server.on_jog_hold_heartbeat = (
-            lambda direction: self._invoke_args(
-                self.jog_hold_heartbeat_callback, direction,
-            )
-        )
-        self.server.on_jog_hold_release = (
-            lambda reason="button released": self._invoke_args(
-                self.jog_hold_release_callback, reason,
-            )
-        )
-        self.server.on_thresholds_apply = (
-            lambda role, values, labels: self._invoke_args(
-                self.thresholds_apply_callback, role, values, labels,
-            )
-        )
-        self.server.on_thresholds_reload = (
-            lambda fresh: self._invoke_args(
-                self.thresholds_reload_callback, fresh,
-            )
-        )
-
-    def _invoke(self, cb):
-        if cb is None:
-            return False
-        return cb()
-
-    def _invoke_args(self, cb, *args, **kwargs):
-        if cb is None:
-            return False
-        return cb(*args, **kwargs)
+    def _bind_server_events(self) -> None:
+        """Map HTTP actions to named intents, without core callback references."""
+        mappings: dict[str, str] = {
+            "on_start": "ui:start_requested", "on_stop": "ui:stop_requested",
+            "on_pause": "ui:pause_requested", "on_resume": "ui:resume_requested",
+            "on_exit": "ui:exit_requested", "on_camera_diagnostic": "ui:camera_diagnostic_requested",
+            "on_vision_rule_diagnostic": "ui:vision_rule_diagnostic_requested",
+            "on_selected_model_release": "ui:selected_model_release_requested",
+            "on_jog_enter": "ui:jog_enter_requested", "on_jog_exit": "ui:jog_exit_requested",
+        }
+        for attribute, event_name in mappings.items():
+            setattr(self.server, attribute, lambda event=event_name: self._emit(event))
+        self.server.on_distributor_diagnostic = lambda command: self._emit("ui:distributor_diagnostic_requested", command)
+        self.server.on_selected_model_analysis = lambda role: self._emit("ui:selected_model_analysis_requested", role)
+        self.server.on_active_camera_changed = lambda role: self._emit("ui:active_camera_changed", role)
+        self.server.on_jog_hold_start = lambda direction: self._emit("ui:jog_hold_start_requested", direction)
+        self.server.on_jog_hold_heartbeat = lambda direction: self._emit("ui:jog_hold_heartbeat", direction)
+        self.server.on_jog_hold_release = lambda reason="button released": self._emit("ui:jog_hold_release_requested", reason)
+        self.server.on_thresholds_apply = lambda role, values, labels: self._emit("ui:thresholds_apply_requested", role, values, labels)
+        self.server.on_thresholds_reload = lambda fresh: self._emit("ui:thresholds_reload_requested", fresh)

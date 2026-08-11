@@ -1,16 +1,41 @@
+import importlib.util
 import math
 import os
+import platform
 import time
 
 import numpy as np
 from ultralytics import YOLO
 
 from core.app_logging import get_logger
+from core.exceptions import VisionModelError
 from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
 
 log = get_logger("vision.cluster")
 
 INFERENCE_IMGSZ = 1280
+
+
+def detect_accelerator() -> str:
+    """Select the fastest locally available Ultralytics-compatible backend.
+
+    The selection is deterministic and conservative: CUDA is preferred over
+    Apple MPS, then OpenVINO.  No import of a heavyweight optional runtime is
+    attempted when its package is absent.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+    except (ImportError, OSError, RuntimeError):
+        pass
+    if importlib.util.find_spec("openvino") is not None:
+        return "openvino"
+    return "cpu"
 
 AGGRESSIVE_IOU_ROLES = {"TOP", "SPIDER_LEFT", "SPIDER_RIGHT"}
 DEFAULT_IOU    = 0.45
@@ -19,8 +44,9 @@ AGGRESSIVE_IOU = 0.10
 
 class VisionCluster:
 
-    def __init__(self, device: str = "cpu", verbose: bool = True):
-        self.device = device
+    def __init__(self, device: str = "auto", verbose: bool = True):
+        """Load configured models onto an explicit or automatically selected device."""
+        self.device = detect_accelerator() if device == "auto" else device
         self.verbose = verbose
         self.models = {}
         self.last_health = []
@@ -32,7 +58,7 @@ class VisionCluster:
                 path = entry["path"]
                 if path not in self.models:
                     if not os.path.isfile(path):
-                        raise FileNotFoundError(f"Model file not found: {path}")
+                        raise VisionModelError(f"Model file not found: {path}")
                     if self.verbose:
                         log.info("Загрузка модели %s", path)
                     model = YOLO(path)
@@ -55,11 +81,11 @@ class VisionCluster:
         elif isinstance(names, (list, tuple)):
             actual = tuple(str(name) for name in names)
         else:
-            raise RuntimeError(
+            raise VisionModelError(
                 f"Model {path} has no readable class names; expected {expected}"
             )
         if actual != expected:
-            raise RuntimeError(
+            raise VisionModelError(
                 f"Model class mismatch for {path}: actual={actual}, expected={expected}"
             )
 
@@ -78,7 +104,7 @@ class VisionCluster:
             except Exception as e:
                 errors.append(f"{path}: {type(e).__name__}: {e}")
         if errors:
-            raise RuntimeError("Model warmup failed: " + "; ".join(errors))
+            raise VisionModelError("Model warmup failed: " + "; ".join(errors))
         if self.verbose:
             log.info("Прогрев моделей завершён")
 
@@ -129,7 +155,7 @@ class VisionCluster:
                         "error": f"{type(e).__name__}: {e}",
                     })
                     self.last_health = health
-                    raise RuntimeError(
+                    raise VisionModelError(
                         f"Model inference failed for {role} / {path}: "
                         f"{type(e).__name__}: {e}"
                     ) from e

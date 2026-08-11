@@ -100,8 +100,9 @@ class Conveyor:
             time.sleep(0.05)
 
     def emergency_stop(self):
-        """Аварийная остановка."""
+        """Issue belt stop and controller-level hard abort (``G25``)."""
         self.transport.send("G1")
+        self.transport.send("G25")
 
     def _set_params(
         self,

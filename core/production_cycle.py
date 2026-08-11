@@ -6,6 +6,8 @@ from core.app_logging import get_logger
 from core.live_preview import LivePreview
 from core.rule_report import build_rule_report_row, build_rule_report_rows
 from core.state_machine import State, StateMachine
+from core.watchdog import ProductionWatchdog
+from core.ui_schemas import UIStatusSchema
 from core.step_stages import (
     STAGE_SETTLE_SECONDS,
     STAGE_TRACE_SECONDS,
@@ -101,6 +103,13 @@ class ProductionCycle:
         self._cancel_motion = threading.Event()
         self.distributor.cancel_check = self._cancel_motion.is_set
         self._process_revision = 0
+        transport = getattr(self.conveyor, "transport", None)
+        if transport is None or not callable(getattr(transport, "query", None)):
+            raise TypeError("conveyor transport must provide query() for watchdog pings")
+        self._watchdog = ProductionWatchdog(
+            ping=lambda: transport.query("I2", delay=0.0),
+            emergency_stop=self._safe_emergency_stop,
+        )
         # Снимки inspection остаются операторским стоп-кадром до следующего
         # движения, хотя физические камеры уже вернулись в live.
         self._inspection_display_roles = ()
@@ -175,6 +184,7 @@ class ProductionCycle:
         conveyor_status=None,
         capture_roles=None,
     ):
+        self._watchdog.tick()
         self._process_revision += 1
         self._process = {
             "phase": phase,
@@ -840,10 +850,17 @@ class ProductionCycle:
     # Main loop
 
     def start(self):
+        """Run the production loop while an independent watchdog is armed."""
         log.info("Система готова. Ожидание команды START.")
+        self._watchdog.start()
 
         try:
             while True:
+                self._watchdog.tick()
+                watchdog_failure = self._watchdog.failure
+                if watchdog_failure is not None:
+                    self._handle_fault(str(watchdog_failure))
+                    break
                 if self.sm.force_exit:
                     log.info("[EXIT] Force exit.")
                     break
@@ -902,6 +919,7 @@ class ProductionCycle:
             log.error("Critical error: %s", e, exc_info=True)
             self._handle_fault(f"Критическая ошибка цикла: {e}")
         finally:
+            self._watchdog.stop()
             self._shutdown = True
             self._cancel_motion.set()
             self._pause_requested.clear()
@@ -2091,7 +2109,7 @@ class ProductionCycle:
                 "error":       None,
             }
 
-        return status
+        return UIStatusSchema.from_mapping(status)
 
     def _refresh_monitor(
         self,
