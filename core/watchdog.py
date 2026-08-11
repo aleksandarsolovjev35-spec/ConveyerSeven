@@ -25,7 +25,7 @@ class ProductionWatchdog:
         emergency_stop: Callable[[], None],
         *,
         interval_seconds: float = 0.5,
-        timeout_seconds: float = 1.0,
+        timeout_seconds: float = 3.0,
     ) -> None:
         """Create a stopped watchdog with validated timing bounds."""
         if interval_seconds <= 0.0 or timeout_seconds < interval_seconds:

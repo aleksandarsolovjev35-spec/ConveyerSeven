@@ -67,6 +67,8 @@ class MockCamera:
 
     def __init__(self, video_path: Path | None = None, roles: tuple[str, ...] = _DEFAULT_ROLES) -> None:
         self.mapping = {role: index for index, role in enumerate(roles)}
+        # Совместимость с CameraManager: main.py ожидает .cameras
+        self.cameras = dict(self.mapping)
         self._video_path = video_path
         self._capture: Any | None = None
         self._closed = False
@@ -75,6 +77,10 @@ class MockCamera:
         """Return a copy of the same current digital-twin frame per requested role."""
         frame = self._next_frame()
         return {role: frame.copy() for role in roles}
+
+    def capture_single(self, role: str) -> np.ndarray:
+        """Return frame for one role — compatibility with LivePreview."""
+        return self.capture_roles((role,))[role]
 
     def capture_all(self) -> dict[str, np.ndarray]:
         """Return a frame for every configured simulated camera."""
@@ -159,6 +165,16 @@ class MockDistributor:
     def confirm_transfer(self, part_id: int, category: str) -> None:
         """Record simulated completion of a routed part."""
         self.last_action = f"SIMULATED PART {part_id} -> {category} DONE"
+
+    def reset_target(self) -> None:
+        """Simulate cancel of pending route (no movement)."""
+        self.last_action = "SIMULATED RESET TARGET"
+
+    def diagnostic_gate(self, position: str) -> None:
+        self.last_action = f"SIMULATED DIAG GATE {position}"
+
+    def diagnostic_route(self, category: str) -> None:
+        self.last_action = f"SIMULATED DIAG ROUTE {category}"
 
     def emergency_stop(self) -> None:
         """Enter simulated fail-safe state."""
