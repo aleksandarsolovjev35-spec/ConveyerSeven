@@ -1,3 +1,4 @@
+import json
 import os
 import signal
 import threading
@@ -14,11 +15,12 @@ from core.app_logging import (
     setup_logging,
 )
 from core.config_app import get_settings
-from core.database import Database
+from core.database import DatabaseManager
+from core.db_recorder import PartRecorder
 from core.decision_engine import DecisionEngine
 from core.event_bus import EventBus
 from core.production_cycle import ProductionCycle
-from core.structured_logging import configure_structlog
+from core.structured_logging import configure_structlog, get_struct_logger
 from domain.threshold_loader import ThresholdLoader
 from hardware.axis import Axis
 from hardware.conveyor import Conveyor
@@ -43,7 +45,11 @@ from vision.ui import LiveMonitor
 from vision.vision_cluster import VisionCluster
 
 log = get_logger("main")
+slog = get_struct_logger("main")
 
+# Хвост очереди записи в SQLite при остановке: детали последнего шага
+# обязаны доехать до базы, но выход не должен висеть бесконечно.
+DB_FLUSH_TIMEOUT = 10.0
 CYCLE_JOIN_TIMEOUT = 15.0
 INIT_JOIN_TIMEOUT = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
@@ -308,7 +314,15 @@ class ConveyerApp:
     def __init__(self):
         self.settings = get_settings()
         self.event_bus = EventBus()
-        self.database = Database(self.settings.database_file)
+        self.database = DatabaseManager(self.settings.database_file)
+        # Смены, оставшиеся открытыми после обесточивания станка, закрываются
+        # на старте: иначе отчёт показывал бы вечно идущую смену.
+        self.database.close_open_sessions(reason="recovered_on_startup")
+        # Асинхронная запись деталей: подписывается на part:archived, пишет
+        # в SQLite из своего потока, шаг линии диск не ждёт.
+        self.recorder = PartRecorder(
+            database=self.database, event_bus=self.event_bus,
+        )
         self.monitor = LiveMonitor(event_bus=self.event_bus, fullscreen=True)
 
         # Слоты состояния
@@ -561,6 +575,9 @@ class ConveyerApp:
             jog=self.jog,
             pipeline=self.pipeline,
             event_bus=self.event_bus,
+            # Цикл сам открывает/закрывает смену на переходах состояния;
+            # детали пишутся асинхронно через PartRecorder.
+            database=self.database,
             settle_seconds=self.calibration["settle_time"],
             stage_trace_seconds=self.calibration["stage_trace_time"],
             review_seconds=self.calibration["review_time"],
@@ -711,8 +728,11 @@ class ConveyerApp:
         )
         self.database.audit(
             action="thresholds.updated",
-            payload_json=str({"role": role, "keys": sorted(changed)}),
+            payload_json=json.dumps(
+                {"role": role, "keys": sorted(changed)}, ensure_ascii=False,
+            ),
         )
+        slog.info("thresholds_updated", role=role, keys=sorted(changed))
         # Правила пересоздаются: Inspector берёт decision каждый раз заново,
         # поэтому замена объекта применяется сразу.
         self.inspector.decision = DecisionEngine(thresholds=updated)
@@ -920,6 +940,27 @@ class ConveyerApp:
             print(f"[SHUTDOWN] Serial close failed: {exc}")
         print(
             f"[SHUTDOWN] Закрытие COM: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        # База закрывается последней: цикл уже остановлен, и очередь
+        # PartRecorder дописывает детали последнего шага смены.
+        phase_started = time.monotonic()
+        try:
+            self.recorder.stop(timeout=DB_FLUSH_TIMEOUT)
+            stats = self.recorder.stats
+            print(
+                f"[SHUTDOWN] База: записано {stats['written']}, "
+                f"ошибок {stats['failed']}, потеряно {stats['dropped']}"
+            )
+        except Exception as exc:
+            print(f"[SHUTDOWN] DB recorder stop failed: {exc}")
+        try:
+            self.database.dispose()
+        except Exception as exc:
+            print(f"[SHUTDOWN] DB dispose failed: {exc}")
+        print(
+            f"[SHUTDOWN] Закрытие базы: "
             f"{time.monotonic() - phase_started:.2f} с"
         )
 

@@ -11,6 +11,7 @@ from core.step_stages import (
     STAGE_TRACE_SECONDS,
     StepSequencer,
 )
+from core.structured_logging import get_struct_logger
 from core.ui_schemas import UIStatusSchema
 from core.watchdog import ProductionWatchdog
 from domain.defect_rules import InputPartPresenceRule
@@ -29,6 +30,10 @@ from inspection.consensus import (
 )
 
 log = get_logger("cycle")
+# Контекстный журнал линии: события пишутся структурно в logs/app.log и
+# дублируются человекочитаемой строкой в обычный журнал (см.
+# core.structured_logging).
+slog = get_struct_logger("cycle")
 
 RECENT_PARTS_LIMIT = 10
 DRAIN_TIMEOUT = 120.0
@@ -65,6 +70,7 @@ class ProductionCycle:
         jog=None,
         pipeline=None,
         event_bus=None,
+        database=None,
         settle_seconds=STAGE_SETTLE_SECONDS,
         stage_trace_seconds=STAGE_TRACE_SECONDS,
         review_seconds=REVIEW_SECONDS,
@@ -78,7 +84,12 @@ class ProductionCycle:
         self.jog          = jog
         self.pipeline     = pipeline
         self.event_bus    = event_bus
+        # Опциональная зависимость: линия обязана работать и с недоступной
+        # базой — потеря статистики не повод останавливать производство.
+        self.database     = database
         self.review_seconds = max(0.0, float(review_seconds))
+        # Идентификатор открытой смены: живёт от RUNNING до STOPPED/FAULT.
+        self.session_id: int | None = None
 
         self._async_vision_results: dict | None = None
         self._async_vision_lock = threading.Lock()
@@ -296,29 +307,43 @@ class ProductionCycle:
             except Exception as exc:
                 self._handle_fault(f"Не удалось установить распределитель в рабочее положение: {exc}")
                 raise
+            # Состояние шага готовится ДО перехода в RUNNING. StateMachine
+            # вызывает on_transition уже вне своей блокировки, поэтому поток
+            # цикла видит RUNNING и начинает шаги, пока этот метод ещё
+            # выполняется. Настройка «вдогонку» попадала бы в середину уже
+            # идущего шага: например, _await_initial_inspection, выставленный
+            # после пуска, отменял бы движение ленты на произвольном шаге и
+            # деталь на +4 инспектировалась бы дважды.
+            self._drain_start_time = 0
+            self._fault_reason = None
+            self._reset_frame_analysis()
+            # Деталь могла остаться под входными камерами ещё до пуска:
+            # первый шаг выполняется без движения ленты, чтобы она
+            # попала в учёт, а не уехала дальше непроверенной.
+            self._await_initial_inspection = True
+            if self._diagnostics.get("kind") == "SELECTED_MODEL":
+                self._diagnostics = {
+                    "status": "NOT_RUN",
+                    "kind": None,
+                    "message": "Анализ кадра ещё не выполнялся",
+                    "cameras": [],
+                    "models": [],
+                    "rules": [],
+                    "updated_at": None,
+                }
+            # Смена открывается до пуска: первая же деталь должна попасть
+            # в базу с валидным session_id, а не с None.
+            self._open_db_session()
+
             accepted = self.sm.request_start()
             if accepted:
-                self._drain_start_time = 0
-                self._fault_reason = None
-                self._reset_frame_analysis()
-                # Деталь могла остаться под входными камерами ещё до пуска:
-                # первый шаг выполняется без движения ленты, чтобы она
-                # попала в учёт, а не уехала дальше непроверенной.
-                self._await_initial_inspection = True
-                if self._diagnostics.get("kind") == "SELECTED_MODEL":
-                    self._diagnostics = {
-                        "status": "NOT_RUN",
-                        "kind": None,
-                        "message": "Анализ кадра ещё не выполнялся",
-                        "cameras": [],
-                        "models": [],
-                        "rules": [],
-                        "updated_at": None,
-                    }
                 # Оператор видит поток всё время, пока линия работает;
                 # на статических этапах шага он приостанавливается.
                 self.live.start()
                 self._set_process("READY", "Цикл запущен")
+            else:
+                self._await_initial_inspection = False
+                self._close_db_session(reason="start_rejected")
             return accepted
         finally:
             self._operation_lock.release()
@@ -963,8 +988,19 @@ class ProductionCycle:
             except Exception as e:
                 log.warning(f"[SHUTDOWN] exit_jog failed: {e}")
             self._safe_emergency_stop()
+            # Сначала детали (им нужен ещё открытый session_id), затем
+            # закрытие смены: force exit из RUNNING не проходит через
+            # STOPPED, и без этого смена осталась бы вечно открытой.
             self._archive_inflight("runtime_shutdown")
-            log.info("Цикл конвейера завершён.")
+            self._close_db_session(reason="shutdown")
+            slog.info(
+                "cycle_finished",
+                total=self.part_counter,
+                good=self.good_count,
+                bad=self.bad_count,
+                cleanup=self.cleanup_count,
+                empty=self.empty_count,
+            )
 
     # Fault
 
@@ -978,10 +1014,12 @@ class ProductionCycle:
         self.live.reset_pause()
         self.live.stop()
         self._fault_reason = reason
-        log.error(f"[FAULT] {reason}")
-        log.error(
-            f"[FAULT] В очереди осталось "
-            f"{len(self.parts)} деталей"
+        slog.error(
+            "line_fault",
+            reason=reason,
+            in_line=len(self.parts),
+            step=self.current_step,
+            session_id=self.session_id,
         )
         self.sm.notify_fault()
         if self.jog_active:
@@ -1044,7 +1082,12 @@ class ProductionCycle:
         defect rules физически не могут быть сняты во время движения.
         """
         self._check_motion_cancelled()
-        log.info(f"ШАГ {self.current_step + 1}")
+        slog.info(
+            "step_started",
+            step=self.current_step + 1,
+            in_line=len(self.parts),
+            session_id=self.session_id,
+        )
 
         # Право принять INPUT фиксируется до движения: если STOP придёт уже
         # во время проезда, вошедшая этим шагом деталь всё равно будет
@@ -1471,9 +1514,11 @@ class ProductionCycle:
                 "INPUT: пустой лоток записан",
                 positions=[self.OFFSET_INPUT],
             )
-            log.info(
-                f"[EMPTY] Пустой лоток на step {self.current_step} "
-                f"(total empty: {self.empty_count})"
+            slog.info(
+                "empty_tray_detected",
+                step=self.current_step,
+                total_empty=self.empty_count,
+                session_id=self.session_id,
             )
             # Пустой лоток остаётся нейтральным: Part и архив не создаются.
             return result
@@ -1488,7 +1533,6 @@ class ProductionCycle:
         part.mark_input_done()
         self.parts.append(part)
         self._record_frame_analysis("INPUT", part.id, result)
-        log.info(f"[INPUT] Деталь #{part.id}")
 
         self._last_vision_results.update(result.vision_results)
         self._last_rule_results.extend(result.rule_results)
@@ -1511,9 +1555,14 @@ class ProductionCycle:
             positions=[self.OFFSET_INPUT],
         )
 
-        log.info(
-            f"[INPUT] Деталь #{part.id} "
-            f"дефекты: {result.defects or ['none']}"
+        slog.info(
+            "part_inspected",
+            stage="input",
+            part_id=part.id,
+            step=self.current_step,
+            defects=list(result.defects),
+            category=part.route_category,
+            session_id=self.session_id,
         )
         return result
 
@@ -1585,10 +1634,15 @@ class ProductionCycle:
                 positions=[self.OFFSET_SPIDER],
             )
 
-            log.info(
-                f"[SPIDER] Деталь #{part.id} "
-                f"дефекты: {result.defects or ['none']} "
-                f"категория={part.route_category}"
+            slog.info(
+                "part_inspected",
+                stage="spider",
+                part_id=part.id,
+                step=self.current_step,
+                defects=list(result.defects),
+                category=part.route_category,
+                decision=part.final_decision,
+                session_id=self.session_id,
             )
             return result
         # На позиции +4 в этом шаге детали нет: старый результат другой
@@ -1612,7 +1666,13 @@ class ProductionCycle:
             return
         category = part.route_category
         if category == CATEGORY_UNKNOWN:
-            log.warning(f"[WARN] Деталь #{part.id} не прошла полную инспекцию -> принудительно BAD")
+            slog.warning(
+                "part_incomplete_inspection",
+                part_id=part.id,
+                step=self.current_step,
+                forced_category=CATEGORY_BAD,
+                session_id=self.session_id,
+            )
             part.route_category, part.final_decision, category = CATEGORY_BAD, "incomplete_inspection", CATEGORY_BAD
         # GOOD: DIST1=0. BAD/CLEANUP: сначала DIST2, затем DIST1=340.
         self.distributor.prepare_route(category, part.id)
@@ -1625,13 +1685,22 @@ class ProductionCycle:
         self.distributor.confirm_transfer(part.id, category)
         if category == CATEGORY_GOOD:
             self.good_count += 1
-            log.info(f"[PASS] #{part.id} -> GOOD ({self.good_count})")
         elif category == CATEGORY_BAD:
             self.bad_count += 1
-            log.info(f"[REJECT] #{part.id} -> BAD ({self.bad_count})")
         elif category == CATEGORY_CLEANUP:
             self.cleanup_count += 1
-            log.info(f"[CLEANUP] #{part.id} -> CLEANUP ({self.cleanup_count})")
+        slog.info(
+            "part_sorted",
+            part_id=part.id,
+            category=category,
+            decision=part.final_decision,
+            defects=part.get_all_defects(),
+            step=self.current_step,
+            session_id=self.session_id,
+            good=self.good_count,
+            bad=self.bad_count,
+            cleanup=self.cleanup_count,
+        )
         self._archive_part(part)
         self._set_process(
             "FINAL_DECISION_ARCHIVED",
@@ -1646,8 +1715,12 @@ class ProductionCycle:
     # Archive
 
     def _archive_part(self, part, extra=None):
-        if not self.archive:
-            return
+        """Записать деталь в файловый архив и опубликовать её для БД.
+
+        Порядок важен: сначала архив (он выдаёт относительную папку с
+        кадрами), затем событие ``part:archived`` — так в базе окажется
+        ссылка на снимки, а не пустое поле.
+        """
         kwargs = {
             "part_id": part.id,
             "category": part.route_category,
@@ -1661,9 +1734,46 @@ class ProductionCycle:
             archive_extra["inspection_consensus"] = consensus
         if extra:
             archive_extra.update(extra)
-        if archive_extra:
-            kwargs["extra"] = archive_extra
-        self.archive.finalize(**kwargs)
+
+        if self.archive:
+            archive_kwargs = dict(kwargs)
+            if archive_extra:
+                archive_kwargs["extra"] = archive_extra
+            self.archive.finalize(**archive_kwargs)
+
+        self._publish_part_record(part, kwargs, extra)
+
+    def _publish_part_record(self, part, kwargs: dict, extra=None):
+        """Опубликовать деталь в EventBus для асинхронной записи в SQLite.
+
+        Цикл не ждёт диск: подписчик (``core.db_recorder.PartRecorder``)
+        кладёт запись в свою очередь и пишет её из отдельного потока.
+        Если шины нет, запись выполняется синхронно — иначе на стенде без
+        EventBus статистика молча терялась бы.
+        """
+        payload = dict(kwargs)
+        payload["session_id"] = self.session_id
+        payload["timestamp"] = time.time()
+        if self.archive:
+            info = self.archive.get_part_info(part.id) or {}
+            payload["archive_folder"] = info.get("relative_folder")
+            payload["batch_id"] = getattr(self.archive, "batch_id", None)
+        if extra:
+            payload["aborted"] = bool(extra.get("aborted", False))
+            payload["abort_reason"] = extra.get("abort_reason")
+
+        if self.event_bus is not None:
+            try:
+                self.event_bus.emit("part:archived", payload)
+                return
+            except Exception as exc:
+                log.error(f"[DB] Публикация part:archived не удалась: {exc}")
+
+        if self.database is not None:
+            try:
+                self.database.save_part(self.session_id, payload)
+            except Exception as exc:
+                log.error(f"[DB] Не удалось сохранить деталь #{part.id}: {exc}")
 
     def _archive_inflight(self, reason: str):
         for part in list(self.parts):
@@ -1676,7 +1786,12 @@ class ProductionCycle:
                     extra={"aborted": True, "abort_reason": reason},
                 )
             except Exception as e:
-                log.error(f"[ARCHIVE] Failed to archive aborted part #{part.id}: {e}")
+                slog.error(
+                    "part_archive_failed",
+                    part_id=part.id,
+                    reason=reason,
+                    error=str(e),
+                )
             self._remove_part(part)
         self._pending_drop = None
 
@@ -1799,6 +1914,24 @@ class ProductionCycle:
         )
 
     def _on_state_change(self, old, new, action: str):
+        # Смена в БД закрывается ровно на границе состояния. Открывает её
+        # request_start() ещё до перехода (см. комментарий там); вызов
+        # здесь — страховка для путей пуска в обход request_start,
+        # _open_db_session идемпотентен.
+        if new == State.RUNNING and old in (State.IDLE, State.STOPPED):
+            self._open_db_session()
+        elif new in (State.STOPPED, State.FAULT, State.E_STOP):
+            self._close_db_session(reason=new.value)
+
+        slog.info(
+            "state_changed",
+            previous=old.value,
+            current=new.value,
+            action=action.value if hasattr(action, "value") else str(action),
+            session_id=self.session_id,
+            in_line=len(self.parts),
+        )
+
         if new == State.STOPPING:
             self._set_process("DRAINING", "Остановка")
         elif new == State.STOPPED:
@@ -1811,6 +1944,55 @@ class ProductionCycle:
             self._set_process("FAULT", "Цикл остановлен из-за ошибки")
         else:
             self._refresh_monitor()
+
+    # Database session lifecycle
+
+    def _open_db_session(self):
+        """Открыть смену в БД при переходе линии в RUNNING.
+
+        Ошибка базы не должна мешать производству: смена просто не
+        записывается, а детали уходят с ``session_id=None``.
+        """
+        if self.database is None or self.session_id is not None:
+            return
+        try:
+            self.session_id = self.database.start_session()
+        except Exception as exc:
+            log.error(f"[DB] Не удалось открыть смену: {exc}")
+            slog.error("session_start_failed", error=str(exc))
+            return
+        slog.info("session_started", session_id=self.session_id)
+
+    def _close_db_session(self, reason: str):
+        """Закрыть смену в БД, зафиксировав счётчики линии."""
+        if self.database is None or self.session_id is None:
+            return
+        session_id = self.session_id
+        # Обнуляем заранее: повторный переход в терминальное состояние не
+        # должен закрывать одну и ту же смену дважды.
+        self.session_id = None
+        try:
+            self.database.end_session(
+                session_id,
+                good=self.good_count,
+                bad=self.bad_count,
+                cleanup=self.cleanup_count,
+                empty=self.empty_count,
+                reason=reason,
+            )
+        except Exception as exc:
+            log.error(f"[DB] Не удалось закрыть смену #{session_id}: {exc}")
+            slog.error("session_end_failed", session_id=session_id, error=str(exc))
+            return
+        slog.info(
+            "session_ended",
+            session_id=session_id,
+            reason=reason,
+            good=self.good_count,
+            bad=self.bad_count,
+            cleanup=self.cleanup_count,
+            empty=self.empty_count,
+        )
 
     # JOG mode
 
