@@ -74,6 +74,7 @@ class ProductionCycle:
         settle_seconds=STAGE_SETTLE_SECONDS,
         stage_trace_seconds=STAGE_TRACE_SECONDS,
         review_seconds=REVIEW_SECONDS,
+        watchdog_timeout: float | None = None,
     ):
         self.conveyor     = conveyor
         self.cameras      = cameras
@@ -129,9 +130,14 @@ class ProductionCycle:
             if transport is not None and callable(getattr(transport, "query", None))
             else (lambda: None)
         )
+        # В симуляции review 2с + trace 0.5+settle 0.5 могут суммарно превысить 1с таймаут,
+        # поэтому даём запас. В проде остаётся 3с — достаточно для детекции зависания,
+        # но не ложных срабатываний на медленном железе.
+        wd_timeout = float(watchdog_timeout) if watchdog_timeout is not None else 3.0
         self._watchdog = ProductionWatchdog(
             ping=ping_fn,
             emergency_stop=self._safe_emergency_stop,
+            timeout_seconds=wd_timeout,
         )
         # Снимки inspection остаются операторским стоп-кадром до следующего
         # движения, хотя физические камеры уже вернулись в live.
@@ -1377,6 +1383,8 @@ class ProductionCycle:
                 or self.sm.state != State.RUNNING
             ):
                 break
+            # Watchdog должен видеть живую линию даже во время паузы просмотра
+            self._watchdog.tick()
             whole = int(remaining + 0.999)
             if whole != shown_seconds:
                 shown_seconds = whole
