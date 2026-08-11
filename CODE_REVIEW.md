@@ -313,8 +313,10 @@ FAULT — оператор, нажавший «проверить камеру»
 
 ### 6.3. CI: pytest + ruff
 
-- `.github/workflows/ci.yml` — две задачи, `lint` (ruff) и `tests` (compileall + pytest),
-  на push в любую ветку и на PR; `concurrency` отменяет устаревшие прогоны.
+- `ci/github-actions-ci.yml` — две задачи, `lint` (ruff) и `tests` (compileall + pytest),
+  на push в любую ветку и на PR; `concurrency` отменяет устаревшие прогоны. Файл лежит в
+  `ci/`, а не в `.github/workflows/`: у GitHub App нет разрешения `workflows`, и push с
+  таким путём отклоняется. Включается одной командой — см. `ci/README.md`.
 - `ruff.toml` — набор `E,W,F,I,B,UP` при `line-length = 120`. Стилистические правила,
   требующие массовой переработки живого кода (`BLE001` на 86 широких `except`, `S110`,
   `TRY004`), намеренно не включены: они разбираются отдельными задачами, а не блокируют
