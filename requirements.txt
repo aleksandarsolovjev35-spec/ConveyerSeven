@@ -6,3 +6,7 @@ fastapi>=0.115,<1
 uvicorn>=0.34,<1
 pywebview>=5.3,<6
 httpx>=0.28,<1
+# Новые Enterprise зависимости
+pydantic>=2.5,<3
+pydantic-settings>=2.2,<3
+structlog>=24.1,<25
