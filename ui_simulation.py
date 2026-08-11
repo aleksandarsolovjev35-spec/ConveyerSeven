@@ -379,16 +379,50 @@ class LineSimulation:
         self.dist1_state = "GOOD" if category == "GOOD" else "TO_DIST2"
         self.dist2_state = "READY"
 
-    def _virtual_overlay_data(self, roles: list[str], line_parts: list[dict]) -> tuple[dict, list[SimRule]]:
-        """Supply valid RAW detections and RULES drawings to the real renderers."""
-        category = next((item.get("category") for item in line_parts if item.get("category")), "")
-        triggered = category in ("BAD", "CLEANUP")
+    def _virtual_overlay_data(
+        self,
+        roles: list[str],
+        line_parts: list[dict],
+        step: int = 0,
+    ) -> tuple[dict, list[SimRule]]:
+        """Supply valid RAW detections and RULES drawings to the real renderers.
+
+        Геометрия рисуется только тем ролям, под которыми реально стоит
+        корпус (INPUT при +0, SPIDER/TOP при +4), и строго на той же
+        позиции, где demo_frames рисует сам корпус: иначе разметка «висит»
+        на экране и показывает не ту деталь.
+        """
+        input_part = next(
+            (item for item in line_parts if item.get("position") == 0),
+            None,
+        )
+        control_part = next(
+            (item for item in line_parts if item.get("position") == 4),
+            None,
+        )
+        # Та же формула, что в demo_frames: корпус движется по камере от
+        # шага к шагу, и разметка обязана ехать вместе с ним.
+        moving_x = 105 + (step % 7) * 76
         raw = {}
         drawings = []
-        for index, role in enumerate(roles or CAMERA_ORDER):
-            x = 145 + (index % 4) * 18
+        for role in roles or []:
+            if role in self.INPUT_STAGES:
+                part = input_part
+            elif role in self.CONTROL_STAGES:
+                part = control_part
+            else:
+                part = None
+            if part is None:
+                continue
+            category = part.get("category") or ""
+            triggered = category in ("BAD", "CLEANUP")
+            index = CAMERA_ORDER.index(role)
+            x = moving_x + (index % 3) * 12
             bbox = [x, 230, x + 175, 350]
-            raw[role] = [{"class": "glass" if category == "CLEANUP" else "case", "bbox": bbox}]
+            raw[role] = [{
+                "class": "glass" if category == "CLEANUP" else "case",
+                "bbox": bbox,
+            }]
             drawings.append({
                 "role": role,
                 "type": "rule_bbox",
@@ -525,13 +559,37 @@ class LineSimulation:
         # Publish fresh virtual camera frames on every production state change.
         # The regular UI therefore exercises its real frame versioning, RAW/
         # RULES source switching and thumbnail refresh paths.
-        vision_results, rule_results = self._virtual_overlay_data(active_roles, line_parts)
+        demo = demo_frames(self.step, phase, line_parts)
+        vision_results, rule_results = self._virtual_overlay_data(
+            active_roles, line_parts, self.step,
+        )
+        # Статические фазы публикуют кадры стадии (run), как это делает
+        # ProductionCycle: UI показывает замороженный кадр с его разметкой
+        # через run=1, а не live-кадр с «чужой» геометрией. Вне статических
+        # фаз набор стадии очищается — как clear_overlays() на движении.
+        run_frames = None
+        run_rule_results = None
+        if capture_roles:
+            _run_vision, run_rules = self._virtual_overlay_data(
+                list(capture_roles), line_parts, self.step,
+            )
+            run_frames = [{
+                role: demo[role]
+                for role in capture_roles
+                if role in demo
+            }]
+            run_rule_results = [run_rules]
+        elif phase not in {"INITIAL_INSPECTION", "ANALYSIS_REVIEW", "PUBLISH"}:
+            run_frames = []
+            run_rule_results = []
         self.server.update(
-            frames=demo_frames(self.step, phase, line_parts),
+            frames=demo,
             vision_results=vision_results,
             rule_results=rule_results,
             line_status=status,
             recent_parts=recent,
+            run_frames=run_frames,
+            run_rule_results=run_rule_results,
         )
 
     def _inspect_part(self, part: SimPart) -> None:
