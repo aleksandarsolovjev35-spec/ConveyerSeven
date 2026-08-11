@@ -11,7 +11,7 @@ from vision.ui.server.server import UIServer
 class LiveMonitorApi:
     """Native bridge for presentation-only operations unavailable to browsers."""
 
-    def __init__(self, monitor: "LiveMonitor") -> None:
+    def __init__(self, monitor: LiveMonitor) -> None:
         self.monitor = monitor
 
     def choose_archive_folder(self) -> dict[str, Any]:
@@ -108,11 +108,17 @@ class LiveMonitor:
         }
         for attribute, event_name in mappings.items():
             setattr(self.server, attribute, lambda event=event_name: self._emit(event))
-        self.server.on_distributor_diagnostic = lambda command: self._emit("ui:distributor_diagnostic_requested", command)
+        self.server.on_distributor_diagnostic = (
+            lambda command: self._emit("ui:distributor_diagnostic_requested", command)
+        )
         self.server.on_selected_model_analysis = lambda role: self._emit("ui:selected_model_analysis_requested", role)
         self.server.on_active_camera_changed = lambda role: self._emit("ui:active_camera_changed", role)
         self.server.on_jog_hold_start = lambda direction: self._emit("ui:jog_hold_start_requested", direction)
         self.server.on_jog_hold_heartbeat = lambda direction: self._emit("ui:jog_hold_heartbeat", direction)
-        self.server.on_jog_hold_release = lambda reason="button released": self._emit("ui:jog_hold_release_requested", reason)
-        self.server.on_thresholds_apply = lambda role, values, labels: self._emit("ui:thresholds_apply_requested", role, values, labels)
+        self.server.on_jog_hold_release = (
+            lambda reason="button released": self._emit("ui:jog_hold_release_requested", reason)
+        )
+        self.server.on_thresholds_apply = (
+            lambda role, values, labels: self._emit("ui:thresholds_apply_requested", role, values, labels)
+        )
         self.server.on_thresholds_reload = lambda fresh: self._emit("ui:thresholds_reload_requested", fresh)

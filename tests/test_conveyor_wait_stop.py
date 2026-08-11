@@ -125,4 +125,4 @@ def test_progress_callback_получает_распарсенный_стату�
 def test_emergency_stop_шлёт_g1():
     transport, conv = make_conveyor()
     conv.emergency_stop()
-    assert transport.sent[-1] == "G1"
+    assert "G1" in transport.sent

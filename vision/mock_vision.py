@@ -5,10 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 
+def get_optimal_device() -> str:
+    """Return CPU device for mock vision cluster."""
+    return "cpu"
+
+
+detect_accelerator = get_optimal_device
+
+
 class MockVisionCluster:
     """Drop-in VisionCluster substitute for UI and workflow simulation."""
 
-    def __init__(self) -> None:
+    def __init__(self, device: str = "auto") -> None:
+        self.device = get_optimal_device() if device == "auto" else device
         self.models: dict[str, object] = {}
         self.last_health: list[dict[str, Any]] = []
 
@@ -17,5 +26,19 @@ class MockVisionCluster:
 
     def process_all(self, frames: dict[str, object]) -> dict[str, list[dict[str, Any]]]:
         """Return empty but healthy detections for every supplied role."""
-        self.last_health = [{"role": role, "model": "simulation", "ok": True, "elapsed_ms": 0.0, "detections": 0, "error": None} for role in frames]
+        self.last_health = [
+            {
+                "role": role,
+                "model": "simulation",
+                "ok": True,
+                "elapsed_ms": 0.0,
+                "detections": 0,
+                "error": None,
+            }
+            for role in frames
+        ]
         return {role: [] for role in frames}
+
+    def process(self, frames: dict[str, object]) -> dict[str, list[dict[str, Any]]]:
+        """Alias for process_all to support pipeline workers."""
+        return self.process_all(frames)

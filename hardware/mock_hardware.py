@@ -131,7 +131,16 @@ class MockDistributor:
     @property
     def status(self) -> dict[str, Any]:
         """Return a UI-compatible idle distributor status."""
-        return {"dist1_position": 0, "dist1_max": 340, "dist1_state": "GOOD", "dist2_position": 0, "dist2_max": 340, "dist2_state": "IDLE", "dist2_target": CATEGORY_BAD, "last_distributor_action": self.last_action}
+        return {
+            "dist1_position": 0,
+            "dist1_max": 340,
+            "dist1_state": "GOOD",
+            "dist2_position": 0,
+            "dist2_max": 340,
+            "dist2_state": "IDLE",
+            "dist2_target": CATEGORY_BAD,
+            "last_distributor_action": self.last_action,
+        }
 
     def initialize(self) -> None:
         """Complete simulated homing immediately."""

@@ -349,6 +349,7 @@ def test_stop_на_пустой_линии_не_двигает_ленту():
         input_script=[False],   # если инспекция всё же случится — лоток пуст
         spider_defects={},
     )
+    inspector.on_last_input = cycle.request_stop
     thread = run_cycle(cycle)
     try:
         assert cycle.request_start() is True

@@ -37,6 +37,7 @@ from inspection.inspector import Inspector
 from inspection.part_archive import PartArchive
 from vision.camera_calibration_console import launch_camera_calibrator
 from vision.camera_manager import CameraManager
+from vision.frame_pipeline import FramePipeline
 from vision.mock_vision import MockVisionCluster
 from vision.ui import LiveMonitor
 from vision.vision_cluster import VisionCluster
@@ -315,6 +316,7 @@ class ConveyerApp:
         self.transport = None
         self.cycle = None
         self.archive = None
+        self.pipeline = None
 
         self.shutdown_requested = threading.Event()
         self.exit_press_count = 0
@@ -395,6 +397,12 @@ class ConveyerApp:
             vision=self.vision,
             decision=decision,
             recorder=recorder,
+        )
+        self.pipeline = FramePipeline(
+            cameras=self.cameras,
+            vision=self.vision,
+            inspector=self.inspector,
+            event_bus=self.event_bus,
         )
 
         archive_config = load_archive_config(str(self.settings.archive_config_file))
@@ -551,6 +559,8 @@ class ConveyerApp:
             monitor=self.monitor,
             archive=self.archive,
             jog=self.jog,
+            pipeline=self.pipeline,
+            event_bus=self.event_bus,
             settle_seconds=self.calibration["settle_time"],
             stage_trace_seconds=self.calibration["stage_trace_time"],
             review_seconds=self.calibration["review_time"],
@@ -880,6 +890,11 @@ class ConveyerApp:
         )
 
         phase_started = time.monotonic()
+        if self.pipeline:
+            try:
+                self.pipeline.stop()
+            except Exception as exc:
+                print(f"[SHUTDOWN] FramePipeline stop failed: {exc}")
         # Live-просмотр останавливается до освобождения камер: иначе фоновые
         # чтения продолжались бы на уже закрытых VideoCapture.
         if self.cycle:

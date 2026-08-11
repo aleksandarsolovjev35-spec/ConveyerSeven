@@ -56,6 +56,8 @@ class Inspector:
         part_id: int,
         step: int,
         frame_runs,
+        precomputed_vision_results: dict | None = None,
+        precomputed_model_health: list | None = None,
     ) -> InspectionResult:
         # Строгий порядок одной стадии: кадры -> модели -> проверка
         # наличия (gate) -> геометрия/defect rules -> разметка -> результат.
@@ -67,7 +69,21 @@ class Inspector:
             part_id=part_id,
             roles=self.INPUT_ROLES,
         )
-        vision_results, model_health = self._run_vision(frames, self.INPUT_ROLES)
+        if (
+            precomputed_vision_results is not None
+            and all(role in precomputed_vision_results for role in self.INPUT_ROLES)
+        ):
+            vision_results = {role: precomputed_vision_results[role] for role in self.INPUT_ROLES}
+            health_rows = (
+                precomputed_model_health
+                if precomputed_model_health is not None
+                else getattr(self.vision, "last_health", None) or []
+            )
+            model_health = summarize_model_health(
+                [{**row, "run": 1} for row in health_rows if isinstance(row, dict)]
+            )
+        else:
+            vision_results, model_health = self._run_vision(frames, self.INPUT_ROLES)
 
         self._notify_progress(
             "INPUT_PRESENCE",
@@ -151,6 +167,8 @@ class Inspector:
         part_id: int,
         step: int,
         frame_runs,
+        precomputed_vision_results: dict | None = None,
+        precomputed_model_health: list | None = None,
     ) -> InspectionResult:
         # SPIDER/TOP использует тот же контракт: сначала модели на frozen
         # кадрах, затем правила, которые строят геометрию и принимают
@@ -162,7 +180,21 @@ class Inspector:
             part_id=part_id,
             roles=self.SPIDER_ROLES,
         )
-        vision_results, model_health = self._run_vision(frames, self.SPIDER_ROLES)
+        if (
+            precomputed_vision_results is not None
+            and all(role in precomputed_vision_results for role in self.SPIDER_ROLES)
+        ):
+            vision_results = {role: precomputed_vision_results[role] for role in self.SPIDER_ROLES}
+            health_rows = (
+                precomputed_model_health
+                if precomputed_model_health is not None
+                else getattr(self.vision, "last_health", None) or []
+            )
+            model_health = summarize_model_health(
+                [{**row, "run": 1} for row in health_rows if isinstance(row, dict)]
+            )
+        else:
+            vision_results, model_health = self._run_vision(frames, self.SPIDER_ROLES)
 
         self._notify_progress(
             "SPIDER_GEOMETRY",

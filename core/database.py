@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from contextlib import AbstractContextManager as ContextManager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import ContextManager
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session as OrmSession, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import Session as OrmSession
 
 
 class Base(DeclarativeBase):
@@ -20,10 +21,10 @@ class Session(Base):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     operator_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    parts: Mapped[list["PartRecord"]] = relationship(back_populates="session")
+    parts: Mapped[list[PartRecord]] = relationship(back_populates="session")
 
 
 class PartRecord(Base):
@@ -36,7 +37,7 @@ class PartRecord(Base):
     external_part_id: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str] = mapped_column(String(32))
     photo_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    inspected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    inspected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     session: Mapped[Session] = relationship(back_populates="parts")
 
 
@@ -46,7 +47,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     actor: Mapped[str] = mapped_column(String(128), default="system")
     action: Mapped[str] = mapped_column(String(128))
     payload_json: Mapped[str] = mapped_column(Text)
@@ -75,12 +76,17 @@ class Database:
             shift = db.get(Session, session_id)
             if shift is None:
                 raise ValueError(f"unknown session id: {session_id}")
-            shift.ended_at = datetime.now(timezone.utc)
+            shift.ended_at = datetime.now(UTC)
 
     def record_part(self, session_id: int, external_part_id: int, status: str, photo_path: str | None) -> int:
         """Persist one part decision and return the database record identifier."""
         with self._session() as db:
-            record = PartRecord(session_id=session_id, external_part_id=external_part_id, status=status, photo_path=photo_path)
+            record = PartRecord(
+                session_id=session_id,
+                external_part_id=external_part_id,
+                status=status,
+                photo_path=photo_path,
+            )
             db.add(record)
             db.flush()
             return record.id
