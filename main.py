@@ -12,6 +12,7 @@ from core.app_logging import (
     install_excepthooks,
     setup_logging,
 )
+from core.config_app import AppSettings
 from core.decision_engine import DecisionEngine
 from core.production_cycle import ProductionCycle
 from domain.threshold_loader import ThresholdLoader
@@ -37,7 +38,8 @@ GRACEFUL_EXIT_TIMEOUT = 135.0
 COMPRESS_TIMEOUT     = 60.0
 
 
-def main():
+def _run_legacy_application(settings: AppSettings):
+    global cameras, transport, cycle, cycle_thread, init_thread, archive
 
     # Журнал поднимается до любой инициализации: ошибки запуска тоже
     # должны остаться на диске, а не только на закрывшемся splash-экране.
@@ -46,8 +48,8 @@ def main():
     capture_prints()
     log.info("=== Запуск ConveyerSeven; журнал: %s ===", log_file)
 
-    if not os.path.exists("camera_mapping.json") and not launch_camera_calibrator(
-        "camera_mapping.json"
+    if not os.path.exists(str(settings.camera_mapping_file)) and not launch_camera_calibrator(
+        str(settings.camera_mapping_file)
     ):
         print(
             "[STARTUP] camera_mapping.json не создан; "
@@ -75,13 +77,12 @@ def main():
     archive      = None
     shutdown_requested = threading.Event()
 
-    exit_press_count = 0
+    exit_press_count = [0]
     exit_lock = threading.Lock()
 
     # Exit logic
 
     def handle_exit_request():
-        nonlocal exit_press_count
         shutdown_requested.set()
         if cycle is None and transport is not None:
             try:
@@ -91,8 +92,8 @@ def main():
                 print(f"[EXIT] Startup stop failed: {exc}")
 
         with exit_lock:
-            exit_press_count += 1
-            count = exit_press_count
+            exit_press_count[0] += 1
+            count = exit_press_count[0]
 
         force = count > 1 or bool(cycle and cycle.state == "FAULT")
         if force:
@@ -142,11 +143,11 @@ def main():
     # System init
 
     def initialize_system():
-        nonlocal cameras, transport, cycle, cycle_thread, archive
+        global cameras, transport, cycle, cycle_thread, archive
 
         try:
             _ensure_initialization_active()
-            calib = load_calibration()
+            calib = load_calibration(str(settings.calibration_file))
             _ensure_initialization_active()
 
             monitor.boot_step_start(
@@ -251,7 +252,7 @@ def main():
                     decision=decision,
                     recorder=recorder,
                 )
-                archive_config = load_archive_config()
+                archive_config = load_archive_config(str(settings.archive_config_file))
                 archive = PartArchive(
                     root_folder=archive_config["root_path"],
                     enabled=archive_config["enabled"],
@@ -262,7 +263,7 @@ def main():
                     ],
                 )
                 monitor.server.archive = archive
-                monitor.server.archive_config_path = "archive_config.json"
+                monitor.server.archive_config_path = str(settings.archive_config_file)
 
                 # Редактор порогов правил: сервер отдаёт текущие значения
                 # (GET /api/thresholds), а применение изменений пересоздаёт
@@ -273,7 +274,7 @@ def main():
                 monitor.server.threshold_labels = dict(
                     threshold_loader.labels or {}
                 )
-                monitor.server.thresholds_path = "thresholds.json"
+                monitor.server.thresholds_path = str(settings.thresholds_file)
 
                 def _thresholds_reload_from_file(fresh):
                     if inspector is None:
@@ -333,7 +334,7 @@ def main():
                         else:
                             full_labels[full_key] = str(name).strip()
                     ThresholdLoader.save_file(
-                        "thresholds.json", updated, labels=full_labels,
+                        str(settings.thresholds_file), updated, labels=full_labels,
                     )
                     # Правила пересоздаются: Inspector берёт decision каждый
                     # раз заново, поэтому замена объекта применяется сразу.
@@ -363,10 +364,8 @@ def main():
             monitor.boot_step_start(
                 "serial", "Поиск контроллера",
             )
-            serial_baud = int(os.environ.get(
-                "SERIAL_BAUD", "115200",
-            ))
-            preferred_port = os.environ.get("SERIAL_PORT")
+            serial_baud = settings.serial_baud
+            preferred_port = settings.serial_port
 
             try:
                 found_port, port_message = find_controller(
@@ -994,6 +993,27 @@ def _make_idle_status(distributor) -> dict:
     }
 
 
+class ConveyerApp:
+    """Application facade that owns ConveyerSeven process lifecycle.
+
+    The facade is the composition root: presentation adapters receive no
+    hardware object, and startup is invoked through a single explicit method.
+    The legacy startup routine remains private while phase-one compatibility is
+    maintained; its extraction into collaborators is deliberately sequenced
+    before the concurrency work in phase two.
+    """
+
+    def __init__(self) -> None:
+        """Create the application with validated immutable runtime settings."""
+        from core.config_app import get_settings
+
+        self.settings = get_settings()
+
+    def run(self) -> None:
+        """Run the UI and controlled shutdown lifecycle."""
+        _run_legacy_application(self.settings)
+
+
 if __name__ == "__main__":
-    main()
+    ConveyerApp().run()
 

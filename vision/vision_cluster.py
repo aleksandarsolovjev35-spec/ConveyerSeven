@@ -6,6 +6,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from core.app_logging import get_logger
+from core.exceptions import VisionModelError
 from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
 
 log = get_logger("vision.cluster")
@@ -32,7 +33,7 @@ class VisionCluster:
                 path = entry["path"]
                 if path not in self.models:
                     if not os.path.isfile(path):
-                        raise FileNotFoundError(f"Model file not found: {path}")
+                        raise VisionModelError(f"Model file not found: {path}")
                     if self.verbose:
                         log.info("Загрузка модели %s", path)
                     model = YOLO(path)
@@ -55,11 +56,11 @@ class VisionCluster:
         elif isinstance(names, (list, tuple)):
             actual = tuple(str(name) for name in names)
         else:
-            raise RuntimeError(
+            raise VisionModelError(
                 f"Model {path} has no readable class names; expected {expected}"
             )
         if actual != expected:
-            raise RuntimeError(
+            raise VisionModelError(
                 f"Model class mismatch for {path}: actual={actual}, expected={expected}"
             )
 
@@ -78,7 +79,7 @@ class VisionCluster:
             except Exception as e:
                 errors.append(f"{path}: {type(e).__name__}: {e}")
         if errors:
-            raise RuntimeError("Model warmup failed: " + "; ".join(errors))
+            raise VisionModelError("Model warmup failed: " + "; ".join(errors))
         if self.verbose:
             log.info("Прогрев моделей завершён")
 
@@ -129,7 +130,7 @@ class VisionCluster:
                         "error": f"{type(e).__name__}: {e}",
                     })
                     self.last_health = health
-                    raise RuntimeError(
+                    raise VisionModelError(
                         f"Model inference failed for {role} / {path}: "
                         f"{type(e).__name__}: {e}"
                     ) from e
