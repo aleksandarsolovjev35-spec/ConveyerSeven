@@ -6,7 +6,6 @@ from inspection.consensus import (
     combine_presence_results,
     combine_rule_results,
     describe_picture_run,
-    select_picture_run,
     summarize_model_health,
 )
 from inspection.result import InspectionResult
@@ -56,7 +55,6 @@ class Inspector:
         part_id: int,
         step: int,
         frame_runs,
-        force_bad: bool = False,
     ) -> InspectionResult:
         # Строгий порядок одной стадии: кадры -> модели -> проверка
         # наличия (gate) -> геометрия/defect rules -> разметка -> результат.
@@ -120,7 +118,7 @@ class Inspector:
             part_id=part_id,
             roles=self.INPUT_ROLES,
         )
-        defect_results, consensus, _evidence = combine_rule_results(
+        defect_results, consensus, _ = combine_rule_results(
             [self.decision.evaluate_all_detailed(vision_results, frames=frames)]
         )
         self._notify_progress(
@@ -143,7 +141,6 @@ class Inspector:
             vision_results=vision_results,
             rule_results=final_results,
             markup_rule_results=defect_results,
-            force_bad=force_bad,
             consensus=consensus,
             model_health=model_health,
         )
@@ -153,7 +150,6 @@ class Inspector:
         part_id: int,
         step: int,
         frame_runs,
-        force_bad: bool = False,
     ) -> InspectionResult:
         # SPIDER/TOP использует тот же контракт: сначала модели на frozen
         # кадрах, затем правила, которые строят геометрию и принимают
@@ -173,7 +169,7 @@ class Inspector:
             part_id=part_id,
             roles=self.SPIDER_ROLES,
         )
-        rule_results, consensus, _evidence = combine_rule_results(
+        rule_results, consensus, _ = combine_rule_results(
             [self.decision.evaluate_all_detailed(vision_results, frames=frames)]
         )
         self._notify_progress(
@@ -193,7 +189,6 @@ class Inspector:
             vision_results=vision_results,
             rule_results=rule_results,
             markup_rule_results=rule_results,
-            force_bad=force_bad,
             consensus=consensus,
             model_health=model_health,
         )
@@ -235,14 +230,11 @@ class Inspector:
         frames: dict,
         vision_results: dict,
         rule_results: list,
-        force_bad: bool,
         consensus: dict,
         model_health: list,
         markup_rule_results: list | None = None,
     ) -> InspectionResult:
         defects = [r.defect for r in rule_results if r.triggered]
-        if force_bad:
-            defects = ["forced_bad"]
 
         # Разметка строится последней: сначала ``rule_results`` уже
         # содержат вычисленную геометрию и решение, затем эти же drawings

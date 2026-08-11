@@ -87,7 +87,6 @@ class ProductionCycle:
 
         self.recent_parts = deque(maxlen=RECENT_PARTS_LIMIT)
 
-        self.force_all_bad = False
         self._pending_drop = None
 
         self._last_vision_results: dict = {}
@@ -1330,7 +1329,6 @@ class ProductionCycle:
             part_id=candidate_id,
             step=self.current_step,
             frame_runs=frame_runs,
-            force_bad=self.force_all_bad,
         )
         if result.is_empty_tray:
             self._record_frame_analysis("INPUT", None, result)
@@ -1418,7 +1416,6 @@ class ProductionCycle:
                 part_id=part.id,
                 step=self.current_step,
                 frame_runs=frame_runs,
-                force_bad=self.force_all_bad,
             )
             part.inspection_consensus["spider"] = dict(result.consensus)
             for defect in result.defects:
