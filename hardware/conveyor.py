@@ -35,7 +35,7 @@ class Conveyor:
 
     def move_step(self):
         """Один шаг конвейера."""
-        self._motion_started_at = time.time()
+        self._motion_started_at = time.monotonic()
         self.transport.send("G3")
         time.sleep(0.4)
 
@@ -46,7 +46,7 @@ class Conveyor:
         один опрос обязан показать реальный ход (MOV=1 / POS≠0 / TGT≠0).
         Иначе «ход завершён» неотличим от «команда G3 не дошла».
         """
-        start = time.time()
+        start = time.monotonic()
         data = ""
         status = ""
         motion_seen = False
@@ -83,7 +83,7 @@ class Conveyor:
                     time.sleep(0.05)
                     self._motion_started_at = 0.0
                     return
-                if time.time() - motion_started_at > MOTION_EVIDENCE_TIMEOUT:
+                if time.monotonic() - motion_started_at > MOTION_EVIDENCE_TIMEOUT:
                     raise RuntimeError(
                         "Контроллер сообщает остановку без признаков хода: "
                         "команда G3 не выполнена — логические позиции деталей "
@@ -91,7 +91,7 @@ class Conveyor:
                         f"(I1={data!r}, I2={status!r})"
                     )
 
-            if time.time() - start > timeout:
+            if time.monotonic() - start > timeout:
                 raise TimeoutError(
                     f"Конвейер не остановился за {timeout}s. "
                     f"I1='{data}', I2='{status}'"

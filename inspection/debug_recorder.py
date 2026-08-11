@@ -68,7 +68,8 @@ class DebugRecorder:
         return (self._step_counter % self.save_interval) == 0
 
     def _save(self, part_id: int, step: int, annotated: dict):
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Микросекунды исключают коллизию имени папки при частых сохранениях
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         folder = os.path.join(
             self.folder,
             f"step{step:04d}_part{part_id}_{ts}",

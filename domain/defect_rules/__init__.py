@@ -1,4 +1,12 @@
 from domain.defect_rules.base import BaseRule, RuleResult
+from domain.defect_rules.registry import (
+    DETAILED_RULES,
+    HUMAN_CAUSE_MAP,
+    RULE_CAMERA_ROLES,
+    RULE_THRESHOLD_GROUPS,
+    THRESHOLD_GROUP_LABELS,
+    THRESHOLD_GROUP_PREFIXES,
+)
 from domain.defect_rules.rule_input_part_presence import InputPartPresenceRule
 from domain.defect_rules.rule_input_window_geometry import InputWindowGeometryRule
 from domain.defect_rules.rule_input_window_sinks import InputWindowSinksRule

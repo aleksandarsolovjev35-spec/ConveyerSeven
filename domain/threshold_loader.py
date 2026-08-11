@@ -10,21 +10,34 @@ ROLE_SECTIONS = (
     "TOP",
 )
 
-# (rule_id, UI label, parameter prefixes). More specific prefixes first.
-RULE_GROUPS = (
-    ("input_part_presence", "НАЛИЧИЕ ДЕТАЛИ", ("input_part_presence_",)),
-    ("input_window_geometry", "ГЕОМЕТРИЯ ВХОДНОГО ОКНА", ("input_window_geometry_",)),
-    ("input_window_sinks", "РАКОВИНЫ В ОКНАХ", ("input_window_sinks_",)),
-    ("spider_contacts_long", "КОНТАКТЫ · ДЛИННЫЕ", ("spider_contacts_long_",)),
-    ("spider_long_omission", "ПОЛОСА ПРОПУСКА · ДЛИННАЯ", ("spider_long_omission_",)),
-    ("spider_contacts_short", "КОНТАКТЫ · КОРОТКИЕ", ("spider_contacts_short_",)),
-    ("spider_short_omission", "ПОЛОСА ПРОПУСКА · КОРОТКАЯ", ("spider_short_omission_",)),
-    ("top_contacts", "КОНТАКТЫ СВЕРХУ", ("top_contacts_",)),
-    ("top_platform_overlap", "ЗАПЛЫВ ПЛАТФОРМЫ", ("top_platform_overlap_",)),
-    ("top_platform", "ПЛАТФОРМА СВЕРХУ", ("top_platform_",)),
-    ("top_sinks", "РАКОВИНЫ КОРПУСА", ("top_sinks_",)),
-    ("top_glass", "СТЕКЛО СВЕРХУ", ("top_glass_",)),
-)
+# Единый реестр — источник истины для групп порогов.
+try:
+    from domain.defect_rules.registry import (
+        THRESHOLD_GROUP_LABELS,
+        THRESHOLD_GROUP_PREFIXES,
+    )
+    RULE_GROUPS = tuple(
+        (group_id, THRESHOLD_GROUP_LABELS.get(group_id, group_id), prefixes)
+        for group_id, prefixes in THRESHOLD_GROUP_PREFIXES.items()
+    )
+except ImportError:
+    # Fallback: старая копия, если реестр недоступен
+    RULE_GROUPS = (
+        ("input_part_presence", "НАЛИЧИЕ ДЕТАЛИ", ("input_part_presence_",)),
+        ("input_window_geometry", "ГЕОМЕТРИЯ ВХОДНОГО ОКНА", ("input_window_geometry_",)),
+        ("input_window_sinks", "РАКОВИНЫ В ОКНАХ", ("input_window_sinks_",)),
+        ("spider_contacts_long", "КОНТАКТЫ · ДЛИННЫЕ", ("spider_contacts_long_",)),
+        ("spider_long_omission", "ПОЛОСА ПРОПУСКА · ДЛИННАЯ", ("spider_long_omission_",)),
+        ("spider_contacts_short", "КОНТАКТЫ · КОРОТКИЕ", ("spider_contacts_short_",)),
+        ("spider_short_omission", "ПОЛОСА ПРОПУСКА · КОРОТКАЯ", ("spider_short_omission_",)),
+        ("top_contacts", "КОНТАКТЫ СВЕРХУ", ("top_contacts_",)),
+        ("top_platform_overlap", "ЗАПЛЫВ ПЛАТФОРМЫ", ("top_platform_overlap_",)),
+        ("top_platform", "ПЛАТФОРМА СВЕРХУ", ("top_platform_",)),
+        ("top_sinks", "РАКОВИНЫ КОРПУСА", ("top_sinks_",)),
+        ("top_glass", "СТЕКЛО СВЕРХУ", ("top_glass_",)),
+    )
+
+
 _RULE_GROUPS_SORTED = tuple(sorted(RULE_GROUPS, key=lambda g: -max(len(p) for p in g[2])))
 _RULE_GROUP_INDEX = {rule_id: i for i, (rule_id, _, _) in enumerate(RULE_GROUPS)}
 

@@ -101,6 +101,12 @@ class LiveCaptureGate:
         with self._condition:
             self._pause_depth = 0
             self._role_pause_depth.clear()
+            # Сброс во время FAULT/остановки мог произойти посреди live-чтения:
+            # активные счётчики могли остаться ненулевыми, что заблокировало бы
+            # следующий pause(). Очищаем их явно — live-потоки уже остановлены
+            # через _stop_event.
+            self._active_reads = 0
+            self._role_active_reads.clear()
             self._condition.notify_all()
 
     @contextlib.contextmanager

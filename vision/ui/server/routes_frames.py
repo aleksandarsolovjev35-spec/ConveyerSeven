@@ -22,17 +22,26 @@ def setup_frame_routes(app, server):
         )
         size_kind = "preview" if preview else "main"
         # Номер набора текущей стадии (1); вне диапазона — текущий кадр.
-        if run is not None and not (1 <= run <= server.get_frame_count()):
+        if run is not None and not (1 <= run <= await asyncio.to_thread(server.get_frame_count)):
             run = None
-        jpeg = server._get_or_render(role, actual_mode, size_kind, run)
+        # Тяжёлый рендер и JPEG-кодирование — в thread pool, чтобы не
+        # блокировать event loop.
+        try:
+            jpeg = await asyncio.to_thread(
+                server._get_or_render, role, actual_mode, size_kind, run
+            )
+        except Exception as exc:
+            raise HTTPException(500, f"Frame render failed: {exc}") from exc
         if jpeg is None:
             raise HTTPException(404, f"No frame for role: {role}")
+        # Кэшированная версия актуальна на момент рендера.
+        cache_version = server._cache_version
         return Response(
             content=jpeg,
             media_type="image/jpeg",
             headers={
                 "Cache-Control": "no-cache, no-store",
-                "X-Frame-Version": str(server._cache_version),
+                "X-Frame-Version": str(cache_version),
             },
         )
 

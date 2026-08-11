@@ -139,7 +139,7 @@ class Axis:
         return position
 
     def wait_stop(self, timeout: float = 10.0, progress_callback=None):
-        start = time.time()
+        start = time.monotonic()
         while True:
             status = self.read_status()
             position = status["position"]
@@ -149,7 +149,7 @@ class Axis:
             if moving == 0:
                 time.sleep(0.05)
                 return
-            if time.time() - start > timeout:
+            if time.monotonic() - start > timeout:
                 raise TimeoutError(
                     f"Axis {self.axis_id} не остановилась за {timeout}s; "
                     f"status={status['raw']!r}"

@@ -131,15 +131,30 @@ async function fetchCameras() {
 
 function renderPreviewStrip() {
     if (!els.previewStrip) return;
-    els.previewStrip.innerHTML = state.cameras.map((role, i) => `
-        <div class="preview-cam ${role === state.currentCamera ? 'active' : ''}" data-role="${role}" data-index="${i}">
-            <img src="/frame/${role}?mode=${state.mode}&preview=1&t=${Date.now()}" alt="${cameraRoleLabel(role)}" data-frame-key="" data-requested-key="" data-requesting="0" data-req-seq="0">
-            <div class="preview-cam-label">[${i + 1}] ${cameraRoleLabel(role)}</div>
-        </div>
-    `).join('');
-    els.previewStrip.querySelectorAll('.preview-cam').forEach(el => {
-        el.addEventListener('click', () => selectCamera(el.dataset.role));
-    });
+    els.previewStrip.textContent = '';
+    for (let i = 0; i < state.cameras.length; i++) {
+        const role = state.cameras[i];
+        const div = document.createElement('div');
+        div.className = `preview-cam ${role === state.currentCamera ? 'active' : ''}`;
+        div.dataset.role = role;
+        div.dataset.index = String(i);
+
+        const img = document.createElement('img');
+        img.src = `/frame/${encodeURIComponent(role)}?mode=${encodeURIComponent(state.mode)}&preview=1&t=${Date.now()}`;
+        img.alt = cameraRoleLabel(role);
+        img.dataset.frameKey = '';
+        img.dataset.requestedKey = '';
+        img.dataset.requesting = '0';
+        img.dataset.reqSeq = '0';
+
+        const label = document.createElement('div');
+        label.className = 'preview-cam-label';
+        label.textContent = `[${i + 1}] ${cameraRoleLabel(role)}`;
+
+        div.append(img, label);
+        div.addEventListener('click', () => selectCamera(div.dataset.role));
+        els.previewStrip.appendChild(div);
+    }
 }
 
 function selectCamera(role) {

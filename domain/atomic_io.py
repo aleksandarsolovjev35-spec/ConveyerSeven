@@ -38,8 +38,12 @@ def _fsync_dir(path: str) -> None:
 
 def atomic_write_bytes(path: str, content: bytes) -> None:
     """Записать байты в ``path`` целиком или не записать вовсе."""
+    import time as _time
+
     path = os.fspath(path)
-    temp_path = f"{path}.tmp"
+    # Уникальное имя временного файла исключает гонку при параллельной записи
+    # из разных потоков/процессов в один и тот же целевой файл.
+    temp_path = f"{path}.tmp.{os.getpid()}.{_time.time_ns()}"
     try:
         with open(temp_path, "wb") as stream:
             stream.write(content)
