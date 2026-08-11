@@ -23,6 +23,10 @@ import json
 import os
 import shutil
 import time
+from core.app_logging import get_logger
+
+
+log = get_logger("inspection.archive")
 import zipfile
 from datetime import datetime
 
@@ -281,9 +285,9 @@ class PartArchive:
         self._save_stats()
         self._save_batch_manifest()
 
-        print(
-            f"[ARCHIVE] Деталь #{part_id} -> {folder_path} "
-            f"({len(roles_saved)} ролей)"
+        log.info(
+            "Деталь #%d -> %s (%d ролей)",
+            part_id, folder_path, len(roles_saved),
         )
         return folder_path
 
@@ -400,7 +404,7 @@ class PartArchive:
                     raise RuntimeError(f"ZIP CRC failed: {bad}")
             os.replace(temp_zip, zip_path)
         except Exception as exc:
-            print(f"[ARCHIVE] Ошибка сжатия: {exc}")
+            log.error("Ошибка сжатия: %s", exc)
             if os.path.exists(temp_zip):
                 with contextlib.suppress(OSError):
                     os.remove(temp_zip)

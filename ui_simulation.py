@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from core.app_logging import capture_prints, install_excepthooks, setup_logging
 from domain.threshold_loader import ThresholdLoader
 from inspection.part_archive import PartArchive
 from vision.ui.server.server import CAMERA_ORDER, UIServer
@@ -679,6 +680,11 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (0.0.0.0 for Arena preview)")
     parser.add_argument("--port", default=8000, type=int)
     args = parser.parse_args()
+
+    log_file = setup_logging()
+    install_excepthooks()
+    capture_prints()
+    print(f"[SIM] Журнал сессии: {log_file}")
 
     server = UIServer()
     # The real archive implementation writes only into ignored sandbox data.

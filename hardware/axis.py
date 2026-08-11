@@ -1,5 +1,9 @@
 import re
 import time
+from core.app_logging import get_logger
+
+
+log = get_logger("hardware.axis")
 
 
 class Axis:
@@ -99,9 +103,9 @@ class Axis:
                 f"Axis {self.axis_id}: firmware limMax="
                 f"{config['limit_max']}, expected {self.maximum}"
             )
-        print(
-            f"[AXIS{self.axis_id}] limits verified: "
-            f"{config['limit_min']}..{config['limit_max']}"
+        log.info(
+            "AXIS%s limits verified: %s..%s",
+            self.axis_id, config["limit_min"], config["limit_max"],
         )
         return config
 

@@ -11,3 +11,5 @@ venv/
 
 archive/
 debug_frames/
+
+logs/

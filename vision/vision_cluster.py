@@ -6,6 +6,10 @@ from ultralytics import YOLO
 import numpy as np
 
 from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
+from core.app_logging import get_logger
+
+
+log = get_logger("vision.cluster")
 
 INFERENCE_IMGSZ = 1280
 
@@ -31,7 +35,7 @@ class VisionCluster:
                     if not os.path.isfile(path):
                         raise FileNotFoundError(f"Model file not found: {path}")
                     if self.verbose:
-                        print(f"[VISION] Loading {path}")
+                        log.info("Загрузка модели %s", path)
                     model = YOLO(path)
                     self._verify_model_classes(
                         path,
@@ -40,7 +44,7 @@ class VisionCluster:
                     )
                     self.models[path] = model
         if self.verbose:
-            print(f"[VISION] Models loaded: {len(self.models)}")
+            log.info("Моделей загружено: %d", len(self.models))
 
     @staticmethod
     def _verify_model_classes(path: str, model, expected: tuple[str, ...]):
@@ -77,7 +81,7 @@ class VisionCluster:
         if errors:
             raise RuntimeError("Model warmup failed: " + "; ".join(errors))
         if self.verbose:
-            print("[VISION] Warmup done")
+            log.info("Прогрев моделей завершён")
 
     def process_all(self, frames: dict) -> dict:
         results = {}
@@ -143,18 +147,17 @@ class VisionCluster:
                 for detection in parsed:
                     detection["model_path"] = path
                 if self.verbose:
-                    print(
-                        f"[VISION] {role} | "
-                        f"{path.split('/')[-1]} "
-                        f"-> {len(parsed)} det"
+                    log.debug(
+                        "%s | %s -> %d det",
+                        role, path.split("/")[-1], len(parsed),
                     )
                 detections.extend(parsed)
 
             valid = [d for d in detections if self._is_valid(d)]
             if len(valid) != len(detections):
-                print(
-                    f"[VISION WARN] {role}: dropped "
-                    f"{len(detections) - len(valid)} invalid detections"
+                log.warning(
+                    "%s: отброшено %d невалидных детекций",
+                    role, len(detections) - len(valid),
                 )
 
             results[role] = valid

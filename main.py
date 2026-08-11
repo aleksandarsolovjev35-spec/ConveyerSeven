@@ -20,6 +20,12 @@ from vision.vision_cluster             import VisionCluster
 from vision.ui                         import LiveMonitor
 
 from domain.threshold_loader  import ThresholdLoader
+from core.app_logging import (
+    capture_prints,
+    get_logger,
+    install_excepthooks,
+    setup_logging,
+)
 from core.decision_engine     import DecisionEngine
 from core.production_cycle    import ProductionCycle
 
@@ -28,6 +34,8 @@ from inspection.inspector      import Inspector
 from inspection.part_archive   import PartArchive
 
 
+log = get_logger("main")
+
 CYCLE_JOIN_TIMEOUT   = 15.0
 INIT_JOIN_TIMEOUT    = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
@@ -35,6 +43,13 @@ COMPRESS_TIMEOUT     = 60.0
 
 
 def main():
+
+    # Журнал поднимается до любой инициализации: ошибки запуска тоже
+    # должны остаться на диске, а не только на закрывшемся splash-экране.
+    log_file = setup_logging()
+    install_excepthooks()
+    capture_prints()
+    log.info("=== Запуск ConveyerSeven; журнал: %s ===", log_file)
 
     if not os.path.exists("camera_mapping.json") and not launch_camera_calibrator(
         "camera_mapping.json"

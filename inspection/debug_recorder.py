@@ -3,6 +3,10 @@ import cv2
 from datetime import datetime
 from domain.defect_rules import RuleResult
 from vision.overlay.debug_overlay import DebugOverlay
+from core.app_logging import get_logger
+
+
+log = get_logger("inspection.recorder")
 
 
 class DebugRecorder:
@@ -74,6 +78,6 @@ class DebugRecorder:
             path = os.path.join(folder, f"{role}.jpg")
             cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
-        print(
-            f"[DEBUG] Saved {len(annotated)} frames -> {folder}"
+        log.debug(
+            "Сохранено %d кадров -> %s", len(annotated), folder,
         )

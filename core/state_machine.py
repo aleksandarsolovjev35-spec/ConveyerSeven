@@ -1,6 +1,10 @@
 import threading
 from enum import Enum
 from collections.abc import Callable
+from core.app_logging import get_logger
+
+
+log = get_logger("state")
 
 
 class State(str, Enum):
@@ -87,9 +91,8 @@ class StateMachine:
                 if new_state is not None:
                     old = self._state
                     self._state = new_state
-                    print(
-                        f"[STATE] {old.value} --STOP--> "
-                        f"{new_state.value}"
+                    log.info(
+                        "%s --STOP--> %s", old.value, new_state.value,
                     )
                     callback_args = (old, new_state, "STOP")
 
@@ -101,7 +104,7 @@ class StateMachine:
         with self._lock:
             self._exit_requested = True
             self._force_exit = True
-        print("[STATE] FORCE EXIT requested")
+        log.info("FORCE EXIT requested")
         return True
 
     def notify_line_empty(self) -> bool:
@@ -127,17 +130,15 @@ class StateMachine:
             new_state = _TRANSITIONS.get(key)
 
             if new_state is None:
-                print(
-                    f"[STATE] {action} ignored "
-                    f"in {self._state.value}"
+                log.debug(
+                    "%s ignored in %s", action, self._state.value,
                 )
                 return False
 
             old = self._state
             self._state = new_state
-            print(
-                f"[STATE] {old.value} --{action}--> "
-                f"{new_state.value}"
+            log.info(
+                "%s --%s--> %s", old.value, action, new_state.value,
             )
             callback_args = (old, new_state, action)
 
