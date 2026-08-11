@@ -893,6 +893,8 @@ def _safe_compress(archive):
 
 
 def _make_idle_status(distributor) -> dict:
+    # Должен повторять ключи, которые ожидает frontend из _build_status(),
+    # иначе до первого тика production-цикла UI получает KeyError/undefined.
     return {
         "state":          "IDLE",
         "exit_requested": False,
@@ -920,6 +922,8 @@ def _make_idle_status(distributor) -> dict:
             "part_id": None,
             "positions": [],
             "conveyor": {},
+            "capture_roles": [],
+            "inspection_roles": [],
             "revision": 0,
             "updated_at": time.time(),
         },
@@ -928,6 +932,8 @@ def _make_idle_status(distributor) -> dict:
         "controls": {
             "start": False,
             "stop": False,
+            "pause": False,
+            "resume": False,
             "exit": True,
             "jog_hold": False,
             "selected_model_analysis": False,
@@ -944,6 +950,9 @@ def _make_idle_status(distributor) -> dict:
             "running": False,
             "streaming": False,
             "static": False,
+            "static_roles": [],
+            "all_roles_static": False,
+            "stage": "IDLE",
             "fps": 0.0,
             "error": None,
         },
@@ -951,8 +960,17 @@ def _make_idle_status(distributor) -> dict:
             "available": False,
             "kind": None,
             "active": False,
+            "title": None,
+            "role": None,
+            "group": None,
+            "stage": None,
+            "part_id": None,
+            "message": None,
             "models": [],
             "rules": [],
+            "picture_run": None,
+            "picture_reason": None,
+            "updated_at": None,
         },
         "diagnostics": {
             "status": "NOT_RUN",
@@ -978,3 +996,4 @@ def _make_idle_status(distributor) -> dict:
 
 if __name__ == "__main__":
     main()
+

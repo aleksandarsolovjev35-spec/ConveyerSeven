@@ -151,8 +151,31 @@ class Distributor:
         self._notify()
 
     def emergency_stop(self):
+        # Останавливаем обе оси явно: прошивка искала концевик без ограничения
+        # пробега, поэтому при таймауте host-стороны нельзя оставлять ось
+        # в движении. Пробуем варианты P0/P1 и общий G25 для совместимости
+        # с разными версиями прошивки — ошибка отправки одной команды не
+        # должна блокировать остальные.
         try:
-            self.dist1.transport.send("G25")
+            transport = getattr(self.dist1, "transport", None) or getattr(
+                self.dist2, "transport", None
+            )
+            if transport is not None:
+                for cmd in ("G25 P0", "G25 P1", "G25"):
+                    try:
+                        transport.send(cmd)
+                    except Exception:
+                        continue
+            else:
+                # Fallback: пробуем через обе оси отдельно
+                try:
+                    self.dist1.transport.send("G25")
+                except Exception:
+                    pass
+                try:
+                    self.dist2.transport.send("G25")
+                except Exception:
+                    pass
         finally:
             self.dist1_state = self.dist2_state = "FAULT"
             self.last_action = "EMERGENCY STOP"

@@ -46,24 +46,27 @@ CAMERA_ORDER = [
     "TOP",
 ]
 
-# Правило отчёта -> группа порогов (RULE_GROUPS в thresholds.json). Нужна
-# только для ручных названий порогов (_label.*): по полному имени параметра
-# подставляется пользовательское название вместо встроенного перевода.
-RULE_THRESHOLD_GROUPS = {
-    "part_presence": "input_part_presence",
-    "window_geometry": "input_window_geometry",
-    "window_sinks": "input_window_sinks",
-    "contacts_long": "spider_contacts_long",
-    "contacts_short": "spider_contacts_short",
-    "long_omission": "spider_long_omission",
-    "short_omission": "spider_short_omission",
-    "top_contacts": "top_contacts",
-    "top_platform": "top_platform",
-    "platform_contacts_overlap": "top_platform_overlap",
-    "sinks": "top_sinks",
-    "glass": "top_glass",
-    "glass_on_contacts": "top_glass",
-}
+# Единый реестр правил — импортируется из domain, чтобы карты не
+# расходились в трёх местах кодовой базы.
+try:
+    from domain.defect_rules.registry import RULE_THRESHOLD_GROUPS
+except ImportError:
+    # Fallback для окружений, где domain ещё не в sys.path (ранний импорт)
+    RULE_THRESHOLD_GROUPS = {
+        "part_presence": "input_part_presence",
+        "window_geometry": "input_window_geometry",
+        "window_sinks": "input_window_sinks",
+        "contacts_long": "spider_contacts_long",
+        "contacts_short": "spider_contacts_short",
+        "long_omission": "spider_long_omission",
+        "short_omission": "spider_short_omission",
+        "top_contacts": "top_contacts",
+        "top_platform": "top_platform",
+        "platform_contacts_overlap": "top_platform_overlap",
+        "sinks": "top_sinks",
+        "glass": "top_glass",
+        "glass_on_contacts": "top_glass",
+    }
 
 
 class UIServer:

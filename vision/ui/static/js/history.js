@@ -200,32 +200,44 @@ function renderGalleryImages() {
     const roles = galleryData.roles || [];
 
     if (!roles.length) {
-        els.galleryGrid.innerHTML =
-            '<div class="gallery-loading">Изображения отсутствуют</div>';
+        els.galleryGrid.textContent = '';
+        const loading = document.createElement('div');
+        loading.className = 'gallery-loading';
+        loading.textContent = 'Изображения отсутствуют';
+        els.galleryGrid.appendChild(loading);
         return;
     }
 
     const existingCards = els.galleryGrid.querySelectorAll('.gallery-card');
 
     if (existingCards.length !== roles.length) {
-        els.galleryGrid.innerHTML = roles.map(r => {
+        els.galleryGrid.textContent = '';
+        for (const r of roles) {
             const url = getGalleryUrl(r);
-            if (!url) return '';
+            if (!url) continue;
+            const card = document.createElement('div');
+            card.className = 'gallery-card';
+            card.dataset.role = r.role;
 
-            return `
-                <div class="gallery-card" data-role="${r.role}">
-                    <div class="gallery-card-label">${cameraRoleLabel(r.role)}</div>
-                    <div class="gallery-card-img-wrap">
-                        <img class="gallery-img-fade-in"
-                             src="${url}"
-                             alt="${r.role}"
-                             onload="window._galleryImageLoaded(this)"
-                             onerror="window._galleryImageError(this)"
-                             onclick="window._galleryFullscreen(this.src)">
-                    </div>
-                </div>
-            `;
-        }).join('');
+            const label = document.createElement('div');
+            label.className = 'gallery-card-label';
+            label.textContent = cameraRoleLabel(r.role);
+
+            const wrap = document.createElement('div');
+            wrap.className = 'gallery-card-img-wrap';
+
+            const img = document.createElement('img');
+            img.className = 'gallery-img-fade-in';
+            img.src = url;
+            img.alt = r.role;
+            img.addEventListener('load', () => window._galleryImageLoaded(img));
+            img.addEventListener('error', () => window._galleryImageError(img));
+            img.addEventListener('click', () => window._galleryFullscreen(img.src));
+
+            wrap.appendChild(img);
+            card.append(label, wrap);
+            els.galleryGrid.appendChild(card);
+        }
         attachGalleryImageErrorHandlers();
         return;
     }
@@ -323,7 +335,10 @@ window._galleryFullscreen = function(src) {
 
     const div = document.createElement('div');
     div.className = 'gallery-fullscreen';
-    div.innerHTML = `<img src="${src}" alt="Полноэкранное изображение">`;
+    const img = document.createElement('img');
+    img.alt = 'Полноэкранное изображение';
+    img.src = src;
+    div.appendChild(img);
     div.addEventListener('click', () => div.remove());
     document.body.appendChild(div);
 };

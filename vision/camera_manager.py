@@ -161,12 +161,14 @@ class CameraManager:
 
     @staticmethod
     def _factory_supports_backend(factory) -> bool:
+        # Поддержка кастомных фабрик захвата (используется в тестах):
+        # если фабрика принимает backend как второй позиционный аргумент,
+        # менеджер передаёт его, иначе вызывает только с camera_id.
         try:
-            import inspect as _inspect
-            signature = _inspect.signature(factory)
+            sig = inspect.signature(factory)
         except (TypeError, ValueError):
             return False
-        parameters = list(signature.parameters.values())
+        parameters = list(sig.parameters.values())
         if any(
             p.kind is inspect.Parameter.VAR_POSITIONAL for p in parameters
         ):
@@ -263,7 +265,13 @@ class CameraManager:
                 t.start()
             for t in threads:
                 t.join(_PREFLIGHT_TIMEOUT * 2 + 5.0)
+                if t.is_alive():
+                    log.warning(
+                        "поток открытия камеры %s не завершился за таймаут",
+                        getattr(t, "name", "?"),
+                    )
 
+        # Потоки могут ещё завершаться после join-таймаута — собираем то, что успели.
         self.cameras = {
             role: opened[role] for role in self.mapping if role in opened
         }
@@ -274,6 +282,14 @@ class CameraManager:
                 f"{role}: {error}" for role, error in sorted(errors.items())
             )
             raise RuntimeError(f"Ошибка открытия камер: {details}")
+
+        # Дополнительная проверка: все требуемые роли должны быть открыты.
+        missing = set(self.mapping) - set(self.cameras)
+        if missing:
+            self.release()
+            raise RuntimeError(
+                f"Камеры не открылись: {sorted(missing)}; {errors}"
+            )
 
         elapsed = time.monotonic() - started
         log.info("Открыто камер: %d за %.1f с", len(self.cameras), elapsed)

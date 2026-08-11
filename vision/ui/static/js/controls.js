@@ -254,10 +254,12 @@ function updateStateOverlay(ls) {
 
         if (els.cameraOverlay.dataset.renderedMain !== mainText
             || els.cameraOverlay.dataset.renderedSub !== subText) {
-            els.cameraOverlay.innerHTML = `
-                <div class="camera-overlay-main"></div>
-                <div class="camera-overlay-sub"></div>
-            `;
+            els.cameraOverlay.textContent = '';
+            const mainDiv = document.createElement('div');
+            mainDiv.className = 'camera-overlay-main';
+            const subDiv = document.createElement('div');
+            subDiv.className = 'camera-overlay-sub';
+            els.cameraOverlay.append(mainDiv, subDiv);
             els.cameraOverlay.dataset.renderedMain = mainText;
             els.cameraOverlay.dataset.renderedSub  = subText;
         }

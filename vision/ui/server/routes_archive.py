@@ -1,7 +1,9 @@
+import asyncio
+import json
 import os
 
-from fastapi import HTTPException, Response
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 
 
 def setup_archive_routes(app, server):
@@ -19,12 +21,18 @@ def setup_archive_routes(app, server):
 
         images = server.archive.get_part_images(part_id)
 
-        meta = {}
-        meta_path = os.path.join(info["folder"], "meta.json")
-        if os.path.exists(meta_path):
-            import json
-            with open(meta_path, encoding="utf-8") as f:
-                meta = json.load(f)
+        def _load_meta():
+            meta_path = os.path.join(info["folder"], "meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as stream:
+                        return json.load(stream)
+                except Exception:
+                    return {}
+            return {}
+
+        # Не блокируем event loop чтением с диска.
+        meta = await asyncio.to_thread(_load_meta)
 
         sorted_role_names = server._sort_by_order(list(images.keys()))
 
@@ -67,6 +75,16 @@ def setup_archive_routes(app, server):
                 f"kind must be one of {valid_kinds}",
             )
 
+        # Базовая валидация роли, чтобы избежать path-traversal через
+        # произвольные строки: роль должна быть известной камере.
+        allowed_roles = {
+            "INPUT_LEFT", "INPUT_RIGHT",
+            "SPIDER_LEFT", "SPIDER_RIGHT",
+            "SPIDER_IN", "SPIDER_OUT", "TOP",
+        }
+        if role not in allowed_roles:
+            raise HTTPException(400, f"Invalid role: {role}")
+
         images = server.archive.get_part_images(part_id)
         if role not in images or kind not in images[role]:
             raise HTTPException(
@@ -77,11 +95,10 @@ def setup_archive_routes(app, server):
 
         path = images[role][kind]
 
-        with open(path, "rb") as f:
-            data = f.read()
-
-        return Response(
-            content=data,
+        # Используем FileResponse — не загружаем весь файл в память и не
+        # блокируем event loop синхронным чтением.
+        return FileResponse(
+            path,
             media_type="image/jpeg",
             headers={
                 "Cache-Control": "public, max-age=3600",
