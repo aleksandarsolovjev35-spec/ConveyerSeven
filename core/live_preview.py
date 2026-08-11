@@ -285,6 +285,21 @@ class LivePreview:
             return
         self._monitor.update(vision_results={}, rule_results=[], run_frames=[])
 
+    def clear_evidence(self):
+        """Убрать общий набор разметки, сохранив кадры текущей стадии.
+
+        Используется при FAULT: статичная разметка на живом изображении
+        указывала бы мимо детали, но замороженные кадры анализа должны
+        остаться на экране для диагностики.
+        """
+        if self._monitor is None:
+            return
+        clear = getattr(self._monitor, "clear_evidence", None)
+        if callable(clear):
+            clear()
+        else:
+            self._monitor.update(vision_results={}, rule_results=[])
+
     # Внутреннее
 
     def _available_roles(self) -> list:

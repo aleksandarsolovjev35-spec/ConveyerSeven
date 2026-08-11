@@ -189,14 +189,15 @@ function showSelectedAnalysisFrame(role) {
     if (!role) return;
     setIfChanged(els.cameraLabel, `${cameraRoleLabel(role)} · АНАЛИЗ`);
     clearLivePullTimer();
-    const analysisKey = `${role}|${state.mode}|${state.currentVersion}`;
+    const analysisKey = `${role}|${state.mode}|${state.currentVersion}|r${state.frameRuns}`;
     if (state.mainCamMode === 'analysis' && state.mainCamAnalysisKey === analysisKey) return;
     state.mainCamMode = 'analysis';
     state.mainCamStreamRole = null;
     state.mainCamStreamView = null;
     state.mainCamAnalysisKey = analysisKey;
     mainBufferLoading = false;
-    const source = `/frame/${encodeURIComponent(role)}?mode=${encodeURIComponent(state.mode)}&v=${state.currentVersion}&analysis=1`;
+    const runQuery = state.frameRuns > 0 ? '&run=1' : '';
+    const source = `/frame/${encodeURIComponent(role)}?mode=${encodeURIComponent(state.mode)}&v=${state.currentVersion}&analysis=1${runQuery}`;
     if (typeof showMainCameraFrame === 'function') {
         showMainCameraFrame(source, 'analysis');
     } else if (els.mainCamera) {
@@ -291,7 +292,11 @@ function maybeRequestMainFrame() {
     try { _mainBufferSeq += 1; _mainBufferExpectedSeq = _mainBufferSeq; mainBuffer._seq = _mainBufferSeq; } catch (_) {}
 
     const versionQuery = state.mainCamMode === 'live-pull' ? `live=1&t=${Date.now()}` : `v=${state.currentVersion}`;
-    mainBuffer.src = `/frame/${state.currentCamera}?mode=${state.mode}&${versionQuery}`;
+    // Когда опубликованы кадры стадии (frame_runs > 0), показываем именно
+    // их с разметкой этой же стадии: live-кадр с «общей» геометрией правил
+    // показывал бы не ту деталь.
+    const runQuery = state.frameRuns > 0 ? '&run=1' : '';
+    mainBuffer.src = `/frame/${state.currentCamera}?mode=${state.mode}&${versionQuery}${runQuery}`;
 }
 
 // Превью — каждый img с sequence, чтобы устаревший onload не перетёр новый кадр
@@ -305,7 +310,13 @@ function refreshPreviewStrip() {
         if (img.dataset.requesting === '1') return;
         const role = img.parentElement.dataset.role;
         const roleVersion = Number(state.frameVersions[role] || 0);
-        const frameKey = `${roleVersion}|${state.mode}`;
+        // Во время стадии миниатюра берётся из набора стадии (run=1), и её
+        // содержимое меняется вместе с глобальной версией кадра, а не только
+        // с версией live-роли.
+        const runActive = state.frameRuns > 0;
+        const frameKey = runActive
+            ? `run|${state.currentVersion}|${state.mode}`
+            : `${roleVersion}|${state.mode}`;
         if (img.dataset.frameKey === frameKey) return;
         if (img.dataset.requestedKey === frameKey) return;
 
@@ -330,7 +341,8 @@ function refreshPreviewStrip() {
             img.dataset.requestedKey = '';
             img.dataset.requesting = '0';
         };
-        tmp.src = `/frame/${role}?mode=${state.mode}&preview=1&rv=${roleVersion}`;
+        const runQuery = runActive ? '&run=1' : '';
+        tmp.src = `/frame/${role}?mode=${state.mode}&preview=1${runQuery}&rv=${roleVersion}`;
     });
 }
 

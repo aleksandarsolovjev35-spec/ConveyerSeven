@@ -10,9 +10,12 @@ COLOR_PLATFORM = (255, 0, 255)
 
 FONT   = cv2.FONT_HERSHEY_SIMPLEX
 FONT_S = 0.4
-THICK  = 1
+# Толщина линий геометрии. Линии 1px не переживают JPEG-кодирование
+# (chroma subsampling усредняет одиночный пиксель с тёмным фоном, и
+# разметка «не рисуется» в браузере); 2px сохраняются даже при q70.
+THICK  = 2
 
-LINE_THIN  = 1
+LINE_THIN  = 2
 LINE_FAIL  = 2
 MASK_ALPHA = 0.15
 
