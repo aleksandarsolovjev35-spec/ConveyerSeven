@@ -6,6 +6,8 @@
 сработавших ролей через :func:`_generic_failure_rows`.
 """
 
+from core.rule_summary import build_presence_summary, build_rule_summary
+
 # Названия порогов для анализа кадра: (правило, ключ метрики) -> понятный
 # оператору label (как в панели «Пороги правил»). UI показывает порог
 # рядом с названием правила и замер под ним.
@@ -909,7 +911,7 @@ def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | Non
     # Fallback: пытаемся вытащить самую важную причину
     per_role = details.get("per_role") or {}
     reasons = []
-    for role, rd in per_role.items():
+    for rd in per_role.values():
         if isinstance(rd, dict) and rd.get("triggered"):
             r = rd.get("reason")
             if r:
@@ -931,8 +933,6 @@ def get_human_cause(rule_name: str, triggered: bool, details: dict) -> str | Non
         return reasons[0].upper().replace("_", " ")[:60]
     return "ДЕФЕКТ"
 
-
-from core.rule_summary import build_presence_summary, build_rule_summary
 
 SUMMARY_LINES_LIMIT = 4
 
@@ -1089,7 +1089,7 @@ def _extract_vote_details(consensus: dict, rule_name: str) -> dict | None:
     """
     if not isinstance(consensus, dict):
         return None
-    
+
     rules_meta = consensus.get("rules", {})
     rule_meta = rules_meta.get(rule_name) if isinstance(rules_meta, dict) else None
 

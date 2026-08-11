@@ -2,12 +2,11 @@ import math
 import os
 import time
 
-from ultralytics import YOLO
 import numpy as np
+from ultralytics import YOLO
 
-from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
 from core.app_logging import get_logger
-
+from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
 
 log = get_logger("vision.cluster")
 

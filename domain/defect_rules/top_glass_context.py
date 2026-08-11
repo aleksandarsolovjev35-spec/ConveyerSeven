@@ -10,7 +10,6 @@ from domain.defect_rules.top_geometry import (
     rasterize_mask,
 )
 
-
 EXPECTED_PINS = 14
 EXPECTED_CONTACTS = 14
 

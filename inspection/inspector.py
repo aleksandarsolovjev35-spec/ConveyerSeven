@@ -1,7 +1,5 @@
+from core.app_logging import get_logger
 from domain.defect_rules import InputPartPresenceRule
-
-from vision.overlay.raw_overlay import RawOverlay
-
 from inspection.consensus import (
     combine_presence_results,
     combine_rule_results,
@@ -9,8 +7,7 @@ from inspection.consensus import (
     summarize_model_health,
 )
 from inspection.result import InspectionResult
-from core.app_logging import get_logger
-
+from vision.overlay.raw_overlay import RawOverlay
 
 log = get_logger("inspection.inspector")
 

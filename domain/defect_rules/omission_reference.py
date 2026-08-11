@@ -3,7 +3,6 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-
 DEFAULT_SAMPLE_COUNT = 31
 DEFAULT_MIN_POINTS = 12
 

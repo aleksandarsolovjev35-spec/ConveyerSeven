@@ -7,7 +7,6 @@
 import cv2
 import numpy as np
 
-
 # Палитра — разные классы разными цветами
 CLASS_COLORS = {
     "mechanics":        (0,   0,   255),

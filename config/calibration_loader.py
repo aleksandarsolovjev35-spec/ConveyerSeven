@@ -1,7 +1,6 @@
 import json
 import math
 
-
 DEFAULTS = {
     "conveyor_speed":         20000,
     "conveyor_accel":         6000,

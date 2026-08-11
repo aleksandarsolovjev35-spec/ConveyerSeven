@@ -13,7 +13,6 @@ from domain.defect_rules.top_geometry import (
     rasterize_mask,
 )
 
-
 CONTACT_CLASS = "contacts"
 SIDES = ("L", "R", "T", "B")
 

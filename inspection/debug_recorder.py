@@ -1,10 +1,11 @@
 import os
-import cv2
 from datetime import datetime
+
+import cv2
+
+from core.app_logging import get_logger
 from domain.defect_rules import RuleResult
 from vision.overlay.debug_overlay import DebugOverlay
-from core.app_logging import get_logger
-
 
 log = get_logger("inspection.recorder")
 

@@ -4,7 +4,7 @@ from config.archive_config import (
     normalise_archive_config,
     save_archive_config,
 )
-from config.calibration_loader import load_calibration, DEFAULTS
+from config.calibration_loader import DEFAULTS, load_calibration
 from config.camera_mapping import (
     CAMERA_MAPPING_FILE,
     REQUIRED_ROLES,

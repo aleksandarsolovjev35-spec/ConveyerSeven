@@ -1,19 +1,19 @@
-from domain.threshold_loader import ThresholdLoader
 from domain.defect_rules import (
     BaseRule,
     InputWindowGeometryRule,
     InputWindowSinksRule,
     SpiderContactsLongRule,
-    SpiderLongOmissionRule,
     SpiderContactsShortRule,
+    SpiderLongOmissionRule,
     SpiderShortOmissionRule,
     TopContactsRule,
+    TopGlassOnContactsRule,
+    TopGlassRule,
+    TopPlatformOverlapRule,
     TopPlatformRule,
     TopSinksRule,
-    TopGlassRule,
-    TopGlassOnContactsRule,
-    TopPlatformOverlapRule,
 )
+from domain.threshold_loader import ThresholdLoader
 
 
 class DecisionEngine:

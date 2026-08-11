@@ -8,11 +8,9 @@
 import time
 
 import pytest
-
-from hardware.jog_controller import JogController
-
 from fakes import MovingFakeTransport
 
+from hardware.jog_controller import JogController
 
 CALIBRATION = {"jog_hold_steps": 38096, "normal_steps": 19048}
 

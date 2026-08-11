@@ -1,6 +1,7 @@
+from itertools import combinations
+
 import cv2
 import numpy as np
-from itertools import combinations
 
 from domain.defect_rules.base import BaseRule, RuleResult
 from domain.defect_rules.omission_reference import (
@@ -8,9 +9,9 @@ from domain.defect_rules.omission_reference import (
     signed_distance_and_projection,
 )
 from domain.defect_rules.rule_spider_contacts_long import (
+    BOTTOM_PERCENTILE,
     MIN_REFERENCE_COVERAGE,
     TOP_PERCENTILE,
-    BOTTOM_PERCENTILE,
 )
 
 
@@ -229,7 +230,12 @@ class SpiderContactsShortRule(BaseRule):
             res = self._try_inscribe_in_contact(
                 det, expected_height_px, expected_width_px, 0.0,
             )
-            inscribe_results.append({"index": i, "fits": res["fits"], "points": res.get("points"), "center": res.get("center")})
+            inscribe_results.append({
+                "index": i,
+                "fits": res["fits"],
+                "points": res.get("points"),
+                "center": res.get("center"),
+            })
             if not res["fits"]:
                 inscribe_fail_indices.append(i)
 
@@ -602,9 +608,17 @@ class SpiderContactsShortRule(BaseRule):
         yd = [i for i in kept if i not in yk]
 
         if len(yk) < expected:
-            return [candidates[i] for i in yk], [candidates[i] for i in range(n) if i not in yk], f"y-filter left only {len(yk)}"
+            return (
+                [candidates[i] for i in yk],
+                [candidates[i] for i in range(n) if i not in yk],
+                f"y-filter left only {len(yk)}",
+            )
         if len(yk) == expected:
-            return [candidates[i] for i in yk], [candidates[i] for i in range(n) if i not in yk], f"filters dropped {len(dropped)+len(yd)}"
+            return (
+                [candidates[i] for i in yk],
+                [candidates[i] for i in range(n) if i not in yk],
+                f"filters dropped {len(dropped) + len(yd)}",
+            )
 
         best_pair, best_score = None, float("inf")
         for i, j in combinations(yk, 2):

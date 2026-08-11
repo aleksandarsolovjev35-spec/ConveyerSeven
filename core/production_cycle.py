@@ -1,34 +1,31 @@
-import time
 import threading
+import time
 import traceback
 from collections import deque
 
+from core.app_logging import get_logger
 from core.live_preview import LivePreview
 from core.rule_report import build_rule_report_row, build_rule_report_rows
-from core.state_machine import StateMachine, State
+from core.state_machine import State, StateMachine
 from core.step_stages import (
     STAGE_SETTLE_SECONDS,
     STAGE_TRACE_SECONDS,
     StepSequencer,
 )
 from domain.defect_rules import InputPartPresenceRule
+from domain.part import (
+    CATEGORY_BAD,
+    CATEGORY_CLEANUP,
+    CATEGORY_GOOD,
+    CATEGORY_UNKNOWN,
+    Part,
+)
 from inspection.consensus import (
     combine_presence_results,
     combine_rule_results,
     describe_picture_run,
     summarize_model_health,
 )
-from domain.part import (
-    Part,
-    CATEGORY_GOOD,
-    CATEGORY_BAD,
-    CATEGORY_CLEANUP,
-    CATEGORY_UNKNOWN,
-)
-
-
-from core.app_logging import get_logger
-
 
 log = get_logger("cycle")
 
@@ -354,7 +351,15 @@ class ProductionCycle:
         finally:
             self._operation_lock.release()
 
+    DISTRIBUTOR_DIAGNOSTIC_COMMANDS = (
+        "DIST1_HOME", "DIST1_OPEN", "DIST2_BAD", "DIST2_CLEANUP",
+    )
+
     def distributor_diagnostic(self, command: str) -> bool:
+        # Неизвестная команда — ошибка вызывающего, а не отказ железа:
+        # проверяем до захвата блокировки и любого движения.
+        if command not in self.DISTRIBUTOR_DIAGNOSTIC_COMMANDS:
+            raise ValueError(f"Unknown distributor diagnostic: {command}")
         if not self._operation_lock.acquire(blocking=False):
             return False
         try:
@@ -376,10 +381,8 @@ class ProductionCycle:
                 self.distributor.diagnostic_gate("OPEN")
             elif command == "DIST2_BAD":
                 self.distributor.diagnostic_route(CATEGORY_BAD)
-            elif command == "DIST2_CLEANUP":
+            else:  # DIST2_CLEANUP — единственный оставшийся вариант
                 self.distributor.diagnostic_route(CATEGORY_CLEANUP)
-            else:
-                raise ValueError(f"Unknown distributor diagnostic: {command}")
             self._set_process(
                 "DIAGNOSTIC_DONE",
                 f"Положение распределителя подтверждено: {command}",
@@ -430,8 +433,9 @@ class ProductionCycle:
             self._refresh_monitor(frames)
             return True
         except Exception as exc:
-            self._set_diagnostic_error("CAMERAS", exc)
-            self._handle_fault(f"Ошибка проверки камер: {exc}")
+            self._handle_diagnostic_failure(
+                "CAMERAS", "Ошибка проверки камер", exc,
+            )
             raise
         finally:
             self._operation_lock.release()
@@ -510,8 +514,9 @@ class ProductionCycle:
             self._refresh_monitor(frames)
             return True
         except Exception as exc:
-            self._set_diagnostic_error("VISION_RULES", exc)
-            self._handle_fault(f"Ошибка проверки моделей и правил: {exc}")
+            self._handle_diagnostic_failure(
+                "VISION_RULES", "Ошибка проверки моделей и правил", exc,
+            )
             raise
         finally:
             self._operation_lock.release()
@@ -548,6 +553,38 @@ class ProductionCycle:
             "rules": [],
             "updated_at": time.time(),
         }
+        self._refresh_monitor()
+
+    def _hardware_failure_reason(self):
+        """Вернуть причину аппаратного отказа или ``None``.
+
+        Диагностика запускается оператором в IDLE/STOPPED и не двигает
+        линию, поэтому её прикладная ошибка (правило отключено, модель не
+        вернула результат, неверная роль) не должна уводить систему в
+        терминальный FAULT: оператор исправляет причину и повторяет
+        проверку. FAULT остаётся только для настоящей потери оборудования,
+        когда дальнейшая работа небезопасна.
+        """
+        live_error = self.live.error
+        if live_error:
+            return f"live-просмотр: {live_error}"
+        failure = getattr(self.cameras, "failure_reason", None)
+        if failure:
+            return f"камеры: {failure}"
+        return None
+
+    def _handle_diagnostic_failure(self, kind: str, what: str, exc: Exception):
+        """Опубликовать ошибку диагностики; в FAULT уводить только отказ железа."""
+        self._set_diagnostic_error(kind, exc)
+        hardware_reason = self._hardware_failure_reason()
+        if hardware_reason is not None:
+            self._handle_fault(f"{what}: {exc} ({hardware_reason})")
+            return
+        log.warning(f"[DIAGNOSTIC] {what}: {exc}")
+        self._set_process(
+            "DIAGNOSTIC_ERROR",
+            f"{what}: {exc}. Линия остаётся в состоянии {self.state}",
+        )
         self._refresh_monitor()
 
     @staticmethod
@@ -717,8 +754,9 @@ class ProductionCycle:
             self._selected_analysis_active = False
             self._selected_analysis_role = None
             self.live.resume()
-            self._set_diagnostic_error("SELECTED_MODEL", exc)
-            self._handle_fault(f"Ошибка анализа выбранного кадра: {exc}")
+            self._handle_diagnostic_failure(
+                "SELECTED_MODEL", "Ошибка анализа выбранного кадра", exc,
+            )
             raise
         finally:
             self._operation_lock.release()
@@ -1608,7 +1646,7 @@ class ProductionCycle:
             vision = getattr(self.inspector, "vision", None)
             rows = getattr(vision, "last_health", None) or []
         consensus = getattr(result, "consensus", None) or {}
-        
+
         # Подготовить модели с детальной информацией о прогоне
         model_details = []
         for item in rows:
@@ -1625,7 +1663,7 @@ class ProductionCycle:
                 "detections_by_run": item.get("detections_by_run", []),
                 "error": item.get("error"),
             })
-        
+
         self._frame_analysis_groups[group] = {
             "part_id": part_id,
             "rule_results": list(result.rule_results),

@@ -17,8 +17,8 @@ import contextlib
 import threading
 import time
 from collections import deque
-from core.app_logging import get_logger
 
+from core.app_logging import get_logger
 
 log = get_logger("core.live")
 

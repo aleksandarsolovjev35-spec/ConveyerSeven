@@ -40,8 +40,8 @@ _CONSOLE_FORMAT = "%(levelname)-7s %(name)s: %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _session_path: Path | None = None
-_tee_stdout: "_PrintTee | None" = None
-_tee_stderr: "_PrintTee | None" = None
+_tee_stdout: _PrintTee | None = None
+_tee_stderr: _PrintTee | None = None
 
 
 def get_logger(name: str) -> logging.Logger:

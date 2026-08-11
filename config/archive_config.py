@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 
+from domain.atomic_io import atomic_write_json
 
 ARCHIVE_CONFIG_FILE = "archive_config.json"
 
@@ -84,11 +85,5 @@ def save_archive_config(path: str, data: dict) -> dict:
     result = normalise_archive_config(data)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temp = destination.with_name(destination.name + ".tmp")
-    with temp.open("w", encoding="utf-8") as stream:
-        json.dump(result, stream, indent=2, ensure_ascii=False)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temp, destination)
+    atomic_write_json(str(destination), result)
     return result

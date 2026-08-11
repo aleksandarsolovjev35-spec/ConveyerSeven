@@ -8,7 +8,6 @@ import numpy as np
 from domain.defect_rules.base import RuleResult
 from domain.defect_rules.omission_reference import fit_omission_top_line
 
-
 BOUNDARY_NUMERIC_EPSILON_PX = 0.01
 
 

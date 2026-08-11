@@ -8,7 +8,6 @@ import pytest
 
 from domain.defect_rules.rule_input_part_presence import InputPartPresenceRule
 
-
 THRESHOLDS = {
     "INPUT_LEFT.input_window_geometry_min_confidence": 0.40,
     "INPUT_RIGHT.input_window_geometry_min_confidence": 0.40,

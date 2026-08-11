@@ -8,10 +8,9 @@
 import time
 
 import pytest
+from fakes import STATUS_MOVING, STATUS_STOPPED, FakeTransport
 
-from hardware.conveyor import Conveyor, MOTION_EVIDENCE_TIMEOUT
-
-from fakes import FakeTransport, STATUS_MOVING, STATUS_STOPPED
+from hardware.conveyor import MOTION_EVIDENCE_TIMEOUT, Conveyor
 
 
 def make_conveyor(transport=None):

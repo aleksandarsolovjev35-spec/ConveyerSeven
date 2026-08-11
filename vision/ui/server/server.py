@@ -6,18 +6,16 @@ import time
 from pathlib import Path
 
 import cv2
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from vision.overlay.raw_overlay import RawOverlay
 from vision.overlay.debug_overlay import DebugOverlay
-
-from vision.ui.server.routes_frames  import setup_frame_routes
-from vision.ui.server.routes_api     import setup_api_routes
+from vision.overlay.raw_overlay import RawOverlay
+from vision.ui.server.routes_api import setup_api_routes
 from vision.ui.server.routes_archive import setup_archive_routes
-
+from vision.ui.server.routes_frames import setup_frame_routes
 
 _UI_DIR        = Path(__file__).parent.parent
 _TEMPLATES_DIR = _UI_DIR / "templates"
@@ -188,7 +186,7 @@ class UIServer:
             return False
         return all(
             UIServer._same_frames(a, b)
-            for a, b in zip(left, right)
+            for a, b in zip(left, right, strict=True)
         )
 
     @staticmethod
@@ -212,7 +210,7 @@ class UIServer:
                 return False
             return all(
                 UIServer._rules_equal(a, b)
-                for a, b in zip(left, right)
+                for a, b in zip(left, right, strict=True)
             )
         if isinstance(left, dict):
             if left.keys() != right.keys():

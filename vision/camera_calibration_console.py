@@ -28,7 +28,6 @@ from vision.camera_manager import (
 )
 from vision.camera_manager import default_backends as _camera_backends
 
-
 CAMERA_SCAN_LIMIT = 10
 EXPECTED_SIZE = (1280, 720)
 JPEG_QUALITY = 78

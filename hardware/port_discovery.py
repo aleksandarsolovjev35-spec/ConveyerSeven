@@ -6,10 +6,11 @@
 """
 
 import time
+
 import serial
 import serial.tools.list_ports
-from core.app_logging import get_logger
 
+from core.app_logging import get_logger
 
 log = get_logger("hardware.discovery")
 
