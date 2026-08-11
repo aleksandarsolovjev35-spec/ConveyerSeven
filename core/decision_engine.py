@@ -1,3 +1,4 @@
+from core.app_logging import get_logger
 from domain.defect_rules import (
     BaseRule,
     InputWindowGeometryRule,
@@ -14,6 +15,8 @@ from domain.defect_rules import (
     TopSinksRule,
 )
 from domain.threshold_loader import ThresholdLoader
+
+log = get_logger("core.rules")
 
 
 class DecisionEngine:
@@ -54,10 +57,10 @@ class DecisionEngine:
 
         disabled = [r.name for r in all_rules if not r.enabled]
         if disabled:
-            print(f"[RULES] Disabled: {disabled}")
+            log.info("Disabled: %s", disabled)
         if not self.rules:
             raise RuntimeError("No active defect rules; production inspection blocked")
-        print(f"[RULES] Active: {[r.name for r in self.rules]}")
+        log.info("Active: %s", [r.name for r in self.rules])
 
     def evaluate_all_detailed(self, vision_results, frames=None):
         return self.evaluate_rules_detailed(

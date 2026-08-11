@@ -1,6 +1,10 @@
 import json
 import math
 
+from core.app_logging import get_logger
+
+log = get_logger("config.calibration")
+
 DEFAULTS = {
     "conveyor_speed":         20000,
     "conveyor_accel":         6000,
@@ -99,5 +103,5 @@ def load_calibration(path: str = "calibration.json") -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Ошибка чтения {path}: {exc}") from exc
     result = _validate(data)
-    print(f"[CALIB] Loaded and validated from {path}")
+    log.info("Loaded and validated from %s", path)
     return result
