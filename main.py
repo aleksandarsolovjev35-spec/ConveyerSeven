@@ -139,7 +139,6 @@ def main():
             calib = load_calibration()
             _ensure_initialization_active()
 
-            # Cameras
             monitor.boot_step_start(
                 "cameras", "Открытие камер",
             )
@@ -190,7 +189,6 @@ def main():
                 return
             _ensure_initialization_active()
 
-            # Models load
             monitor.boot_step_start(
                 "models_load", "Загрузка моделей",
             )
@@ -209,7 +207,6 @@ def main():
             )
             _ensure_initialization_active()
 
-            # Models warmup
             monitor.boot_step_start(
                 "models_warm", "Прогрев моделей",
             )
@@ -227,7 +224,6 @@ def main():
             )
             _ensure_initialization_active()
 
-            # Inspection pipeline
             monitor.boot_step_start(
                 "inspection", "Настройка системы контроля",
             )

@@ -164,7 +164,7 @@ class JogController:
             for _attempt in range(2):
                 try:
                     self.transport.send(f"G7 S{self._normal_steps_restore}")
-                    self.transport.send(f"G6 S2")
+                    self.transport.send("G6 S2")
                     restore_error = None
                     break
                 except Exception as exc:

@@ -76,7 +76,6 @@ class PartArchive:
         self._archived: list[dict] = []
         self._batch_parts: list[dict] = []
         self._batch_stats = {"total": 0, "good": 0, "bad": 0, "cleanup": 0}
-        self._finalized_count = 0
 
         self.stats: dict = self._load_stats()
 
@@ -271,7 +270,6 @@ class PartArchive:
         }
         self._archived.append(item)
         self._batch_parts.append(dict(item))
-        self._finalized_count += 1
 
         self.stats["total"] = int(self.stats.get("total") or 0) + 1
         category_key = {
@@ -314,12 +312,6 @@ class PartArchive:
             if entry:
                 result[role] = entry
         return result
-
-    def get_batch_stats(self) -> dict:
-        return dict(self._batch_stats)
-
-    def get_stats(self) -> dict:
-        return dict(self.stats)
 
     # ---------- статистика и манифест ----------
 
