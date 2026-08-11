@@ -153,7 +153,11 @@ class StateMachine:
     def get_snapshot(self) -> StateSnapshot:
         """Return an atomic UI-safe snapshot."""
         with self._lock:
-            return StateSnapshot(state=self._state.value, exit_requested=self._exit_requested, force_exit=self._force_exit)
+            return StateSnapshot(
+                state=self._state.value,
+                exit_requested=self._exit_requested,
+                force_exit=self._force_exit,
+            )
 
     def _apply(self, action: Action) -> bool:
         callback_args: tuple[State, State, Action] | None = None

@@ -27,7 +27,11 @@ class IConveyor(Protocol):
     def move_step(self) -> None:
         """Start one configured conveyor movement."""
 
-    def wait_stop(self, timeout: float = 15.0, progress_callback: Callable[[dict[str, int | str | None]], None] | None = None) -> None:
+    def wait_stop(
+        self,
+        timeout: float = 15.0,
+        progress_callback: Callable[[dict[str, int | str | None]], None] | None = None,
+    ) -> None:
         """Wait until the controller confirms stopped motion."""
 
     def emergency_stop(self) -> None:

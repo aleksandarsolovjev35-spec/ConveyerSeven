@@ -1,11 +1,14 @@
 import importlib.util
 import math
 import os
-import platform
 import time
 
 import numpy as np
-from ultralytics import YOLO
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
 from core.app_logging import get_logger
 from core.exceptions import VisionModelError
@@ -16,12 +19,11 @@ log = get_logger("vision.cluster")
 INFERENCE_IMGSZ = 1280
 
 
-def detect_accelerator() -> str:
-    """Select the fastest locally available Ultralytics-compatible backend.
+def get_optimal_device() -> str:
+    """Select the optimal execution backend (cuda -> mps -> cpu).
 
     The selection is deterministic and conservative: CUDA is preferred over
-    Apple MPS, then OpenVINO.  No import of a heavyweight optional runtime is
-    attempted when its package is absent.
+    Apple MPS, then OpenVINO, falling back to CPU.
     """
     try:
         import torch
@@ -37,6 +39,9 @@ def detect_accelerator() -> str:
         return "openvino"
     return "cpu"
 
+
+detect_accelerator = get_optimal_device
+
 AGGRESSIVE_IOU_ROLES = {"TOP", "SPIDER_LEFT", "SPIDER_RIGHT"}
 DEFAULT_IOU    = 0.45
 AGGRESSIVE_IOU = 0.10
@@ -46,13 +51,19 @@ class VisionCluster:
 
     def __init__(self, device: str = "auto", verbose: bool = True):
         """Load configured models onto an explicit or automatically selected device."""
-        self.device = detect_accelerator() if device == "auto" else device
+        self.device = get_optimal_device() if device == "auto" else device
         self.verbose = verbose
         self.models = {}
         self.last_health = []
         self._load_all_models()
 
+    def process(self, frames: dict) -> dict:
+        """Alias for process_all to support pipeline workers."""
+        return self.process_all(frames)
+
     def _load_all_models(self):
+        if YOLO is None:
+            raise VisionModelError("ultralytics package is required to load models")
         for model_list in MODEL_GROUPS.values():
             for entry in model_list:
                 path = entry["path"]

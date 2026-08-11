@@ -2,9 +2,9 @@ import asyncio
 import hmac
 
 from fastapi import Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from core.config_app import get_settings
-from fastapi.responses import JSONResponse
 
 
 def setup_api_routes(app, server):

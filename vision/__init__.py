@@ -8,6 +8,8 @@ __all__ = [
     "MODEL_GROUPS",
     "ROLE_TO_GROUP",
     "LiveMonitor",
+    "FramePipeline",
+    "get_optimal_device",
 ]
 
 
@@ -27,6 +29,12 @@ def __getattr__(name):
     if name == "VisionCluster":
         from vision.vision_cluster import VisionCluster
         return VisionCluster
+    if name == "FramePipeline":
+        from vision.frame_pipeline import FramePipeline
+        return FramePipeline
+    if name == "get_optimal_device":
+        from vision.vision_cluster import get_optimal_device
+        return get_optimal_device
     if name in {"MODEL_GROUPS", "ROLE_TO_GROUP"}:
         from vision.model_config import MODEL_GROUPS, ROLE_TO_GROUP
         return {"MODEL_GROUPS": MODEL_GROUPS, "ROLE_TO_GROUP": ROLE_TO_GROUP}[name]
