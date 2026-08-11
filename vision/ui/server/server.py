@@ -71,8 +71,8 @@ except ImportError:
 
 class UIServer:
 
-    JPEG_QUALITY        = 85
-    STREAM_JPEG_QUALITY = 80
+    JPEG_QUALITY        = 70
+    STREAM_JPEG_QUALITY = 60
     PREVIEW_MAX_WIDTH   = 320
     BOOT_STEPS          = BOOT_STEPS
 
@@ -317,22 +317,6 @@ class UIServer:
                 if stream_overlay_changed:
                     self._latest_stream_jpeg.clear()
                 self._cache_version += 1
-
-    def clear_evidence(self):
-        """Убрать общий набор разметки (rules/detections), сохранив кадры
-        текущей стадии.
-
-        Вызывается при FAULT/остановке: разметка посчитана по статичному
-        кадру и на движущемся live-изображении указывала бы мимо детали.
-        Кадры стадии (run_frames) сохраняются, чтобы оператор мог
-        посмотреть последний анализ.
-        """
-        with self.lock:
-            self._latest_stream_jpeg.clear()
-            self._jpeg_cache.clear()
-            self.vision_results = {}
-            self.rule_results = []
-            self._cache_version += 1
 
     def _apply_custom_threshold_labels(self, line_status: dict) -> None:
         """Подставить ручные названия порогов (_label.*) в анализ кадра.
@@ -877,13 +861,9 @@ class UIServer:
                 ):
                     frame = self.run_frames[run_index][role]
             # Для роли вне текущего набора стадии показываем последний
-            # доступный live-кадр. Разметка стадии при этом НЕ применяется:
-            # она посчитана по кадрам стадии, и на живом кадре (например,
-            # после того как роль уже вернулась в live-поток) указывала бы
-            # мимо детали.
+            # доступный live-кадр.
             if frame is None:
                 frame = self.frames.get(role)
-                run_index = None
             if frame is None:
                 return None
             version_before = self._cache_version

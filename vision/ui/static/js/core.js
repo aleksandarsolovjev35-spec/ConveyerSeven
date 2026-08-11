@@ -78,7 +78,6 @@ const state = {
     lastSeenVersion:     -1,
     currentVersion:      0,
     frameVersions:       {},
-    frameRuns:           0,   // число наборов кадров текущей стадии (0 или 1)
     bootDone:            false,
     bootDoneAt:          0,
     cameraHovered:       false,
