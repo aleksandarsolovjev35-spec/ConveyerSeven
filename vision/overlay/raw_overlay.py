@@ -29,9 +29,7 @@ CLASS_COLORS = {
 
 DEFAULT_COLOR = (180, 180, 180)
 
-# 2px, а не 1px: тонкие линии исчезают при JPEG-кодировании кадров
-# (chroma subsampling), из-за чего детекции «иногда не рисуются».
-LINE_THIN  = 2
+LINE_THIN  = 1
 MASK_ALPHA = 0.15
 
 

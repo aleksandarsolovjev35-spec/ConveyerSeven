@@ -923,10 +923,6 @@ class ProductionCycle:
                     # STOP on an already empty line must not advance Conveyor.
                     if self.sm.state == State.STOPPING and not self.parts:
                         self.sm.notify_line_empty()
-                        # Геометрия последнего анализа на live-кадрах после
-                        # остановки «зависала» бы на экране и показывала не
-                        # ту деталь: убираем разметку вместе с кадрами стадии.
-                        self.live.clear_overlays()
                         self._refresh_monitor()
                         if self.sm.exit_requested:
                             log.info("[EXIT] Line empty -> exit.")
@@ -940,9 +936,6 @@ class ProductionCycle:
                         and not self.parts
                     ):
                         self.sm.notify_line_empty()
-                        # Линия опустела: разметка прошлого шага на живом
-                        # изображении больше не соответствует детали.
-                        self.live.clear_overlays()
                         self._refresh_monitor()
 
                         if self.sm.exit_requested:
@@ -1026,10 +1019,6 @@ class ProductionCycle:
         self.stages.reset()
         self.live.reset_pause()
         self.live.stop()
-        # Разметка построена по статичному кадру; после FAULT live-поток
-        # остановлен, и «зависшая» на экране геометрия указывала бы мимо.
-        # Замороженные кадры стадии (run_frames) остаются для диагностики.
-        self.live.clear_evidence()
         self._fault_reason = reason
         slog.error(
             "line_fault",
@@ -1341,17 +1330,6 @@ class ProductionCycle:
                 # Если деталь на входе не обнаружена, убираем подсветку
                 if input_result.is_empty_tray and self.OFFSET_INPUT in active_positions:
                     active_positions.remove(self.OFFSET_INPUT)
-                # Публикуем разметку INPUT сразу, не дожидаясь конца SPIDER:
-                # оператор должен видеть геометрию, как только она построена.
-                # run_frames при этом остаются кадрами стадии — live-поток их
-                # не перетирает.
-                input_run_frames = getattr(input_result, "run_frames", None)
-                input_run_rules = getattr(input_result, "run_rule_results", None)
-                if input_run_frames and input_run_rules:
-                    self._refresh_monitor(
-                        run_frames=[input_run_frames[-1]],
-                        run_rule_results=[input_run_rules[-1]],
-                    )
             self._check_motion_cancelled()
 
         spider_parts = [

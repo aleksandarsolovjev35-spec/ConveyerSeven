@@ -74,10 +74,6 @@ async function fetchStatus() {
         state.frameVersions = {...status.frame_versions};
     }
 
-    if (typeof status.frame_runs === 'number') {
-        state.frameRuns = status.frame_runs;
-    }
-
     if (typeof status.thresholds_revision === 'number') {
         if (state.thresholdsRevision !== null && status.thresholds_revision !== state.thresholdsRevision && typeof updateThresholdsPanel === 'function') {
             updateThresholdsPanel(true);
