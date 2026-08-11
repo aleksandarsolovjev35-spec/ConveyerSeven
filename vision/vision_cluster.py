@@ -1,5 +1,7 @@
+import importlib.util
 import math
 import os
+import platform
 import time
 
 import numpy as np
@@ -13,6 +15,28 @@ log = get_logger("vision.cluster")
 
 INFERENCE_IMGSZ = 1280
 
+
+def detect_accelerator() -> str:
+    """Select the fastest locally available Ultralytics-compatible backend.
+
+    The selection is deterministic and conservative: CUDA is preferred over
+    Apple MPS, then OpenVINO.  No import of a heavyweight optional runtime is
+    attempted when its package is absent.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+    except (ImportError, OSError, RuntimeError):
+        pass
+    if importlib.util.find_spec("openvino") is not None:
+        return "openvino"
+    return "cpu"
+
 AGGRESSIVE_IOU_ROLES = {"TOP", "SPIDER_LEFT", "SPIDER_RIGHT"}
 DEFAULT_IOU    = 0.45
 AGGRESSIVE_IOU = 0.10
@@ -20,8 +44,9 @@ AGGRESSIVE_IOU = 0.10
 
 class VisionCluster:
 
-    def __init__(self, device: str = "cpu", verbose: bool = True):
-        self.device = device
+    def __init__(self, device: str = "auto", verbose: bool = True):
+        """Load configured models onto an explicit or automatically selected device."""
+        self.device = detect_accelerator() if device == "auto" else device
         self.verbose = verbose
         self.models = {}
         self.last_health = []

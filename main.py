@@ -204,7 +204,7 @@ def _run_legacy_application(settings: AppSettings):
                 "models_load", "Загрузка моделей",
             )
             try:
-                vision = VisionCluster(device="cpu")
+                vision = VisionCluster(device="auto")
             except Exception as e:
                 monitor.boot_step_error(
                     "models_load",
