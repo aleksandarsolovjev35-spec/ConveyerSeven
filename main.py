@@ -864,9 +864,6 @@ def _make_idle_status(distributor) -> dict:
         "dist2_state":    "IDLE",
         "dist2_target":   "BAD",
         "last_distributor_action": "-",
-        "axis_position":     0,
-        "axis_max":          distributor.dist1_open_position,
-        "distributor_state": "IDLE",
         "process": {
             "phase": "IDLE",
             "label": "Система готова к пуску",

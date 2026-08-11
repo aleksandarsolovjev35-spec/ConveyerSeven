@@ -192,8 +192,18 @@ class ThresholdLoader:
                 mx = data[f"{role}.input_window_geometry_{axis}_px_max"]
                 if mn > mx:
                     raise ValueError(f"{role}: {axis}_px_min не может превышать {axis}_px_max")
-        if data.get("top_platform_overlap_expand_x_ratio", 1) <= 0 or data.get("top_platform_overlap_expand_y_ratio", 1) <= 0:
-            raise ValueError("top_platform_overlap_expand_*_ratio должны быть > 0")
+        for key, value in data.items():
+            if key.endswith("top_platform_overlap_expand_x_ratio") or key.endswith(
+                "top_platform_overlap_expand_y_ratio"
+            ):
+                try:
+                    numeric = float(value)
+                except Exception:
+                    continue
+                if numeric <= 0:
+                    raise ValueError(
+                        f"{key} должен быть > 0 (получено {value})"
+                    )
 
         disabled = data.get("disabled_rules", [])
         if not isinstance(disabled, list) or any(not isinstance(x, str) for x in disabled):

@@ -3,10 +3,10 @@ CATEGORY_BAD     = "BAD"
 CATEGORY_CLEANUP = "CLEANUP"
 CATEGORY_UNKNOWN = "UNKNOWN"
 
-# Дефекты которые приводят на CLEANUP (если других дефектов нет)
+# Дефекты которые приводят на CLEANUP (если других дефектов нет).
+# В текущих весах модель TOP/glass отдаёт только класс "glass".
 CLEANUP_DEFECTS = {
     "glass",
-    "glass_glare",
 }
 
 
