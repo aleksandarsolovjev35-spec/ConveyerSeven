@@ -337,15 +337,6 @@ def _closest_metric(final_results):
     return (best[1], best[2]) if best else None
 
 
-def select_picture_run(final_results) -> int | None:
-    """Выбрать прогон для картинки с разметкой (при одном прогоне — 0).
-
-    Возвращает ``None``, если ни у одного правила нет числовых порогов
-    (тогда вызывающий использует единственный прогон).
-    """
-    return 0 if _closest_metric(final_results) is not None else None
-
-
 def describe_picture_run(final_results, run_index: int) -> str:
     """Почему для картинки выбран этот прогон."""
     if run_index != 0:
