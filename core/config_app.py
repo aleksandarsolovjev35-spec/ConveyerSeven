@@ -27,6 +27,8 @@ class AppSettings(BaseSettings):
         case_sensitive=False,
     )
 
+    simulation_mode: bool = False
+    simulation_video_file: Path | None = None
     serial_baud: PositiveInt = 115_200
     serial_port: str | None = None
     camera_warmup_seconds: float = Field(default=2.5, ge=0.5, le=10.0)

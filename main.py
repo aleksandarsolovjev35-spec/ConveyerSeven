@@ -18,6 +18,7 @@ from core.event_bus import EventBus
 from core.production_cycle import ProductionCycle
 from domain.threshold_loader import ThresholdLoader
 from hardware.axis import Axis
+from hardware.mock_hardware import MockCamera, MockConveyor, MockDistributor, MockSerialTransport
 from hardware.conveyor import Conveyor
 from hardware.distributor import Distributor
 from hardware.jog_controller import JogController
@@ -28,6 +29,7 @@ from inspection.inspector import Inspector
 from inspection.part_archive import PartArchive
 from vision.camera_calibration_console import launch_camera_calibrator
 from vision.camera_manager import CameraManager
+from vision.mock_vision import MockVisionCluster
 from vision.ui import LiveMonitor
 from vision.vision_cluster import VisionCluster
 
@@ -151,7 +153,10 @@ def _run_legacy_application(settings: AppSettings):
                 "cameras", "Открытие камер",
             )
             try:
-                cameras = CameraManager()
+                cameras = (
+                    MockCamera(settings.simulation_video_file)
+                    if settings.simulation_mode else CameraManager()
+                )
             except Exception as e:
                 print(
                     f"[CAMERA] Ошибка инициализации: "
@@ -201,7 +206,7 @@ def _run_legacy_application(settings: AppSettings):
                 "models_load", "Загрузка моделей",
             )
             try:
-                vision = VisionCluster(device="auto")
+                vision = MockVisionCluster() if settings.simulation_mode else VisionCluster(device="auto")
             except Exception as e:
                 monitor.boot_step_error(
                     "models_load",
@@ -365,9 +370,10 @@ def _run_legacy_application(settings: AppSettings):
             preferred_port = settings.serial_port
 
             try:
-                found_port, port_message = find_controller(
-                    baudrate=serial_baud,
-                    preferred_port=preferred_port,
+                found_port, port_message = (
+                    ("SIMULATION", "Симулятор контроллера")
+                    if settings.simulation_mode
+                    else find_controller(baudrate=serial_baud, preferred_port=preferred_port)
                 )
 
                 if found_port is None:
@@ -377,8 +383,9 @@ def _run_legacy_application(settings: AppSettings):
                     _report_startup_failure()
                     return
 
-                transport = SerialTransport(
-                    port=found_port, baudrate=serial_baud,
+                transport = (
+                    MockSerialTransport() if settings.simulation_mode
+                    else SerialTransport(port=found_port, baudrate=serial_baud)
                 )
                 # Start from a stopped controller before any configuration.
                 transport.send("G1")
@@ -421,60 +428,65 @@ def _run_legacy_application(settings: AppSettings):
                 "hardware", "Инициализация оборудования",
             )
             try:
-                conveyor = Conveyor(
-                    transport,
-                    speed=calib["conveyor_speed"],
-                    accel=calib["conveyor_accel"],
-                    steps_per_division=calib["normal_steps"],
-                    divisions_per_movement=2,
-                )
-                dist1_axis = Axis(
-                    transport,
-                    axis_id=0,
-                    minimum=0,
-                    maximum=calib["dist1_open_position"],
-                    speed=calib["axis_speed"],
-                    accel=calib["axis_accel"],
-                )
-                dist2_axis = Axis(
-                    transport,
-                    axis_id=1,
-                    minimum=0,
-                    maximum=max(
-                        calib["dist2_bad_position"],
-                        calib["dist2_cleanup_position"],
-                    ),
-                    speed=calib["axis_speed"],
-                    accel=calib["axis_accel"],
-                )
-                distributor = Distributor(
-                    dist1_axis=dist1_axis,
-                    dist2_axis=dist2_axis,
-                    dist1_open_position=calib[
-                        "dist1_open_position"
-                    ],
-                    dist2_bad_position=calib[
-                        "dist2_bad_position"
-                    ],
-                    dist2_cleanup_position=calib[
-                        "dist2_cleanup_position"
-                    ],
-                    drop_time=calib["drop_time"],
-                )
-                if (
-                    distributor.dist1_open_position != calib["dist1_open_position"]
-                    or distributor.dist2_bad_position != calib["dist2_bad_position"]
-                    or distributor.dist2_cleanup_position
-                    != calib["dist2_cleanup_position"]
-                ):
-                    raise RuntimeError(
-                        "Distributor endpoints do not match calibration.json"
+                if settings.simulation_mode:
+                    conveyor = MockConveyor(transport)
+                    distributor = MockDistributor()
+                    jog = None
+                else:
+                    conveyor = Conveyor(
+                        transport,
+                        speed=calib["conveyor_speed"],
+                        accel=calib["conveyor_accel"],
+                        steps_per_division=calib["normal_steps"],
+                        divisions_per_movement=2,
                     )
-                distributor.cancel_check = shutdown_requested.is_set
-                jog = JogController(
-                    transport=transport,
-                    calibration=calib,
-                )
+                    dist1_axis = Axis(
+                        transport,
+                        axis_id=0,
+                        minimum=0,
+                        maximum=calib["dist1_open_position"],
+                        speed=calib["axis_speed"],
+                        accel=calib["axis_accel"],
+                    )
+                    dist2_axis = Axis(
+                        transport,
+                        axis_id=1,
+                        minimum=0,
+                        maximum=max(
+                            calib["dist2_bad_position"],
+                            calib["dist2_cleanup_position"],
+                        ),
+                        speed=calib["axis_speed"],
+                        accel=calib["axis_accel"],
+                    )
+                    distributor = Distributor(
+                        dist1_axis=dist1_axis,
+                        dist2_axis=dist2_axis,
+                        dist1_open_position=calib[
+                            "dist1_open_position"
+                        ],
+                        dist2_bad_position=calib[
+                            "dist2_bad_position"
+                        ],
+                        dist2_cleanup_position=calib[
+                            "dist2_cleanup_position"
+                        ],
+                        drop_time=calib["drop_time"],
+                    )
+                    if (
+                        distributor.dist1_open_position != calib["dist1_open_position"]
+                        or distributor.dist2_bad_position != calib["dist2_bad_position"]
+                        or distributor.dist2_cleanup_position
+                        != calib["dist2_cleanup_position"]
+                    ):
+                        raise RuntimeError(
+                            "Distributor endpoints do not match calibration.json"
+                        )
+                    distributor.cancel_check = shutdown_requested.is_set
+                    jog = JogController(
+                        transport=transport,
+                        calibration=calib,
+                    )
             except Exception as e:
                 monitor.boot_step_error(
                     "hardware",
