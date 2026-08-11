@@ -1,16 +1,11 @@
-import argparse
 import json
 import os
 import signal
 import threading
 import time
 import traceback
-import webbrowser
 
-try:
-    import webview
-except ImportError:  # simulation / headless / Linux without GTK
-    webview = None  # type: ignore[assignment]
+import webview
 
 from config import load_archive_config, load_calibration
 from core.app_logging import (
@@ -313,39 +308,11 @@ def _make_idle_status(distributor) -> dict:
     }
 
 
-def _parse_cli_args(argv=None):
-    parser = argparse.ArgumentParser(description="ConveyerSeven — запуск линии")
-    parser.add_argument(
-        "--simulation",
-        action="store_true",
-        help="Принудительно включить симуляцию без железа/камер/весов",
-    )
-    parser.add_argument(
-        "--no-webview",
-        action="store_true",
-        help="Не открывать pywebview-окно, только HTTP-сервер (для Linux/Docker/Arena)",
-    )
-    parser.add_argument("--host", default=None, help="Хост UI-сервера (по умолчанию 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=None, help="Порт UI-сервера (по умолчанию 8000)")
-    parser.add_argument("--open-browser", action="store_true", help="Открыть браузер вместо webview")
-    return parser.parse_args(argv)
-
-
 class ConveyerApp:
     """Object-oriented composition root and lifecycle owner."""
 
-    def __init__(self, cli_args=None):
-        if cli_args is not None and getattr(cli_args, "simulation", False):
-            os.environ["SIMULATION_MODE"] = "true"
-            # Сбросить кэш настроек, чтобы SIMULATION_MODE применился
-            import core.config_app as _cfg
-            _cfg._settings = None
+    def __init__(self):
         self.settings = get_settings()
-        # CLI-переопределения хоста/порта применяются к LiveMonitor, а не к глобальным настройкам
-        self._cli_host = getattr(cli_args, "host", None)
-        self._cli_port = getattr(cli_args, "port", None)
-        self._cli_no_webview = bool(getattr(cli_args, "no_webview", False))
-        self._cli_open_browser = bool(getattr(cli_args, "open_browser", False))
         self.event_bus = EventBus()
         self.database = DatabaseManager(self.settings.database_file)
         # Смены, оставшиеся открытыми после обесточивания станка, закрываются
@@ -356,9 +323,7 @@ class ConveyerApp:
         self.recorder = PartRecorder(
             database=self.database, event_bus=self.event_bus,
         )
-        host = self._cli_host or "127.0.0.1"
-        port = self._cli_port or 8000
-        self.monitor = LiveMonitor(event_bus=self.event_bus, fullscreen=True, host=host, port=port)
+        self.monitor = LiveMonitor(event_bus=self.event_bus, fullscreen=True)
 
         # Слоты состояния
         self.cameras = None
@@ -600,9 +565,6 @@ class ConveyerApp:
         self.distributor.initialize()
         self._ensure_initialization_active()
 
-        # В симуляции даём watchDog большой запас (review 2с + trace 0.5 + settle 0.5 + pipeline),
-        # в проде — консервативные 3с (хватает на все паузы, но всё ещё ловит зависание).
-        wd_timeout = 8.0 if self.settings.simulation_mode else 3.0
         self.cycle = ProductionCycle(
             conveyor=self.conveyor,
             cameras=self.cameras,
@@ -619,7 +581,6 @@ class ConveyerApp:
             settle_seconds=self.calibration["settle_time"],
             stage_trace_seconds=self.calibration["stage_trace_time"],
             review_seconds=self.calibration["review_time"],
-            watchdog_timeout=wd_timeout,
         )
         self.event_bus.subscribe("ui:start_requested", self.cycle.request_start)
         self.event_bus.subscribe("ui:stop_requested", self.cycle.request_stop)
@@ -848,24 +809,23 @@ class ConveyerApp:
         install_excepthooks()
         capture_prints()
         log.info(
-            "=== Запуск ConveyerSeven; журнал: %s; JSON: %s ===; simulation=%s; webview=%s",
+            "=== Запуск ConveyerSeven; журнал: %s; JSON: %s ===",
             log_file,
             json_log_file,
-            self.settings.simulation_mode,
-            bool(webview) and not self._cli_no_webview,
         )
 
         try:
-            # В симуляции camera_mapping.json не нужен — используем MockCamera
-            if not self.settings.simulation_mode and not os.path.exists(
-                str(self.settings.camera_mapping_file)
+            if (
+                not os.path.exists(str(self.settings.camera_mapping_file))
+                and not launch_camera_calibrator(
+                    str(self.settings.camera_mapping_file)
+                )
             ):
-                if not launch_camera_calibrator(str(self.settings.camera_mapping_file)):
-                    print(
-                        "[STARTUP] camera_mapping.json не создан; "
-                        "основное приложение не запускается"
-                    )
-                    return
+                print(
+                    "[STARTUP] camera_mapping.json не создан; "
+                    "основное приложение не запускается"
+                )
+                return
 
             self.monitor.server.start_server(
                 host=self.monitor.host,
@@ -873,11 +833,7 @@ class ConveyerApp:
             )
             # EXIT должен работать даже при ошибке до создания ProductionCycle.
             self.event_bus.subscribe("ui:exit_requested", self.handle_exit_request)
-            try:
-                signal.signal(signal.SIGINT, self._handle_signal)
-            except ValueError:
-                # В потоках/Arena нельзя ловить SIGINT — игнорируем
-                pass
+            signal.signal(signal.SIGINT, self._handle_signal)
 
             self.init_thread = threading.Thread(
                 target=self._boot_sequence,
@@ -886,46 +842,15 @@ class ConveyerApp:
             self.init_thread.start()
             self._print_console_banner()
 
-            url = f"http://{self.monitor.host}:{self.monitor.port}/"
-            use_webview = bool(webview) and not self._cli_no_webview
-            if use_webview:
-                # Попытка открыть нативное окно; при ошибке падаем в headless
-                try:
-                    window = webview.create_window(
-                        title=self.monitor.window_name,
-                        url=url,
-                        fullscreen=self.monitor.fullscreen,
-                        background_color="#0b0f13",
-                        js_api=self.monitor.webview_api,
-                    )
-                    self.monitor._webview_window = window
-                    webview.start()
-                except Exception as exc:
-                    print(f"[UI] webview не запустился ({exc}); переход в headless-режим")
-                    use_webview = False
-
-            if not use_webview:
-                if self._cli_open_browser:
-                    try:
-                        webbrowser.open(url)
-                    except Exception:
-                        pass
-                print(f"[UI] Открой в браузере: {url}")
-                print("[UI] Нажми Ctrl+C для выхода")
-                # В headless-режиме ждём сигнала завершения
-                try:
-                    while not self.shutdown_requested.is_set():
-                        time.sleep(0.5)
-                except KeyboardInterrupt:
-                    print("\n[UI] KeyboardInterrupt -> выход")
-                    self.handle_exit_request()
-                    # Даём циклу штатно дренажировать линию
-                    time.sleep(0.5)
-                    while self.cycle_thread and self.cycle_thread.is_alive() and not self.shutdown_requested.is_set():
-                        time.sleep(0.2)
-                    # Если цикл уже просит force — не ждём вечно
-                    if self.cycle and self.cycle.force_exit_requested:
-                        pass
+            window = webview.create_window(
+                title=self.monitor.window_name,
+                url=f"http://{self.monitor.host}:{self.monitor.port}/",
+                fullscreen=self.monitor.fullscreen,
+                background_color="#0b0f13",
+                js_api=self.monitor.webview_api,
+            )
+            self.monitor._webview_window = window
+            webview.start()
 
             print("[UI] Окно закрыто, завершение...")
             if self.cycle and not self.cycle.force_exit_requested:
@@ -1043,10 +968,4 @@ class ConveyerApp:
             f"[SHUTDOWN] Готово за "
             f"{time.monotonic() - shutdown_started:.2f} с."
         )
-
-
-if __name__ == "__main__":
-    args = _parse_cli_args()
-    app = ConveyerApp(cli_args=args)
-    app.run()
 
