@@ -14,6 +14,7 @@ from core.app_logging import (
 )
 from core.config_app import AppSettings
 from core.decision_engine import DecisionEngine
+from core.event_bus import EventBus
 from core.production_cycle import ProductionCycle
 from domain.threshold_loader import ThresholdLoader
 from hardware.axis import Axis
@@ -57,12 +58,8 @@ def _run_legacy_application(settings: AppSettings):
         )
         return
 
-    monitor = LiveMonitor(
-        start_callback=None,
-        stop_callback=None,
-        exit_callback=None,
-        fullscreen=True,
-    )
+    event_bus = EventBus()
+    monitor = LiveMonitor(event_bus=event_bus, fullscreen=True)
 
     monitor.server.start_server(
         host=monitor.host,
@@ -134,7 +131,7 @@ def _run_legacy_application(settings: AppSettings):
         print("[INIT] Startup failed; waiting for operator to close the UI")
 
     # EXIT должен работать даже при ошибке до создания ProductionCycle.
-    monitor.exit_callback = handle_exit_request
+    event_bus.subscribe("ui:exit_requested", handle_exit_request)
 
     def _ensure_initialization_active():
         if shutdown_requested.is_set():
@@ -288,7 +285,7 @@ def _run_legacy_application(settings: AppSettings):
                     )
                     return fresh
 
-                monitor.thresholds_reload_callback = _thresholds_reload_from_file
+                event_bus.subscribe("ui:thresholds_reload_requested", _thresholds_reload_from_file)
 
                 def _thresholds_apply(role, values, labels):
                     if cycle is None or inspector is None:
@@ -346,7 +343,7 @@ def _run_legacy_application(settings: AppSettings):
                     )
                     return updated
 
-                monitor.thresholds_apply_callback = _thresholds_apply
+                event_bus.subscribe("ui:thresholds_apply_requested", _thresholds_apply)
             except Exception as e:
                 monitor.boot_step_error(
                     "inspection",
@@ -512,35 +509,21 @@ def _run_legacy_application(settings: AppSettings):
                     stage_trace_seconds=calib["stage_trace_time"],
                     review_seconds=calib["review_time"],
                 )
-                monitor.start_callback  = cycle.request_start
-                monitor.stop_callback   = cycle.request_stop
-                monitor.pause_callback  = cycle.request_pause
-                monitor.resume_callback = cycle.request_resume
-                monitor.exit_callback   = handle_exit_request
-                monitor.distributor_diagnostic_callback = (
-                    cycle.distributor_diagnostic
-                )
-                monitor.camera_diagnostic_callback = (
-                    cycle.diagnostic_check_cameras
-                )
-                monitor.vision_rule_diagnostic_callback = (
-                    cycle.diagnostic_check_vision_rules
-                )
-                monitor.selected_model_analysis_callback = (
-                    cycle.diagnostic_analyze_selected_camera
-                )
-                monitor.selected_model_release_callback = (
-                    cycle.diagnostic_release_selected_camera
-                )
-                monitor.active_camera_callback = (
-                    lambda _role: cycle._refresh_monitor()
-                )
-
-                monitor.jog_enter_callback = cycle.enter_jog
-                monitor.jog_exit_callback = cycle.exit_jog
-                monitor.jog_hold_start_callback = cycle.jog_hold_start
-                monitor.jog_hold_heartbeat_callback = cycle.jog_hold_heartbeat
-                monitor.jog_hold_release_callback = cycle.jog_hold_release
+                event_bus.subscribe("ui:start_requested", cycle.request_start)
+                event_bus.subscribe("ui:stop_requested", cycle.request_stop)
+                event_bus.subscribe("ui:pause_requested", cycle.request_pause)
+                event_bus.subscribe("ui:resume_requested", cycle.request_resume)
+                event_bus.subscribe("ui:distributor_diagnostic_requested", cycle.distributor_diagnostic)
+                event_bus.subscribe("ui:camera_diagnostic_requested", cycle.diagnostic_check_cameras)
+                event_bus.subscribe("ui:vision_rule_diagnostic_requested", cycle.diagnostic_check_vision_rules)
+                event_bus.subscribe("ui:selected_model_analysis_requested", cycle.diagnostic_analyze_selected_camera)
+                event_bus.subscribe("ui:selected_model_release_requested", cycle.diagnostic_release_selected_camera)
+                event_bus.subscribe("ui:active_camera_changed", lambda _role: cycle._refresh_monitor())
+                event_bus.subscribe("ui:jog_enter_requested", cycle.enter_jog)
+                event_bus.subscribe("ui:jog_exit_requested", cycle.exit_jog)
+                event_bus.subscribe("ui:jog_hold_start_requested", cycle.jog_hold_start)
+                event_bus.subscribe("ui:jog_hold_heartbeat", cycle.jog_hold_heartbeat)
+                event_bus.subscribe("ui:jog_hold_release_requested", cycle.jog_hold_release)
             except Exception as e:
                 monitor.boot_step_error(
                     "cycle",

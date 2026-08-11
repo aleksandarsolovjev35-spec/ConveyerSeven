@@ -7,6 +7,7 @@ from core.live_preview import LivePreview
 from core.rule_report import build_rule_report_row, build_rule_report_rows
 from core.state_machine import State, StateMachine
 from core.watchdog import ProductionWatchdog
+from core.ui_schemas import UIStatusSchema
 from core.step_stages import (
     STAGE_SETTLE_SECONDS,
     STAGE_TRACE_SECONDS,
@@ -2108,7 +2109,7 @@ class ProductionCycle:
                 "error":       None,
             }
 
-        return status
+        return UIStatusSchema.from_mapping(status)
 
     def _refresh_monitor(
         self,
