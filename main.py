@@ -13,6 +13,7 @@ from core.app_logging import (
     setup_logging,
 )
 from core.config_app import AppSettings
+from core.database import Database
 from core.decision_engine import DecisionEngine
 from core.event_bus import EventBus
 from core.production_cycle import ProductionCycle
@@ -47,9 +48,11 @@ def _run_legacy_application(settings: AppSettings):
     # Журнал поднимается до любой инициализации: ошибки запуска тоже
     # должны остаться на диске, а не только на закрывшемся splash-экране.
     log_file = setup_logging()
+    json_log_file = configure_structlog(settings.log_dir)
+    database = Database(settings.database_file)
     install_excepthooks()
     capture_prints()
-    log.info("=== Запуск ConveyerSeven; журнал: %s ===", log_file)
+    log.info("=== Запуск ConveyerSeven; журнал: %s; JSON: %s ===", log_file, json_log_file)
 
     if not os.path.exists(str(settings.camera_mapping_file)) and not launch_camera_calibrator(
         str(settings.camera_mapping_file)
@@ -337,6 +340,10 @@ def _run_legacy_application(settings: AppSettings):
                             full_labels[full_key] = str(name).strip()
                     ThresholdLoader.save_file(
                         str(settings.thresholds_file), updated, labels=full_labels,
+                    )
+                    database.audit(
+                        action="thresholds.updated",
+                        payload_json=str({"role": role, "keys": sorted(changed)}),
                     )
                     # Правила пересоздаются: Inspector берёт decision каждый
                     # раз заново, поэтому замена объекта применяется сразу.
