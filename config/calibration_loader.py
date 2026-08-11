@@ -12,7 +12,8 @@ DEFAULTS = {
     "axis_speed":             300,
     "axis_accel":             100,
     "micro_steps":            500,
-    "jog_hold_steps":         1_000_000,
+    # 2 деления = 38096 шагов: хватит для центровки, ограничивает пробег ~5 с.
+    "jog_hold_steps":         38_096,
     "normal_steps":           19048,
 }
 

@@ -59,17 +59,26 @@ class Distributor:
 
     def initialize(self):
         """Установить физический ноль обеих осей."""
-        self._check_cancelled()
-        self.dist1_state, self.dist2_state = "HOMING", "WAITING"
-        self._notify()
-        self.dist1.home(); self._wait_dist1(timeout=30.0); self._check_cancelled()
-        self.dist1.verify_homed(); self._dist1_position = 0
-        self.dist1_state, self.dist2_state = "GOOD", "HOMING"
-        self._notify()
-        self.dist2.home(); self._wait_dist2(timeout=30.0); self._check_cancelled()
-        self.dist2.verify_homed(); self._dist2_position = 0
-        self.dist2_state, self.dist2_target, self.last_action = "IDLE", CATEGORY_BAD, "HOMED"
-        self._notify()
+        try:
+            self._check_cancelled()
+            self.dist1_state, self.dist2_state = "HOMING", "WAITING"
+            self._notify()
+            self.dist1.home(); self._wait_dist1(timeout=30.0); self._check_cancelled()
+            self.dist1.verify_homed(); self._dist1_position = 0
+            self.dist1_state, self.dist2_state = "GOOD", "HOMING"
+            self._notify()
+            self.dist2.home(); self._wait_dist2(timeout=30.0); self._check_cancelled()
+            self.dist2.verify_homed(); self._dist2_position = 0
+            self.dist2_state, self.dist2_target, self.last_action = "IDLE", CATEGORY_BAD, "HOMED"
+            self._notify()
+        except Exception:
+            # Прошивка ищет концевик без ограничения пробега: если хост
+            # сдаётся по таймауту, ось продолжила бы движение к механическому
+            # упору. Глушим обе оси до выброса ошибки наверх.
+            try:
+                self.emergency_stop()
+            finally:
+                raise
 
     def park_production(self):
         """Перед START выставить безопасный GOOD=0 и канал BAD=0."""

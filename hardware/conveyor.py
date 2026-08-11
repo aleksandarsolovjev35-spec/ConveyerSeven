@@ -2,6 +2,13 @@ import re
 import time
 
 
+# Время, за которое ход должен проявиться в ответах контроллера. Если за это
+# окно все опросы показывают чистую остановку без единого признака движения,
+# команда G3 не была выполнена (потеряна на линии). Повторять физический шаг
+# нельзя — соответствие деталь/позиция уже неизвестно, поэтому это FAULT.
+MOTION_EVIDENCE_TIMEOUT = 2.5
+
+
 class Conveyor:
     """
     Управление конвейерной лентой.
@@ -17,6 +24,7 @@ class Conveyor:
         divisions_per_movement: int = 2,
     ):
         self.transport = transport
+        self._motion_started_at: float = 0.0
         if steps_per_division <= 0 or divisions_per_movement <= 0:
             raise ValueError("Conveyor geometry must be positive")
         self._set_params(
@@ -28,14 +36,22 @@ class Conveyor:
 
     def move_step(self):
         """Один шаг конвейера."""
+        self._motion_started_at = time.time()
         self.transport.send("G3")
         time.sleep(0.4)
 
     def wait_stop(self, timeout: float = 15.0, progress_callback=None):
-        """Ждать остановки и публиковать фактический I2 status."""
+        """Ждать остановки и публиковать фактический I2 status.
+
+        Остановка принимается только по свидетельствам контроллера: хотя бы
+        один опрос обязан показать реальный ход (MOV=1 / POS≠0 / TGT≠0).
+        Иначе «ход завершён» неотличим от «команда G3 не дошла».
+        """
         start = time.time()
         data = ""
         status = ""
+        motion_seen = False
+        motion_started_at = self._motion_started_at or start
 
         while True:
             data = self.transport.query("I1", delay=0.1)
@@ -45,9 +61,36 @@ class Conveyor:
             if progress_callback is not None:
                 progress_callback(parsed_status)
 
+            if (
+                stopped is False
+                or parsed_status.get("mov") == 1
+                or (parsed_status.get("pos") or 0) != 0
+                or (parsed_status.get("tgt") or 0) != 0
+            ):
+                motion_seen = True
+
+            # lastErr в прошивке липкий (команды сброса нет): ненулевое
+            # значение — аппаратное событие, а не повод молча ждать таймаут.
+            err_code = parsed_status.get("lasterr")
+            if err_code not in (None, 0):
+                raise RuntimeError(
+                    f"Контроллер зафиксировал ошибку lastErr={err_code} "
+                    f"(I2={status!r}); прошивка не сбрасывает её программно — "
+                    "требуется перезапуск контроллера"
+                )
+
             if stopped is True and self._strict_stop_confirmed(status):
-                time.sleep(0.05)
-                return
+                if motion_seen:
+                    time.sleep(0.05)
+                    self._motion_started_at = 0.0
+                    return
+                if time.time() - motion_started_at > MOTION_EVIDENCE_TIMEOUT:
+                    raise RuntimeError(
+                        "Контроллер сообщает остановку без признаков хода: "
+                        "команда G3 не выполнена — логические позиции деталей "
+                        "не соответствуют механике "
+                        f"(I1={data!r}, I2={status!r})"
+                    )
 
             if time.time() - start > timeout:
                 raise TimeoutError(
@@ -72,6 +115,13 @@ class Conveyor:
         self.transport.send(f"G4 S{accel}")
         self.transport.send(f"G7 S{steps_per_division}")
         self.transport.send(f"G6 S{divisions_per_movement}")
+        # Фиксируем протокол остановки явно, а не дефолтами прошивки:
+        # автопауза-стоп после хода нужна (G12 S1), а дефолтная межходовая
+        # пауза 2000 мс — нет (G9 S0). Иначе WAIT=1 удерживался бы ~2 с после
+        # каждого хода, и _strict_stop_confirmed ждал бы это окно на каждом
+        # шаге линии.
+        self.transport.send("G12 S1")
+        self.transport.send("G9 S0")
         # Сохраняем параметры: они читаются production-циклом
         # (_on_conveyor_progress) для расчёта длительности движения в UI.
         self.speed = int(speed)
