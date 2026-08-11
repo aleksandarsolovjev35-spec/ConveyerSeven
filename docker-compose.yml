@@ -1,0 +1,31 @@
+services:
+  conveyerseven:
+    build:
+      context: .
+    image: conveyerseven:local
+    restart: unless-stopped
+    environment:
+      # Set false only on the factory host after passing commissioning checks.
+      SIMULATION_MODE: "${SIMULATION_MODE:-true}"
+      SIMULATION_VIDEO_FILE: "${SIMULATION_VIDEO_FILE:-}"
+      SERIAL_PORT: "${SERIAL_PORT:-/dev/ttyUSB0}"
+      ADMIN_PIN: "${ADMIN_PIN:?set ADMIN_PIN in .env}"
+      LOG_DIR: /app/logs
+      DATABASE_FILE: /app/data/conveyer.db
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./archive:/app/archive
+    ports:
+      - "${UI_PORT:-8000}:8000"
+    # Explicit device grants are deliberately enumerated rather than privileged.
+    # Extend this list for each installed USB camera on the factory host.
+    devices:
+      - "${SERIAL_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
+      - "${CAMERA_0:-/dev/video0}:/dev/video0"
+      - "${CAMERA_1:-/dev/video1}:/dev/video1"
+      - "${CAMERA_2:-/dev/video2}:/dev/video2"
+      - "${CAMERA_3:-/dev/video3}:/dev/video3"
+      - "${CAMERA_4:-/dev/video4}:/dev/video4"
+      - "${CAMERA_5:-/dev/video5}:/dev/video5"
+      - "${CAMERA_6:-/dev/video6}:/dev/video6"

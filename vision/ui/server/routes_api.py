@@ -1,6 +1,9 @@
 import asyncio
+import hmac
 
-from fastapi import HTTPException
+from fastapi import Header, HTTPException
+
+from core.config_app import get_settings
 from fastapi.responses import JSONResponse
 
 
@@ -123,7 +126,24 @@ def setup_api_routes(app, server):
         )
 
     @app.post("/api/thresholds")
-    async def api_set_thresholds(payload: dict | None = None):
+    async def api_set_thresholds(
+        payload: dict | None = None,
+        x_operator_role: str | None = Header(default=None),
+        x_admin_pin: str | None = Header(default=None),
+    ):
+        """Apply thresholds only after an explicit administrator authorization."""
+        settings = get_settings()
+        is_admin = (x_operator_role or "").casefold() == "admin"
+        valid_pin = (
+            settings.admin_pin != "CHANGE_ME"
+            and x_admin_pin is not None
+            and hmac.compare_digest(x_admin_pin, settings.admin_pin)
+        )
+        if not is_admin or not valid_pin:
+            return JSONResponse(
+                {"ok": False, "error": "Требуются роль Admin и X-Admin-Pin"},
+                status_code=403,
+            )
         payload = payload or {}
         role = payload.get("role")
         values = payload.get("values")
