@@ -2,6 +2,7 @@ import os
 import signal
 import threading
 import time
+import traceback
 
 import webview
 
@@ -12,17 +13,23 @@ from core.app_logging import (
     install_excepthooks,
     setup_logging,
 )
-from core.config_app import AppSettings
+from core.config_app import get_settings
 from core.database import Database
 from core.decision_engine import DecisionEngine
 from core.event_bus import EventBus
 from core.production_cycle import ProductionCycle
+from core.structured_logging import configure_structlog
 from domain.threshold_loader import ThresholdLoader
 from hardware.axis import Axis
-from hardware.mock_hardware import MockCamera, MockConveyor, MockDistributor, MockSerialTransport
 from hardware.conveyor import Conveyor
 from hardware.distributor import Distributor
 from hardware.jog_controller import JogController
+from hardware.mock_hardware import (
+    MockCamera,
+    MockConveyor,
+    MockDistributor,
+    MockSerialTransport,
+)
 from hardware.port_discovery import find_controller
 from hardware.serial_transport import SerialTransport
 from inspection.debug_recorder import DebugRecorder
@@ -36,713 +43,10 @@ from vision.vision_cluster import VisionCluster
 
 log = get_logger("main")
 
-CYCLE_JOIN_TIMEOUT   = 15.0
-INIT_JOIN_TIMEOUT    = 60.0
+CYCLE_JOIN_TIMEOUT = 15.0
+INIT_JOIN_TIMEOUT = 60.0
 GRACEFUL_EXIT_TIMEOUT = 135.0
-COMPRESS_TIMEOUT     = 60.0
-
-
-def _run_legacy_application(settings: AppSettings):
-    global cameras, transport, cycle, cycle_thread, init_thread, archive
-
-    # Журнал поднимается до любой инициализации: ошибки запуска тоже
-    # должны остаться на диске, а не только на закрывшемся splash-экране.
-    log_file = setup_logging()
-    json_log_file = configure_structlog(settings.log_dir)
-    database = Database(settings.database_file)
-    install_excepthooks()
-    capture_prints()
-    log.info("=== Запуск ConveyerSeven; журнал: %s; JSON: %s ===", log_file, json_log_file)
-
-    if not os.path.exists(str(settings.camera_mapping_file)) and not launch_camera_calibrator(
-        str(settings.camera_mapping_file)
-    ):
-        print(
-            "[STARTUP] camera_mapping.json не создан; "
-            "основное приложение не запускается"
-        )
-        return
-
-    event_bus = EventBus()
-    monitor = LiveMonitor(event_bus=event_bus, fullscreen=True)
-
-    monitor.server.start_server(
-        host=monitor.host,
-        port=monitor.port,
-    )
-
-    cameras      = None
-    transport    = None
-    cycle        = None
-    cycle_thread = None
-    init_thread  = None
-    archive      = None
-    shutdown_requested = threading.Event()
-
-    exit_press_count = [0]
-    exit_lock = threading.Lock()
-
-    # Exit logic
-
-    def handle_exit_request():
-        shutdown_requested.set()
-        if cycle is None and transport is not None:
-            try:
-                transport.send("G1")
-                transport.send("G25")
-            except Exception as exc:
-                print(f"[EXIT] Startup stop failed: {exc}")
-
-        with exit_lock:
-            exit_press_count[0] += 1
-            count = exit_press_count[0]
-
-        force = count > 1 or bool(cycle and cycle.state == "FAULT")
-        if force:
-            print("[EXIT] Force exit")
-            if cycle:
-                cycle.request_force_exit()
-        else:
-            print("[EXIT] Штатная остановка -> завершение деталей на линии")
-            if cycle:
-                cycle.request_exit()
-
-        _schedule_close(force=force)
-
-    def _schedule_close(force: bool = False):
-        def _wait_and_close():
-            started = time.monotonic()
-            if cycle_thread and cycle_thread.is_alive():
-                timeout = (
-                    CYCLE_JOIN_TIMEOUT if force else GRACEFUL_EXIT_TIMEOUT
-                )
-                cycle_thread.join(timeout=timeout)
-                waited = time.monotonic() - started
-                print(f"[EXIT] Ожидание цикла: {waited:.2f} с")
-                if cycle_thread.is_alive() and not force:
-                    print(
-                        "[EXIT] Линия ещё выполняет штатную остановку; окно остаётся открытым. "
-                        "Нажмите ВЫХОД второй раз для принудительного завершения."
-                    )
-                    return
-            monitor.close_window()
-
-        threading.Thread(
-            target=_wait_and_close, daemon=True,
-        ).start()
-
-    def _report_startup_failure():
-        """Оставить startup-ошибку на splash до решения оператора."""
-        print("[INIT] Startup failed; waiting for operator to close the UI")
-
-    # EXIT должен работать даже при ошибке до создания ProductionCycle.
-    event_bus.subscribe("ui:exit_requested", handle_exit_request)
-
-    def _ensure_initialization_active():
-        if shutdown_requested.is_set():
-            raise RuntimeError("initialization cancelled by operator")
-
-    # System init
-
-    def initialize_system():
-        global cameras, transport, cycle, cycle_thread, archive
-
-        try:
-            _ensure_initialization_active()
-            calib = load_calibration(str(settings.calibration_file))
-            _ensure_initialization_active()
-
-            monitor.boot_step_start(
-                "cameras", "Открытие камер",
-            )
-            try:
-                cameras = (
-                    MockCamera(settings.simulation_video_file)
-                    if settings.simulation_mode else CameraManager()
-                )
-            except Exception as e:
-                print(
-                    f"[CAMERA] Ошибка инициализации: "
-                    f"{type(e).__name__}: {e}"
-                )
-                monitor.boot_step_error(
-                    "cameras",
-                    f"Ошибка камеры: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "cameras",
-                f"Открыто камер: {len(cameras.cameras)}",
-            )
-            _ensure_initialization_active()
-
-            # Прогрев подтверждает, что все камеры отдают кадры.
-            monitor.boot_step_start(
-                "camera_warmup", "Прогрев камер",
-            )
-            try:
-                warmup_seconds = _env_clamped_float(
-                    "CAMERA_WARMUP_SECONDS", 2.5, 0.5, 10.0,
-                )
-                stats = cameras.warmup_all(duration=warmup_seconds)
-                stats = _recover_weak_cameras_after_warmup(
-                    cameras, stats, "стартовый прогрев",
-                )
-                total_reads = sum(
-                    s.get("reads", 0) for s in stats.values()
-                )
-                monitor.boot_step_done(
-                    "camera_warmup",
-                    f"Прогрев камер: {total_reads} кадров",
-                )
-            except Exception as e:
-                monitor.boot_step_error(
-                    "camera_warmup",
-                    f"Ошибка прогрева камер: {e}",
-                )
-                _report_startup_failure()
-                return
-            _ensure_initialization_active()
-
-            monitor.boot_step_start(
-                "models_load", "Загрузка моделей",
-            )
-            try:
-                vision = MockVisionCluster() if settings.simulation_mode else VisionCluster(device="auto")
-            except Exception as e:
-                monitor.boot_step_error(
-                    "models_load",
-                    f"Ошибка загрузки моделей: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "models_load",
-                f"Загружено моделей: {len(vision.models)}",
-            )
-            _ensure_initialization_active()
-
-            monitor.boot_step_start(
-                "models_warm", "Прогрев моделей",
-            )
-            try:
-                vision.warmup()
-            except Exception as e:
-                monitor.boot_step_error(
-                    "models_warm",
-                    f"Ошибка прогрева моделей: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "models_warm", "Прогрев завершён",
-            )
-            _ensure_initialization_active()
-
-            monitor.boot_step_start(
-                "inspection", "Настройка системы контроля",
-            )
-            try:
-                threshold_loader = ThresholdLoader()
-                thresholds = threshold_loader.get_all()
-                decision   = DecisionEngine(thresholds=thresholds)
-                recorder = DebugRecorder(
-                    folder="debug_frames",
-                    enabled=False,
-                    save_interval=1,
-                )
-                inspector = Inspector(
-                    vision=vision,
-                    decision=decision,
-                    recorder=recorder,
-                )
-                archive_config = load_archive_config(str(settings.archive_config_file))
-                archive = PartArchive(
-                    root_folder=archive_config["root_path"],
-                    enabled=archive_config["enabled"],
-                    jpeg_quality=archive_config["jpeg_quality"],
-                    compress_on_shutdown=archive_config["compress_on_shutdown"],
-                    delete_original_after_zip=archive_config[
-                        "delete_original_after_zip"
-                    ],
-                )
-                monitor.server.archive = archive
-                monitor.server.archive_config_path = str(settings.archive_config_file)
-
-                # Редактор порогов правил: сервер отдаёт текущие значения
-                # (GET /api/thresholds), а применение изменений пересоздаёт
-                # DecisionEngine внутри Inspector'а и сохраняет файл.
-                # Пороги автоматически подтягиваются из thresholds.json:
-                # ручные правки файла перечитываются без перезапуска.
-                monitor.server.thresholds = dict(thresholds)
-                monitor.server.threshold_labels = dict(
-                    threshold_loader.labels or {}
-                )
-                monitor.server.thresholds_path = str(settings.thresholds_file)
-
-                def _thresholds_reload_from_file(fresh):
-                    if inspector is None:
-                        raise RuntimeError(
-                            "Система контроля ещё не инициализирована"
-                        )
-                    inspector.decision = DecisionEngine(thresholds=fresh)
-                    print(
-                        "[THRESHOLDS] Пороги перечитаны из thresholds.json; "
-                        "правила пересозданы"
-                    )
-                    return fresh
-
-                event_bus.subscribe("ui:thresholds_reload_requested", _thresholds_reload_from_file)
-
-                def _thresholds_apply(role, values, labels):
-                    if cycle is None or inspector is None:
-                        raise RuntimeError(
-                            "Система контроля ещё не инициализирована"
-                        )
-                    if cycle.state not in ("IDLE", "STOPPED"):
-                        raise RuntimeError(
-                            "Изменение порогов доступно только до пуска "
-                            "и после полной остановки"
-                        )
-                    if cycle.jog is not None and cycle.jog.status.get("busy"):
-                        raise RuntimeError(
-                            "Нельзя менять пороги во время движения ленты"
-                        )
-                    if not isinstance(values, dict) or not values:
-                        raise ValueError("Нет изменённых порогов")
-                    updated = dict(inspector.decision.thresholds)
-                    changed = []
-                    for key, value in values.items():
-                        full_key = (
-                            f"{role}.{key}"
-                            if not str(key).startswith(f"{role}.")
-                            else str(key)
-                        )
-                        if full_key not in updated:
-                            raise ValueError(f"Неизвестный порог: {full_key}")
-                        updated[full_key] = value
-                        changed.append(full_key)
-                    # Полная валидация, как при загрузке файла
-                    ThresholdLoader.validate(updated)
-                    # Понятные названия порогов для оператора: сохраняются
-                    # вместе со значениями, на логику правил не влияют.
-                    full_labels = dict(monitor.server.threshold_labels or {})
-                    for key, name in (labels or {}).items():
-                        full_key = (
-                            f"{role}.{key}"
-                            if not str(key).startswith(f"{role}.")
-                            else str(key)
-                        )
-                        if name is None or not str(name).strip():
-                            full_labels.pop(full_key, None)
-                        else:
-                            full_labels[full_key] = str(name).strip()
-                    ThresholdLoader.save_file(
-                        str(settings.thresholds_file), updated, labels=full_labels,
-                    )
-                    database.audit(
-                        action="thresholds.updated",
-                        payload_json=str({"role": role, "keys": sorted(changed)}),
-                    )
-                    # Правила пересоздаются: Inspector берёт decision каждый
-                    # раз заново, поэтому замена объекта применяется сразу.
-                    inspector.decision = DecisionEngine(thresholds=updated)
-                    print(
-                        "[THRESHOLDS] Применено "
-                        f"{len(changed)} изменение(й) для {role}: "
-                        f"{', '.join(sorted(changed))}"
-                    )
-                    return updated
-
-                event_bus.subscribe("ui:thresholds_apply_requested", _thresholds_apply)
-            except Exception as e:
-                monitor.boot_step_error(
-                    "inspection",
-                    f"Ошибка настройки контроля: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "inspection",
-                f"Настроено правил: {len(decision.rules)}",
-            )
-            _ensure_initialization_active()
-
-            # Serial (автопоиск)
-            monitor.boot_step_start(
-                "serial", "Поиск контроллера",
-            )
-            serial_baud = settings.serial_baud
-            preferred_port = settings.serial_port
-
-            try:
-                found_port, port_message = (
-                    ("SIMULATION", "Симулятор контроллера")
-                    if settings.simulation_mode
-                    else find_controller(baudrate=serial_baud, preferred_port=preferred_port)
-                )
-
-                if found_port is None:
-                    monitor.boot_step_error(
-                        "serial", port_message,
-                    )
-                    _report_startup_failure()
-                    return
-
-                transport = (
-                    MockSerialTransport() if settings.simulation_mode
-                    else SerialTransport(port=found_port, baudrate=serial_baud)
-                )
-                # Start from a stopped controller before any configuration.
-                transport.send("G1")
-                transport.send("G25")
-                # Идентификация прошивки: «чужой» или перепрошитый
-                # контроллер должен быть виден до первого движения механики.
-                # Несовпадение — только предупреждение: протокол уже
-                # подтверждён форматом ответа на I2 при поиске порта.
-                fw_line, fw_known = _probe_controller_fw(transport)
-                if not fw_known:
-                    print(
-                        "[SERIAL] ВНИМАНИЕ: неизвестная прошивка контроллера: "
-                        f"{fw_line or 'нет ответа на I6'}"
-                    )
-                    monitor.set_splash_status(
-                        "ВНИМАНИЕ: прошивка контроллера не опознана"
-                    )
-                    serial_detail = (
-                        f"Контроллер: {found_port} @ {serial_baud} · "
-                        "прошивка не опознана"
-                    )
-                else:
-                    serial_detail = (
-                        f"Контроллер: {found_port} @ {serial_baud}"
-                        + (f" · {fw_line}" if fw_line else "")
-                    )
-            except Exception as e:
-                monitor.boot_step_error(
-                    "serial",
-                    f"Ошибка последовательного порта: {e}",
-                )
-                _report_startup_failure()
-                return
-
-            monitor.boot_step_done("serial", serial_detail)
-            _ensure_initialization_active()
-
-            # Hardware
-            monitor.boot_step_start(
-                "hardware", "Инициализация оборудования",
-            )
-            try:
-                if settings.simulation_mode:
-                    conveyor = MockConveyor(transport)
-                    distributor = MockDistributor()
-                    jog = None
-                else:
-                    conveyor = Conveyor(
-                        transport,
-                        speed=calib["conveyor_speed"],
-                        accel=calib["conveyor_accel"],
-                        steps_per_division=calib["normal_steps"],
-                        divisions_per_movement=2,
-                    )
-                    dist1_axis = Axis(
-                        transport,
-                        axis_id=0,
-                        minimum=0,
-                        maximum=calib["dist1_open_position"],
-                        speed=calib["axis_speed"],
-                        accel=calib["axis_accel"],
-                    )
-                    dist2_axis = Axis(
-                        transport,
-                        axis_id=1,
-                        minimum=0,
-                        maximum=max(
-                            calib["dist2_bad_position"],
-                            calib["dist2_cleanup_position"],
-                        ),
-                        speed=calib["axis_speed"],
-                        accel=calib["axis_accel"],
-                    )
-                    distributor = Distributor(
-                        dist1_axis=dist1_axis,
-                        dist2_axis=dist2_axis,
-                        dist1_open_position=calib[
-                            "dist1_open_position"
-                        ],
-                        dist2_bad_position=calib[
-                            "dist2_bad_position"
-                        ],
-                        dist2_cleanup_position=calib[
-                            "dist2_cleanup_position"
-                        ],
-                        drop_time=calib["drop_time"],
-                    )
-                    if (
-                        distributor.dist1_open_position != calib["dist1_open_position"]
-                        or distributor.dist2_bad_position != calib["dist2_bad_position"]
-                        or distributor.dist2_cleanup_position
-                        != calib["dist2_cleanup_position"]
-                    ):
-                        raise RuntimeError(
-                            "Distributor endpoints do not match calibration.json"
-                        )
-                    distributor.cancel_check = shutdown_requested.is_set
-                    jog = JogController(
-                        transport=transport,
-                        calibration=calib,
-                    )
-            except Exception as e:
-                monitor.boot_step_error(
-                    "hardware",
-                    f"Ошибка оборудования: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done(
-                "hardware", "Лента и две оси инициализированы",
-            )
-            _ensure_initialization_active()
-
-
-            # Production cycle
-            monitor.boot_step_start(
-                "cycle", "Создание производственного цикла",
-            )
-            try:
-                _ensure_initialization_active()
-                print("[HARDWARE] Homing distributor axes...")
-                distributor.initialize()
-                _ensure_initialization_active()
-                cycle = ProductionCycle(
-                    conveyor=conveyor,
-                    cameras=cameras,
-                    inspector=inspector,
-                    distributor=distributor,
-                    monitor=monitor,
-                    archive=archive,
-                    jog=jog,
-                    settle_seconds=calib["settle_time"],
-                    stage_trace_seconds=calib["stage_trace_time"],
-                    review_seconds=calib["review_time"],
-                )
-                event_bus.subscribe("ui:start_requested", cycle.request_start)
-                event_bus.subscribe("ui:stop_requested", cycle.request_stop)
-                event_bus.subscribe("ui:pause_requested", cycle.request_pause)
-                event_bus.subscribe("ui:resume_requested", cycle.request_resume)
-                event_bus.subscribe("ui:distributor_diagnostic_requested", cycle.distributor_diagnostic)
-                event_bus.subscribe("ui:camera_diagnostic_requested", cycle.diagnostic_check_cameras)
-                event_bus.subscribe("ui:vision_rule_diagnostic_requested", cycle.diagnostic_check_vision_rules)
-                event_bus.subscribe("ui:selected_model_analysis_requested", cycle.diagnostic_analyze_selected_camera)
-                event_bus.subscribe("ui:selected_model_release_requested", cycle.diagnostic_release_selected_camera)
-                event_bus.subscribe("ui:active_camera_changed", lambda _role: cycle._refresh_monitor())
-                event_bus.subscribe("ui:jog_enter_requested", cycle.enter_jog)
-                event_bus.subscribe("ui:jog_exit_requested", cycle.exit_jog)
-                event_bus.subscribe("ui:jog_hold_start_requested", cycle.jog_hold_start)
-                event_bus.subscribe("ui:jog_hold_heartbeat", cycle.jog_hold_heartbeat)
-                event_bus.subscribe("ui:jog_hold_release_requested", cycle.jog_hold_release)
-            except Exception as e:
-                monitor.boot_step_error(
-                    "cycle",
-                    f"Ошибка создания цикла: {e}",
-                )
-                _report_startup_failure()
-                return
-            monitor.boot_step_done("cycle")
-            _ensure_initialization_active()
-
-            # Re-warmup before preview (models loading took time). Некоторые
-            # UVC-камеры после простоя снова отдают пустые/тёмные кадры;
-            # короткой 1с паузы INPUT_LEFT не всегда хватало.
-            try:
-                quick = _env_clamped_float(
-                    "CAMERA_PRE_PREVIEW_WARMUP_SECONDS", 2.5, 0.0, 5.0,
-                )
-                if quick > 0.0:
-                    stats = cameras.warmup_all(duration=quick)
-                    _recover_weak_cameras_after_warmup(
-                        cameras, stats, "прогрев перед preview",
-                    )
-            except Exception as exc:
-                monitor.boot_step_error(
-                    "preview", f"Ошибка прогрева перед preview: {exc}",
-                )
-                _report_startup_failure()
-                return
-
-            # Preview
-            monitor.boot_step_start(
-                "preview", "Получение начальных кадров",
-            )
-            try:
-                preview_frames = cameras.capture_all()
-                monitor.update(
-                    frames=preview_frames,
-                    vision_results={},
-                    rule_results=[],
-                    line_status=_make_idle_status(distributor),
-                    recent_parts=[],
-                )
-                monitor.boot_step_done(
-                    "preview", "Начальные кадры получены",
-                )
-            except Exception as e:
-                monitor.boot_step_error(
-                    "preview", f"Ошибка получения начальных кадров: {e}",
-                )
-                _report_startup_failure()
-                return
-
-            _ensure_initialization_active()
-
-            # Start cycle thread
-            monitor.boot_step_start(
-                "ready", "Запуск системы",
-            )
-            cycle_thread = threading.Thread(
-                target=cycle.start, daemon=True,
-            )
-            cycle_thread.start()
-            _ensure_initialization_active()
-            monitor.boot_step_done(
-                "ready", "Система готова к работе",
-            )
-
-            time.sleep(0.6)
-            monitor.boot_complete()
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            current = monitor.server.boot_current or "init"
-            monitor.boot_step_error(current, str(e))
-            _report_startup_failure()
-
-    init_thread = threading.Thread(
-        target=initialize_system, daemon=True,
-    )
-    init_thread.start()
-
-    # Signal handler
-
-    def signal_handler(_signum, _frame):
-        print("\n[SIGINT] Ctrl+C -> запрос выхода")
-        handle_exit_request()
-
-    signal.signal(signal.SIGINT, signal_handler)
-
-    # Console info
-
-    print("=" * 60)
-    print("Система запускается.")
-    print("  F5 ПУСК | F6 СТОП | TAB вид")
-    print("  ESC ВЫХОД (1× штатная остановка, 2× принудительный выход)")
-    print("=" * 60)
-
-    # Main: webview blocks here
-
-    try:
-        window = webview.create_window(
-            title=monitor.window_name,
-            url=f"http://{monitor.host}:{monitor.port}/",
-            fullscreen=monitor.fullscreen,
-            background_color="#0b0f13",
-            js_api=monitor.webview_api,
-        )
-        monitor._webview_window = window
-        webview.start()
-
-        print("[UI] Окно закрыто, завершение...")
-
-        if cycle and not cycle.force_exit_requested:
-            cycle.request_force_exit()
-
-        if cycle_thread and cycle_thread.is_alive():
-            cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
-            if cycle_thread.is_alive():
-                print(
-                    "[WARN] cycle thread не завершился за "
-                    f"{CYCLE_JOIN_TIMEOUT}с"
-                )
-
-    finally:
-        shutdown_started = time.monotonic()
-        print("[SHUTDOWN] Завершение...")
-        shutdown_requested.set()
-        if cycle is None and transport is not None:
-            try:
-                transport.send("G1")
-                transport.send("G25")
-            except Exception as exc:
-                print(f"[SHUTDOWN] Startup stop failed: {exc}")
-        if init_thread and init_thread.is_alive():
-            init_thread.join(timeout=INIT_JOIN_TIMEOUT)
-            if init_thread.is_alive():
-                print(
-                    "[SHUTDOWN] Initialization thread did not stop in "
-                    f"{INIT_JOIN_TIMEOUT}s"
-                )
-
-        if cycle and not cycle.force_exit_requested:
-            cycle.request_force_exit()
-        if cycle_thread and cycle_thread.is_alive():
-            cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
-
-        phase_started = time.monotonic()
-        try:
-            monitor.stop_server()
-        except Exception as exc:
-            print(f"[SHUTDOWN] UI server stop failed: {exc}")
-        print(
-            f"[SHUTDOWN] Остановка UI-сервера: "
-            f"{time.monotonic() - phase_started:.2f} с"
-        )
-
-        phase_started = time.monotonic()
-        if cycle_thread and cycle_thread.is_alive():
-            print("[SHUTDOWN] Cycle still active; archive compression skipped")
-        else:
-            _shutdown_compress(archive)
-        print(
-            f"[SHUTDOWN] Архив: "
-            f"{time.monotonic() - phase_started:.2f} с"
-        )
-
-        phase_started = time.monotonic()
-        # Live-просмотр останавливается до освобождения камер: иначе фоновые
-        # чтения продолжались бы на уже закрытых VideoCapture.
-        if cycle:
-            try:
-                cycle.live.stop()
-            except Exception as exc:
-                print(f"[SHUTDOWN] Live preview stop failed: {exc}")
-        try:
-            if cameras:
-                cameras.release()
-        except Exception as exc:
-            print(f"[SHUTDOWN] Camera release failed: {exc}")
-        print(
-            f"[SHUTDOWN] Освобождение камер: "
-            f"{time.monotonic() - phase_started:.2f} с"
-        )
-
-        phase_started = time.monotonic()
-        try:
-            if transport:
-                transport.close()
-        except Exception as exc:
-            print(f"[SHUTDOWN] Serial close failed: {exc}")
-        print(
-            f"[SHUTDOWN] Закрытие COM: "
-            f"{time.monotonic() - phase_started:.2f} с"
-        )
-
-        print(
-            f"[SHUTDOWN] Готово за "
-            f"{time.monotonic() - shutdown_started:.2f} с."
-        )
+COMPRESS_TIMEOUT = 60.0
 
 
 # Helpers
@@ -759,14 +63,12 @@ def _probe_controller_fw(transport) -> tuple[str, bool]:
     except Exception as exc:
         print(f"[SERIAL] Запрос версии прошивки (I6) не удался: {exc}")
         return "", False
+
     fw_line = next(
         (line.strip() for line in reply.splitlines() if line.strip()),
         "",
     )
-    known = any(
-        token in reply.lower()
-        for token in ("convey", "fw")
-    )
+    known = any(token in reply.lower() for token in ("convey", "fw"))
     print(f"[SERIAL] Прошивка контроллера: {fw_line or reply!r}")
     return fw_line, known
 
@@ -897,24 +199,28 @@ def _make_idle_status(distributor) -> dict:
     # Должен повторять ключи, которые ожидает frontend из _build_status(),
     # иначе до первого тика production-цикла UI получает KeyError/undefined.
     return {
-        "state":          "IDLE",
+        "state": "IDLE",
         "exit_requested": False,
-        "fault_reason":   None,
-        "step":           0,
-        "in_line":        0,
-        "line_parts":     [],
-        "total":          0,
-        "good":           0,
-        "rejected":       0,
-        "cleanup":        0,
-        "empty":          0,
+        "fault_reason": None,
+        "step": 0,
+        "in_line": 0,
+        "line_parts": [],
+        "total": 0,
+        "good": 0,
+        "rejected": 0,
+        "cleanup": 0,
+        "empty": 0,
         "dist1_position": 0,
-        "dist1_max":      distributor.dist1_open_position,
-        "dist1_state":    "IDLE",
+        "dist1_max": distributor.dist1_open_position,
+        "dist1_state": "IDLE",
         "dist2_position": 0,
-        "dist2_max":      max(distributor.dist2_bad_position, distributor.dist2_cleanup_position, 1),
-        "dist2_state":    "IDLE",
-        "dist2_target":   "BAD",
+        "dist2_max": max(
+            distributor.dist2_bad_position,
+            distributor.dist2_cleanup_position,
+            1,
+        ),
+        "dist2_state": "IDLE",
+        "dist2_target": "BAD",
         "last_distributor_action": "-",
         "process": {
             "phase": "IDLE",
@@ -983,39 +289,627 @@ def _make_idle_status(distributor) -> dict:
             "updated_at": None,
         },
         "jog": {
-            "active":      False,
-            "can_enter":   False,
-            "hold_steps":  0,
+            "active": False,
+            "can_enter": False,
+            "hold_steps": 0,
             "last_action": "-",
-            "busy":        False,
-            "direction":   None,
-            "error":       None,
-            "live_fps":    0.0,
+            "busy": False,
+            "direction": None,
+            "error": None,
+            "live_fps": 0.0,
         },
     }
 
 
 class ConveyerApp:
-    """Application facade that owns ConveyerSeven process lifecycle.
+    """Object-oriented composition root and lifecycle owner."""
 
-    The facade is the composition root: presentation adapters receive no
-    hardware object, and startup is invoked through a single explicit method.
-    The legacy startup routine remains private while phase-one compatibility is
-    maintained; its extraction into collaborators is deliberately sequenced
-    before the concurrency work in phase two.
-    """
-
-    def __init__(self) -> None:
-        """Create the application with validated immutable runtime settings."""
-        from core.config_app import get_settings
-
+    def __init__(self):
         self.settings = get_settings()
+        self.event_bus = EventBus()
+        self.database = Database(self.settings.database_file)
+        self.monitor = LiveMonitor(event_bus=self.event_bus, fullscreen=True)
 
-    def run(self) -> None:
-        """Run the UI and controlled shutdown lifecycle."""
-        _run_legacy_application(self.settings)
+        # Слоты состояния
+        self.cameras = None
+        self.transport = None
+        self.cycle = None
+        self.archive = None
 
+        self.shutdown_requested = threading.Event()
+        self.exit_press_count = 0
+        self.exit_lock = threading.Lock()
 
-if __name__ == "__main__":
-    ConveyerApp().run()
+        self.vision = None
+        self.inspector = None
+        self.conveyor = None
+        self.distributor = None
+        self.jog = None
+        self.calibration = None
+        self.cycle_thread = None
+        self.init_thread = None
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_done = False
+
+    def _ensure_initialization_active(self):
+        if self.shutdown_requested.is_set():
+            raise RuntimeError("initialization cancelled by operator")
+
+    def _report_startup_failure(self):
+        """Оставить startup-ошибку на splash до решения оператора."""
+        print("[INIT] Startup failed; waiting for operator to close the UI")
+
+    def _init_vision(self):
+        self._ensure_initialization_active()
+        self.monitor.boot_step_start("cameras", "Открытие камер")
+        self.cameras = (
+            MockCamera(self.settings.simulation_video_file)
+            if self.settings.simulation_mode
+            else CameraManager()
+        )
+        self.monitor.boot_step_done(
+            "cameras", f"Открыто камер: {len(self.cameras.cameras)}",
+        )
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("camera_warmup", "Прогрев камер")
+        warmup_seconds = _env_clamped_float(
+            "CAMERA_WARMUP_SECONDS", 2.5, 0.5, 10.0,
+        )
+        stats = self.cameras.warmup_all(duration=warmup_seconds)
+        stats = _recover_weak_cameras_after_warmup(
+            self.cameras, stats, "стартовый прогрев",
+        )
+        total_reads = sum(s.get("reads", 0) for s in stats.values())
+        self.monitor.boot_step_done(
+            "camera_warmup", f"Прогрев камер: {total_reads} кадров",
+        )
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("models_load", "Загрузка моделей")
+        self.vision = (
+            MockVisionCluster()
+            if self.settings.simulation_mode
+            else VisionCluster(device="auto")
+        )
+        self.monitor.boot_step_done(
+            "models_load", f"Загружено моделей: {len(self.vision.models)}",
+        )
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("models_warm", "Прогрев моделей")
+        self.vision.warmup()
+        self.monitor.boot_step_done("models_warm", "Прогрев завершён")
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("inspection", "Настройка системы контроля")
+        threshold_loader = ThresholdLoader()
+        thresholds = threshold_loader.get_all()
+        decision = DecisionEngine(thresholds=thresholds)
+        recorder = DebugRecorder(
+            folder="debug_frames",
+            enabled=False,
+            save_interval=1,
+        )
+        self.inspector = Inspector(
+            vision=self.vision,
+            decision=decision,
+            recorder=recorder,
+        )
+
+        archive_config = load_archive_config(str(self.settings.archive_config_file))
+        self.archive = PartArchive(
+            root_folder=archive_config["root_path"],
+            enabled=archive_config["enabled"],
+            jpeg_quality=archive_config["jpeg_quality"],
+            compress_on_shutdown=archive_config["compress_on_shutdown"],
+            delete_original_after_zip=archive_config["delete_original_after_zip"],
+        )
+        self.monitor.server.archive = self.archive
+        self.monitor.server.archive_config_path = str(self.settings.archive_config_file)
+
+        # Редактор порогов правил: сервер отдаёт текущие значения
+        # (GET /api/thresholds), а применение изменений пересоздаёт
+        # DecisionEngine внутри Inspector'а и сохраняет файл.
+        # Пороги автоматически подтягиваются из thresholds.json:
+        # ручные правки файла перечитываются без перезапуска.
+        self.monitor.server.thresholds = dict(thresholds)
+        self.monitor.server.threshold_labels = dict(threshold_loader.labels or {})
+        self.monitor.server.thresholds_path = str(self.settings.thresholds_file)
+        self.event_bus.subscribe(
+            "ui:thresholds_reload_requested",
+            self._thresholds_reload_from_file,
+        )
+        self.event_bus.subscribe(
+            "ui:thresholds_apply_requested",
+            self._thresholds_apply,
+        )
+        self.monitor.boot_step_done(
+            "inspection", f"Настроено правил: {len(decision.rules)}",
+        )
+        self._ensure_initialization_active()
+
+    def _init_hardware(self):
+        self._ensure_initialization_active()
+        self.calibration = load_calibration(str(self.settings.calibration_file))
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("serial", "Поиск контроллера")
+        serial_baud = self.settings.serial_baud
+        preferred_port = self.settings.serial_port
+        found_port, port_message = (
+            ("SIMULATION", "Симулятор контроллера")
+            if self.settings.simulation_mode
+            else find_controller(
+                baudrate=serial_baud,
+                preferred_port=preferred_port,
+            )
+        )
+        if found_port is None:
+            raise RuntimeError(port_message)
+
+        self.transport = (
+            MockSerialTransport()
+            if self.settings.simulation_mode
+            else SerialTransport(port=found_port, baudrate=serial_baud)
+        )
+        # Start from a stopped controller before any configuration.
+        self.transport.send("G1")
+        self.transport.send("G25")
+        fw_line, fw_known = _probe_controller_fw(self.transport)
+        if not fw_known:
+            print(
+                "[SERIAL] ВНИМАНИЕ: неизвестная прошивка контроллера: "
+                f"{fw_line or 'нет ответа на I6'}"
+            )
+            self.monitor.set_splash_status(
+                "ВНИМАНИЕ: прошивка контроллера не опознана"
+            )
+            serial_detail = (
+                f"Контроллер: {found_port} @ {serial_baud} · "
+                "прошивка не опознана"
+            )
+        else:
+            serial_detail = (
+                f"Контроллер: {found_port} @ {serial_baud}"
+                + (f" · {fw_line}" if fw_line else "")
+            )
+        self.monitor.boot_step_done("serial", serial_detail)
+        self._ensure_initialization_active()
+
+        self.monitor.boot_step_start("hardware", "Инициализация оборудования")
+        if self.settings.simulation_mode:
+            self.conveyor = MockConveyor(self.transport)
+            self.distributor = MockDistributor()
+            self.jog = None
+        else:
+            self.conveyor = Conveyor(
+                self.transport,
+                speed=self.calibration["conveyor_speed"],
+                accel=self.calibration["conveyor_accel"],
+                steps_per_division=self.calibration["normal_steps"],
+                divisions_per_movement=2,
+            )
+            dist1_axis = Axis(
+                self.transport,
+                axis_id=0,
+                minimum=0,
+                maximum=self.calibration["dist1_open_position"],
+                speed=self.calibration["axis_speed"],
+                accel=self.calibration["axis_accel"],
+            )
+            dist2_axis = Axis(
+                self.transport,
+                axis_id=1,
+                minimum=0,
+                maximum=max(
+                    self.calibration["dist2_bad_position"],
+                    self.calibration["dist2_cleanup_position"],
+                ),
+                speed=self.calibration["axis_speed"],
+                accel=self.calibration["axis_accel"],
+            )
+            self.distributor = Distributor(
+                dist1_axis=dist1_axis,
+                dist2_axis=dist2_axis,
+                dist1_open_position=self.calibration["dist1_open_position"],
+                dist2_bad_position=self.calibration["dist2_bad_position"],
+                dist2_cleanup_position=self.calibration["dist2_cleanup_position"],
+                drop_time=self.calibration["drop_time"],
+            )
+            if (
+                self.distributor.dist1_open_position
+                != self.calibration["dist1_open_position"]
+                or self.distributor.dist2_bad_position
+                != self.calibration["dist2_bad_position"]
+                or self.distributor.dist2_cleanup_position
+                != self.calibration["dist2_cleanup_position"]
+            ):
+                raise RuntimeError(
+                    "Distributor endpoints do not match calibration.json"
+                )
+            self.distributor.cancel_check = self.shutdown_requested.is_set
+            self.jog = JogController(
+                transport=self.transport,
+                calibration=self.calibration,
+            )
+        self.monitor.boot_step_done("hardware", "Лента и две оси инициализированы")
+        self._ensure_initialization_active()
+
+    def _init_cycle(self):
+        self._ensure_initialization_active()
+        self.monitor.boot_step_start("cycle", "Создание производственного цикла")
+        print("[HARDWARE] Homing distributor axes...")
+        self.distributor.initialize()
+        self._ensure_initialization_active()
+
+        self.cycle = ProductionCycle(
+            conveyor=self.conveyor,
+            cameras=self.cameras,
+            inspector=self.inspector,
+            distributor=self.distributor,
+            monitor=self.monitor,
+            archive=self.archive,
+            jog=self.jog,
+            settle_seconds=self.calibration["settle_time"],
+            stage_trace_seconds=self.calibration["stage_trace_time"],
+            review_seconds=self.calibration["review_time"],
+        )
+        self.event_bus.subscribe("ui:start_requested", self.cycle.request_start)
+        self.event_bus.subscribe("ui:stop_requested", self.cycle.request_stop)
+        self.event_bus.subscribe("ui:pause_requested", self.cycle.request_pause)
+        self.event_bus.subscribe("ui:resume_requested", self.cycle.request_resume)
+        self.event_bus.subscribe(
+            "ui:distributor_diagnostic_requested",
+            self.cycle.distributor_diagnostic,
+        )
+        self.event_bus.subscribe(
+            "ui:camera_diagnostic_requested",
+            self.cycle.diagnostic_check_cameras,
+        )
+        self.event_bus.subscribe(
+            "ui:vision_rule_diagnostic_requested",
+            self.cycle.diagnostic_check_vision_rules,
+        )
+        self.event_bus.subscribe(
+            "ui:selected_model_analysis_requested",
+            self.cycle.diagnostic_analyze_selected_camera,
+        )
+        self.event_bus.subscribe(
+            "ui:selected_model_release_requested",
+            self.cycle.diagnostic_release_selected_camera,
+        )
+        self.event_bus.subscribe(
+            "ui:active_camera_changed",
+            lambda _role: self.cycle._refresh_monitor(),
+        )
+        self.event_bus.subscribe("ui:jog_enter_requested", self.cycle.enter_jog)
+        self.event_bus.subscribe("ui:jog_exit_requested", self.cycle.exit_jog)
+        self.event_bus.subscribe("ui:jog_hold_start_requested", self.cycle.jog_hold_start)
+        self.event_bus.subscribe("ui:jog_hold_heartbeat", self.cycle.jog_hold_heartbeat)
+        self.event_bus.subscribe(
+            "ui:jog_hold_release_requested",
+            self.cycle.jog_hold_release,
+        )
+        self.monitor.boot_step_done("cycle")
+        self._ensure_initialization_active()
+
+    def _prepare_initial_preview(self):
+        # Re-warmup before preview (models loading took time). Некоторые
+        # UVC-камеры после простоя снова отдают пустые/тёмные кадры;
+        # короткой 1с паузы INPUT_LEFT не всегда хватало.
+        quick = _env_clamped_float(
+            "CAMERA_PRE_PREVIEW_WARMUP_SECONDS", 2.5, 0.0, 5.0,
+        )
+        if quick > 0.0:
+            stats = self.cameras.warmup_all(duration=quick)
+            _recover_weak_cameras_after_warmup(
+                self.cameras, stats, "прогрев перед preview",
+            )
+
+        self.monitor.boot_step_start("preview", "Получение начальных кадров")
+        preview_frames = self.cameras.capture_all()
+        self.monitor.update(
+            frames=preview_frames,
+            vision_results={},
+            rule_results=[],
+            line_status=_make_idle_status(self.distributor),
+            recent_parts=[],
+        )
+        self.monitor.boot_step_done("preview", "Начальные кадры получены")
+        self._ensure_initialization_active()
+
+    def _start_cycle_thread(self):
+        self.monitor.boot_step_start("ready", "Запуск системы")
+        self.cycle_thread = threading.Thread(target=self.cycle.start, daemon=True)
+        self.cycle_thread.start()
+        self._ensure_initialization_active()
+        self.monitor.boot_step_done("ready", "Система готова к работе")
+
+    def _boot_sequence(self):
+        try:
+            self._init_vision()
+            self._init_hardware()
+            self._init_cycle()
+            # Прогрев и первый кадр
+            self._prepare_initial_preview()
+            self._start_cycle_thread()
+            time.sleep(0.6)
+            self.monitor.boot_complete()
+        except Exception as e:
+            traceback.print_exc()
+            current = self.monitor.server.boot_current or "init"
+            self.monitor.boot_step_error(current, str(e))
+            self._report_startup_failure()
+
+    def _thresholds_reload_from_file(self, fresh):
+        if self.inspector is None:
+            raise RuntimeError("Система контроля ещё не инициализирована")
+        self.inspector.decision = DecisionEngine(thresholds=fresh)
+        print(
+            "[THRESHOLDS] Пороги перечитаны из thresholds.json; "
+            "правила пересозданы"
+        )
+        return fresh
+
+    def _thresholds_apply(self, role, values, labels):
+        if self.cycle is None or self.inspector is None:
+            raise RuntimeError("Система контроля ещё не инициализирована")
+        if self.cycle.state not in ("IDLE", "STOPPED"):
+            raise RuntimeError(
+                "Изменение порогов доступно только до пуска "
+                "и после полной остановки"
+            )
+        if self.cycle.jog is not None and self.cycle.jog.status.get("busy"):
+            raise RuntimeError("Нельзя менять пороги во время движения ленты")
+        if not isinstance(values, dict) or not values:
+            raise ValueError("Нет изменённых порогов")
+
+        updated = dict(self.inspector.decision.thresholds)
+        changed = []
+        for key, value in values.items():
+            full_key = (
+                f"{role}.{key}"
+                if not str(key).startswith(f"{role}.")
+                else str(key)
+            )
+            if full_key not in updated:
+                raise ValueError(f"Неизвестный порог: {full_key}")
+            updated[full_key] = value
+            changed.append(full_key)
+
+        # Полная валидация, как при загрузке файла.
+        ThresholdLoader.validate(updated)
+        # Понятные названия порогов для оператора: сохраняются вместе со
+        # значениями, на логику правил не влияют.
+        full_labels = dict(self.monitor.server.threshold_labels or {})
+        for key, name in (labels or {}).items():
+            full_key = (
+                f"{role}.{key}"
+                if not str(key).startswith(f"{role}.")
+                else str(key)
+            )
+            if name is None or not str(name).strip():
+                full_labels.pop(full_key, None)
+            else:
+                full_labels[full_key] = str(name).strip()
+
+        ThresholdLoader.save_file(
+            str(self.settings.thresholds_file),
+            updated,
+            labels=full_labels,
+        )
+        self.database.audit(
+            action="thresholds.updated",
+            payload_json=str({"role": role, "keys": sorted(changed)}),
+        )
+        # Правила пересоздаются: Inspector берёт decision каждый раз заново,
+        # поэтому замена объекта применяется сразу.
+        self.inspector.decision = DecisionEngine(thresholds=updated)
+        self.monitor.server.thresholds = dict(updated)
+        self.monitor.server.threshold_labels = dict(full_labels)
+        print(
+            "[THRESHOLDS] Применено "
+            f"{len(changed)} изменение(й) для {role}: "
+            f"{', '.join(sorted(changed))}"
+        )
+        return updated
+
+    def _schedule_close(self, force: bool = False):
+        def _wait_and_close():
+            started = time.monotonic()
+            if self.cycle_thread and self.cycle_thread.is_alive():
+                timeout = CYCLE_JOIN_TIMEOUT if force else GRACEFUL_EXIT_TIMEOUT
+                self.cycle_thread.join(timeout=timeout)
+                waited = time.monotonic() - started
+                print(f"[EXIT] Ожидание цикла: {waited:.2f} с")
+                if self.cycle_thread.is_alive() and not force:
+                    print(
+                        "[EXIT] Линия ещё выполняет штатную остановку; "
+                        "окно остаётся открытым. Нажмите ВЫХОД второй раз "
+                        "для принудительного завершения."
+                    )
+                    return
+            self.monitor.close_window()
+
+        threading.Thread(target=_wait_and_close, daemon=True).start()
+
+    def _request_startup_stop(self, prefix: str):
+        if self.cycle is None and self.transport is not None:
+            try:
+                self.transport.send("G1")
+                self.transport.send("G25")
+            except Exception as exc:
+                print(f"[{prefix}] Startup stop failed: {exc}")
+
+    def handle_exit_request(self):
+        self.shutdown_requested.set()
+        self._request_startup_stop("EXIT")
+
+        with self.exit_lock:
+            self.exit_press_count += 1
+            count = self.exit_press_count
+
+        force = count > 1 or bool(self.cycle and self.cycle.state == "FAULT")
+        if force:
+            print("[EXIT] Force exit")
+            if self.cycle:
+                self.cycle.request_force_exit()
+        else:
+            print("[EXIT] Штатная остановка -> завершение деталей на линии")
+            if self.cycle:
+                self.cycle.request_exit()
+
+        self._schedule_close(force=force)
+
+    def _handle_signal(self, _signum, _frame):
+        print("\n[SIGINT] Ctrl+C -> запрос выхода")
+        self.handle_exit_request()
+
+    def _print_console_banner(self):
+        print("=" * 60)
+        print("Система запускается.")
+        print("  F5 ПУСК | F6 СТОП | TAB вид")
+        print("  ESC ВЫХОД (1× штатная остановка, 2× принудительный выход)")
+        print("=" * 60)
+
+    def run(self):
+        log_file = setup_logging()
+        json_log_file = configure_structlog(self.settings.log_dir)
+        install_excepthooks()
+        capture_prints()
+        log.info(
+            "=== Запуск ConveyerSeven; журнал: %s; JSON: %s ===",
+            log_file,
+            json_log_file,
+        )
+
+        try:
+            if (
+                not os.path.exists(str(self.settings.camera_mapping_file))
+                and not launch_camera_calibrator(
+                    str(self.settings.camera_mapping_file)
+                )
+            ):
+                print(
+                    "[STARTUP] camera_mapping.json не создан; "
+                    "основное приложение не запускается"
+                )
+                return
+
+            self.monitor.server.start_server(
+                host=self.monitor.host,
+                port=self.monitor.port,
+            )
+            # EXIT должен работать даже при ошибке до создания ProductionCycle.
+            self.event_bus.subscribe("ui:exit_requested", self.handle_exit_request)
+            signal.signal(signal.SIGINT, self._handle_signal)
+
+            self.init_thread = threading.Thread(
+                target=self._boot_sequence,
+                daemon=True,
+            )
+            self.init_thread.start()
+            self._print_console_banner()
+
+            window = webview.create_window(
+                title=self.monitor.window_name,
+                url=f"http://{self.monitor.host}:{self.monitor.port}/",
+                fullscreen=self.monitor.fullscreen,
+                background_color="#0b0f13",
+                js_api=self.monitor.webview_api,
+            )
+            self.monitor._webview_window = window
+            webview.start()
+
+            print("[UI] Окно закрыто, завершение...")
+            if self.cycle and not self.cycle.force_exit_requested:
+                self.cycle.request_force_exit()
+            if self.cycle_thread and self.cycle_thread.is_alive():
+                self.cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
+                if self.cycle_thread.is_alive():
+                    print(
+                        "[WARN] cycle thread не завершился за "
+                        f"{CYCLE_JOIN_TIMEOUT}с"
+                    )
+        finally:
+            self.shutdown()
+
+    def shutdown(self):
+        with self._shutdown_lock:
+            if self._shutdown_done:
+                return
+            self._shutdown_done = True
+
+        shutdown_started = time.monotonic()
+        print("[SHUTDOWN] Завершение...")
+        self.shutdown_requested.set()
+        self._request_startup_stop("SHUTDOWN")
+
+        if self.init_thread and self.init_thread.is_alive():
+            self.init_thread.join(timeout=INIT_JOIN_TIMEOUT)
+            if self.init_thread.is_alive():
+                print(
+                    "[SHUTDOWN] Initialization thread did not stop in "
+                    f"{INIT_JOIN_TIMEOUT}s"
+                )
+
+        if self.cycle and not self.cycle.force_exit_requested:
+            self.cycle.request_force_exit()
+        if self.cycle_thread and self.cycle_thread.is_alive():
+            self.cycle_thread.join(timeout=CYCLE_JOIN_TIMEOUT)
+
+        phase_started = time.monotonic()
+        try:
+            self.monitor.stop_server()
+        except Exception as exc:
+            print(f"[SHUTDOWN] UI server stop failed: {exc}")
+        print(
+            f"[SHUTDOWN] Остановка UI-сервера: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        if self.cycle_thread and self.cycle_thread.is_alive():
+            print("[SHUTDOWN] Cycle still active; archive compression skipped")
+        else:
+            _shutdown_compress(self.archive)
+        print(
+            f"[SHUTDOWN] Архив: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        # Live-просмотр останавливается до освобождения камер: иначе фоновые
+        # чтения продолжались бы на уже закрытых VideoCapture.
+        if self.cycle:
+            try:
+                self.cycle.live.stop()
+            except Exception as exc:
+                print(f"[SHUTDOWN] Live preview stop failed: {exc}")
+        try:
+            if self.cameras:
+                self.cameras.release()
+        except Exception as exc:
+            print(f"[SHUTDOWN] Camera release failed: {exc}")
+        print(
+            f"[SHUTDOWN] Освобождение камер: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        phase_started = time.monotonic()
+        try:
+            if self.transport:
+                self.transport.close()
+        except Exception as exc:
+            print(f"[SHUTDOWN] Serial close failed: {exc}")
+        print(
+            f"[SHUTDOWN] Закрытие COM: "
+            f"{time.monotonic() - phase_started:.2f} с"
+        )
+
+        print(
+            f"[SHUTDOWN] Готово за "
+            f"{time.monotonic() - shutdown_started:.2f} с."
+        )
 
